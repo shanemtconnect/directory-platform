@@ -10,3 +10,6 @@ build/
 coverage/
 drizzle/meta/_journal.json.bak
 *.tsbuildinfo
+
+# Commercial strategy — kept out of the public repo
+docs/superpowers/plans/*master*.md
