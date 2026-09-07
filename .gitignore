@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.next-pristine/
+out/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+coverage/
+drizzle/meta/_journal.json.bak
