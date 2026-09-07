@@ -1,0 +1,21 @@
+name,singular,plural,sort_order
+Barn Venues,barn venue,barn venues,0
+Country Houses,country house,country houses,1
+Castles,castle,castles,2
+Hotels,hotel,hotels,3
+Manor Houses,manor house,manor houses,4
+Stately Homes,stately home,stately homes,5
+Marquee Venues,marquee venue,marquee venues,6
+Garden Venues,garden venue,garden venues,7
+Vineyards,vineyard,vineyards,8
+Golf Clubs,golf club,golf clubs,9
+Historic Halls,historic hall,historic halls,10
+Coastal Venues,coastal venue,coastal venues,11
+Woodland Venues,woodland venue,woodland venues,12
+City Venues,city venue,city venues,13
+Industrial Venues,industrial venue,industrial venues,14
+Pub & Inn Venues,pub and inn venue,pub & inn venues,15
+Museum Venues,museum venue,museum venues,16
+Boutique Venues,boutique venue,boutique venues,17
+Farm Venues,farm venue,farm venues,18
+Riverside Venues,riverside venue,riverside venues,19

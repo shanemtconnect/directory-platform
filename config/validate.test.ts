@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { validateFeatureDependencies, validateEnv, ConfigError } from "./validate";
+import { validateFeatureDependencies, validateEnv, validateCountry, ConfigError } from "./validate";
+import { siteConfig } from "./site.config";
 import { FEATURE_FLAGS, type FeatureFlag, type FeatureMap } from "./types";
 
 const allOff = Object.fromEntries(FEATURE_FLAGS.map((f) => [f, false])) as FeatureMap;
@@ -85,5 +86,36 @@ describe("validateEnv", () => {
 
   it("still requires the build keys during the build", () => {
     expect(() => validateEnv({}, { phase: "build" })).toThrow(/NEXT_PUBLIC_SITE_URL/);
+  });
+});
+
+describe("validateCountry", () => {
+  it("passes for the shipped config", () => {
+    expect(() => validateCountry(siteConfig)).not.toThrow();
+  });
+
+  it("accepts every supported market with its own currency and locale", () => {
+    const markets = [
+      { country: "GB", currency: "GBP", locale: "en-GB" },
+      { country: "US", currency: "USD", locale: "en-US" },
+      { country: "AU", currency: "AUD", locale: "en-AU" },
+      { country: "CA", currency: "CAD", locale: "en-CA" },
+    ];
+    for (const m of markets) expect(() => validateCountry(m)).not.toThrow();
+  });
+
+  it("throws on an unsupported country", () => {
+    expect(() => validateCountry({ country: "XX", currency: "USD", locale: "en-XX" }))
+      .toThrow(/Unsupported country/);
+  });
+
+  it("catches a US site left quoting prices in pounds", () => {
+    expect(() => validateCountry({ country: "US", currency: "GBP", locale: "en-US" }))
+      .toThrow(/unusual for United States/);
+  });
+
+  it("catches a locale that does not match the country", () => {
+    expect(() => validateCountry({ country: "US", currency: "USD", locale: "en-GB" }))
+      .toThrow(/does not match country/);
   });
 });

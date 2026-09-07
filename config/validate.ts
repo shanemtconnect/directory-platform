@@ -1,4 +1,5 @@
 import type { FeatureFlag, FeatureMap } from "./types";
+import { isSupportedCountry, COUNTRY_PROFILES, SUPPORTED_COUNTRIES } from "@/lib/geo/countries";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -79,3 +80,37 @@ export function validateEnv(
   }
 }
 
+
+/**
+ * These directories run in several markets. A clone that sets an unsupported
+ * country, or pairs a country with a currency that makes no sense for it,
+ * fails the build rather than shipping a US site quoting prices in pounds.
+ */
+export function validateCountry(config: {
+  country: string;
+  currency: string;
+  locale: string;
+}): void {
+  if (!isSupportedCountry(config.country)) {
+    throw new ConfigError(
+      `Unsupported country "${config.country}" in config/site.config.ts. ` +
+        `Supported: ${SUPPORTED_COUNTRIES.join(", ")}. Add a profile in lib/geo/countries.ts first.`,
+    );
+  }
+  const profile = COUNTRY_PROFILES[config.country];
+  const problems: string[] = [];
+  if (config.currency !== profile.defaultCurrency) {
+    problems.push(
+      `currency "${config.currency}" is unusual for ${profile.name} (expected ${profile.defaultCurrency})`,
+    );
+  }
+  if (!config.locale.endsWith(config.country)) {
+    problems.push(`locale "${config.locale}" does not match country "${config.country}"`);
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Country configuration looks wrong:\n  - ${problems.join("\n  - ")}\n` +
+        `If this is deliberate, change the check in config/validate.ts rather than the config.`,
+    );
+  }
+}

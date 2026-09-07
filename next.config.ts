@@ -1,11 +1,12 @@
 import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
-import { validateFeatureDependencies, validateEnv } from "./config/validate";
+import { validateFeatureDependencies, validateEnv, validateCountry } from "./config/validate";
 import { siteConfig } from "./config/site.config";
 
 // Throws -> the build fails. That is the point.
 validateFeatureDependencies(siteConfig.features);
 validateEnv(process.env, { phase: "build" });
+validateCountry(siteConfig);
 
 const nextConfig: NextConfig = {
   output: "standalone",
