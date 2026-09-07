@@ -9,3 +9,4 @@ build/
 .DS_Store
 coverage/
 drizzle/meta/_journal.json.bak
+*.tsbuildinfo
