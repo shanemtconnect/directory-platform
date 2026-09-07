@@ -21,28 +21,51 @@ export interface CustomField {
  * richness, never reachability.
  */
 export interface TierSpec {
+  /** Shown on /pricing. The page renders from this file, never from hardcoded HTML. */
+  readonly label: string;
+  readonly strapline: string;
+  /** Marketing copy. Keep in step with the booleans below — these sell it, those enforce it. */
+  readonly bullets: readonly string[];
+
   readonly rank: number;
-  /** Owner-editable limits. Enforced server-side in the account UI, not just hidden. */
-  readonly maxImages: number;
-  readonly maxDescriptionChars: number;
+  readonly priceAnnual: number;
+  readonly priceMonthly: number;
+  readonly trialDays: number;
+
+  /** null = unlimited. */
+  readonly maxImages: number | null;
+  /**
+   * Free tiers show a truncated excerpt and paid tiers show the whole thing.
+   * The owner always writes the full description — seeing it cut off is the
+   * upgrade prompt, and it beats refusing the input at write time.
+   */
+  readonly descriptionDisplay: "excerpt" | "full";
+  readonly excerptChars: number;
+
+  readonly adFree: boolean;
   readonly showWebsite: boolean;
   readonly showSocial: boolean;
-  readonly allowCustomFields: boolean;
+  /** Price-from fields and current offers. */
+  readonly showPricingAndOffers: boolean;
   readonly allowVideo: boolean;
   readonly allowPricingPackages: boolean;
   readonly allowFaq: boolean;
   readonly allowTeam: boolean;
   readonly allowGalleryAlbums: boolean;
-  /** How far back the owner dashboard shows stats. */
+
+  readonly homepageSlot: boolean;
+  /** Eligible for editorial inclusion. Surfaced to admin; not automated. */
+  readonly editorialFeature: boolean;
+
   readonly statsWindowDays: number;
   readonly allowStatsExport: boolean;
+
   /**
    * Verified is a subscription benefit. True on every paid tier. It still never
    * auto-grants the badge on payment alone — the owner must also pass the
    * control check from the claim evidence ladder.
    */
   readonly verificationIncluded: boolean;
-  readonly homepageSlot?: boolean;
 }
 
 export const FEATURE_FLAGS = [
@@ -106,6 +129,11 @@ export interface SiteConfig {
     readonly fontHeading: string;
     readonly fontBody: string;
     readonly radius: string;
+  };
+
+  readonly listing: {
+    /** Input cap, same for every tier. Display is governed by `descriptionDisplay`. */
+    readonly maxDescriptionChars: number;
   };
 
   readonly customFields: readonly CustomField[];
