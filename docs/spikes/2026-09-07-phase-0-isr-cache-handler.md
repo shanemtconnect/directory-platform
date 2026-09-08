@@ -156,11 +156,20 @@ Verify with `scripts/verify-image.sh`, which builds the image and runs
 `docker run --rm IMAGE node -e "import('./cache-handler.mjs')…"`. It cannot be a
 `RUN` step in the Dockerfile: importing the handler wants `REDIS_URL`.
 
-**`next build` needs a reachable database.** `/cities` and the city pages
-prerender from it, so the "built once in CI with no site secrets" comment on the
-Dockerfile is not true of `DATABASE_URL` — the build fails with `ECONNREFUSED`
-without one. It is a build arg with a placeholder default; the placeholder is
-enough to load the module but not to prerender.
+**`next build` was failing without a reachable database.** `/`, `/cities` and
+`/categories` prerender from it, and the build died on `ECONNREFUSED` — so for a
+while `DATABASE_URL` was a build arg, contradicting the "built once in CI with
+no site secrets" comment on the Dockerfile.
+
+*Superseded.* Those three routes now ask `prerenderingWithoutDatabase()`
+(`lib/db/build-phase.ts`) and prerender their empty-state shell when there is
+nothing to read; ISR fills in the real page on the first request, where a
+database is guaranteed because `instrumentation.ts` refuses to boot a server
+without one. `lib/db/client.ts` and `lib/auth/server.ts` also open their
+connection on first use rather than on import. **The build takes no
+`DATABASE_URL` and needs no database**, and the Dockerfile comment is true
+again. The two catch-all routes never needed one: their `generateStaticParams`
+return `[]`.
 
 ---
 
