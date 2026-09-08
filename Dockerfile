@@ -24,7 +24,8 @@ RUN corepack enable
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Built once in CI with no site secrets. Everything else is injected at boot.
+# Built once in CI. Nothing here is a per-site secret; everything else is
+# injected at boot.
 ARG NEXT_PUBLIC_SITE_URL
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
 # NEXT_PUBLIC_ vars are inlined at BUILD time, so these must be present here or
@@ -34,10 +35,12 @@ ARG NEXT_PUBLIC_MAPTILER_KEY
 ENV NEXT_PUBLIC_MAPTILER_KEY=$NEXT_PUBLIC_MAPTILER_KEY
 ARG NEXT_PUBLIC_MEDIA_URL
 ENV NEXT_PUBLIC_MEDIA_URL=$NEXT_PUBLIC_MEDIA_URL
-# Not a secret and never connected to. `next build` collects page data, which
-# imports lib/db/client, which throws outright when DATABASE_URL is absent — so
-# a placeholder is needed even though no page queries at build time. It stays in
-# this stage; the runner gets the real one at boot.
+# The build really does need a database: /cities and the city pages prerender
+# from it, so this has to point at a reachable read-only replica or the build
+# fails with ECONNREFUSED. The default below is only enough to let
+# lib/db/client load — it throws outright on an absent DATABASE_URL — which
+# gets you a clearer error than a missing variable would. Does not reach the
+# runner; that gets its own at boot.
 ARG DATABASE_URL=postgres://build:build@127.0.0.1:5432/build
 ENV DATABASE_URL=$DATABASE_URL
 RUN pnpm build
