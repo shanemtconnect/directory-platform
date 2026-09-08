@@ -54,7 +54,7 @@ export const normalisePhone = (s: string): string => s.replace(/[^0-9]/g, "");
 
 /** Digits only, in SQL, so "(0113) 496-0000" matches "01134960000". */
 const phoneDigits = (column: AnyPgColumn): SQL =>
-  sql`regexp_replace(coalesce(${column}, ''), '[^0-9]', '', 'g')`;
+  sql`regexp_replace(${column}, '[^0-9]', '', 'g')`;
 
 /**
  * The one place a feed's town name becomes a city id.
@@ -153,7 +153,7 @@ export async function findDuplicate(
     clauses.push(
       and(
         sql`lower(trim(${listings.name})) = ${row.name.trim().toLowerCase()}`,
-        sql`lower(regexp_replace(coalesce(${listings.postcode}, ''), '[\\s-]+', '', 'g')) = ${normalisePostcode(row.postcode)}`,
+        sql`lower(regexp_replace(${listings.postcode}, '[\\s-]+', '', 'g')) = ${normalisePostcode(row.postcode)}`,
       )!,
     );
   }

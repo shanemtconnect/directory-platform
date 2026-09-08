@@ -2,6 +2,7 @@ import {
   pgTable, uuid, text, integer, boolean, jsonb,
   doublePrecision, uniqueIndex, index,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { base } from "./_base";
 import { slugKind, cityCreatedBy } from "./enums";
 
@@ -68,6 +69,8 @@ export const cities = pgTable("cities", {
   uniqueIndex("cities_slug_key").on(t.slug),
   index("cities_geo_idx").on(t.lat, t.lng),
   index("cities_indexable_idx").on(t.isIndexable),
+  // How the importer turns a feed's town name into a city id, on every row.
+  index("cities_name_lower_idx").on(sql`lower(${t.name})`),
 ]);
 
 /** local-multi-vertical only. Unused table on niche-national sites. */
