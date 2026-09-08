@@ -48,6 +48,8 @@ const RUNTIME = {
   NEXT_PUBLIC_SITE_URL: "https://x.test",
   DATABASE_URL: "postgres://x",
   REDIS_URL: "redis://x",
+  BETTER_AUTH_SECRET: "s",
+  BETTER_AUTH_URL: "https://x.test",
 };
 
 const BUILD = {
@@ -94,13 +96,32 @@ describe("validateEnv", () => {
   // reads is a self-inflicted outage.
   it("does not yet require the later-phase keys at runtime", () => {
     expect(() => validateEnv(RUNTIME, { phase: "runtime" })).not.toThrow();
-    expect(RUNTIME_ENV).toEqual(["NEXT_PUBLIC_SITE_URL", "DATABASE_URL", "REDIS_URL"]);
+    expect(RUNTIME_ENV).toEqual([
+      "NEXT_PUBLIC_SITE_URL",
+      "DATABASE_URL",
+      "REDIS_URL",
+      "BETTER_AUTH_SECRET",
+      "BETTER_AUTH_URL",
+    ]);
+  });
+
+  // Auth is live, so its keys are boot requirements rather than a checklist
+  // entry: a signing secret that changes between boots invalidates every
+  // session cookie already issued.
+  it("requires the Better Auth keys at runtime now that auth is wired", () => {
+    const { BETTER_AUTH_SECRET: _s, ...noSecret } = RUNTIME;
+    expect(() => validateEnv(noSecret, { phase: "runtime" })).toThrow(/BETTER_AUTH_SECRET/);
+    const { BETTER_AUTH_URL: _u, ...noUrl } = RUNTIME;
+    expect(() => validateEnv(noUrl, { phase: "runtime" })).toThrow(/BETTER_AUTH_URL/);
+  });
+
+  it("still does not require the auth keys during the build", () => {
+    expect(() => validateEnv({ NEXT_PUBLIC_SITE_URL: "https://x.test" }, { phase: "build" }))
+      .not.toThrow();
   });
 
   it("keeps the later-phase keys documented rather than deleted", () => {
     for (const key of [
-      "BETTER_AUTH_SECRET",
-      "BETTER_AUTH_URL",
       "R2_ACCOUNT_ID",
       "R2_ACCESS_KEY_ID",
       "R2_SECRET_ACCESS_KEY",
