@@ -1,8 +1,15 @@
 import cron from "node-cron";
+import { validateEnv } from "@/config/validate";
 import { db } from "@/lib/db/client";
 import { jobRuns } from "@/lib/db/schema";
 import { withAdvisoryLock } from "./lock";
 import { now } from "@/lib/clock";
+
+// The worker has no health check and no requests to fail loudly, so a missing
+// key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
+// the exception: `@/lib/db/client` throws its own message at import time, which
+// under ES module evaluation order happens before this line.)
+validateEnv(process.env, { phase: "runtime" });
 
 if (process.env.WORKER_ENABLED !== "true") {
   console.log("[worker] WORKER_ENABLED is not 'true' — exiting");
