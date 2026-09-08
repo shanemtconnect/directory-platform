@@ -129,6 +129,19 @@ throwaway database on every check.
 Re-running it is a no-op (`already up to date`), and it exits 1 with a message
 rather than hanging if `DATABASE_URL` is unset or the database is unreachable.
 
+### Seeding: from the worker container
+
+```bash
+docker exec <worker> ./node_modules/.bin/tsx scripts/seed-cli.ts
+```
+
+Once, against a freshly migrated database. It runs in the **worker**, not the
+runner: `scripts/seed-cli.ts` is TypeScript and needs tsx, which only the
+worker's dev-inclusive dependency tree has. With no argument the niche defaults
+to `slugify(siteConfig.entity.plural)`, which is also the directory name under
+`seeds/` — so a clone renames one folder and the command is unchanged. The seed
+is idempotent: rows already present are reported as skipped.
+
 **The app sweeps stale namespaces itself — there is nothing to configure.**
 Each build gets its own `nextjs:<buildId>:` namespace in Redis and nothing
 expires the previous one, so a minute after a new container connects to Redis

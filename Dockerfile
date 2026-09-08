@@ -114,4 +114,16 @@ COPY --from=builder --chown=nextjs:nodejs /app/worker ./worker
 COPY --from=builder --chown=nextjs:nodejs /app/lib ./lib
 COPY --from=builder --chown=nextjs:nodejs /app/config ./config
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
+# Seeding a fresh deployment happens here, not in the runner: `scripts/seed-cli.ts`
+# is TypeScript and needs tsx, which only this stage's dev-inclusive tree has.
+#
+#   docker exec <worker> ./node_modules/.bin/tsx scripts/seed-cli.ts <niche>
+#
+# `<niche>` defaults to `slugify(siteConfig.entity.plural)`, which is also the
+# name of the folder under seeds/ — so a clone renames one directory and the
+# command keeps working with no argument. `drizzle.config.ts` rides along for
+# `drizzle-kit` (studio, generate) run by hand against a live database.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=builder --chown=nextjs:nodejs /app/seeds ./seeds
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 CMD ["./node_modules/.bin/tsx", "worker/index.ts"]
