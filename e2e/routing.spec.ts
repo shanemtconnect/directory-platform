@@ -85,10 +85,15 @@ test.describe("routing canonicalisation", () => {
   test("a COLD mixed-case redirect emits exactly one Location", async ({ request }) => {
     // The regression this guards is cache-state-dependent: Next emitted the
     // header twice only on a MISS. An unseen spelling is how the test gets one
-    // without flushing a cache the rest of the suite is sharing.
+    // without flushing a cache the rest of the suite is sharing — asserting
+    // `x-nextjs-cache: MISS` below is what makes that "cold" claim checked
+    // rather than assumed; without it this test could quietly start
+    // exercising a HIT (the one state the bug never occurred in) and still
+    // pass.
     const spelling = randomCasing("leeds");
     const res = await request.get(`/${spelling}`, { maxRedirects: 0 });
     expect(res.status(), `/${spelling}`).toBe(PERMANENT);
+    expect(res.headers()["x-nextjs-cache"], `/${spelling}`).toBe("MISS");
     expect(locationOf(res)).toBe(CITY);
   });
 
