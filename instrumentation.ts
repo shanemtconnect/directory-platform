@@ -19,14 +19,21 @@ import { validateEnv } from "./config/validate";
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  // Works around a Next 16.3.4 defect that emits `Location` twice on a cold
-  // ISR redirect. Node-only and dynamically imported for the same reason as
-  // the exit below — `node:http` has no business in the edge graph. See
-  // lib/boot/location-header.ts for the full diagnosis.
-  const { dedupeLocationHeader } = await import("./lib/boot/location-header");
-  dedupeLocationHeader();
-
   try {
+    // Works around a Next 16.3.4 defect that emits `Location` twice on a cold
+    // ISR redirect. Node-only and dynamically imported for the same reason as
+    // the exit below — `node:http` has no business in the edge graph. See
+    // lib/boot/location-header.ts for the full diagnosis.
+    //
+    // Inside this try deliberately: a failing import here is exactly the kind
+    // of boot-time failure the catch below exists to turn into a visible exit
+    // rather than a silently-hanging or silently-500ing container. Outside
+    // the try, that same failure would throw past validateEnv entirely and
+    // reintroduce the "keeps running, answers 500 to everything" failure mode
+    // this file exists to prevent.
+    const { dedupeLocationHeader } = await import("./lib/boot/location-header");
+    dedupeLocationHeader();
+
     validateEnv(process.env, { phase: "runtime" });
   } catch (e) {
     // Throwing is not enough. Next catches whatever `register()` throws, logs

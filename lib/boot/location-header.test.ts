@@ -1,5 +1,6 @@
+import { ServerResponse } from "node:http";
 import { describe, expect, it, vi } from "vitest";
-import { dedupingAppendHeader } from "./location-header";
+import { dedupeLocationHeader, dedupingAppendHeader } from "./location-header";
 
 /**
  * A stand-in for the Node ServerResponse the patch wraps: just enough of the
@@ -78,5 +79,24 @@ describe("dedupingAppendHeader", () => {
     append.call(res as never, "location", "/leeds");
 
     expect(original).not.toHaveBeenCalled();
+  });
+});
+
+describe("dedupeLocationHeader", () => {
+  it("replaces the prototype method once; a second call is a no-op", () => {
+    const original = ServerResponse.prototype.appendHeader;
+
+    try {
+      dedupeLocationHeader();
+      const patchedOnce = ServerResponse.prototype.appendHeader;
+      expect(patchedOnce).not.toBe(original);
+
+      dedupeLocationHeader();
+      expect(ServerResponse.prototype.appendHeader).toBe(patchedOnce);
+    } finally {
+      // The prototype is process-global — undo the patch so this test cannot
+      // leak into any other suite's ServerResponse behaviour.
+      ServerResponse.prototype.appendHeader = original;
+    }
   });
 });
