@@ -1,8 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { rateLimit } from "./rate-limit";
 import { randomUUID } from "node:crypto";
 
-beforeEach(() => { process.env.REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380"; });
+const GOOD_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
+const DEAD_URL = "redis://127.0.0.1:1";
+
+beforeEach(() => { process.env.REDIS_URL = GOOD_URL; });
 
 describe("rateLimit", () => {
   it("allows up to the limit then blocks", async () => {
@@ -31,13 +34,72 @@ describe("rateLimit", () => {
     expect((await rateLimit(key, opts)).remaining).toBe(4);
     expect((await rateLimit(key, opts)).remaining).toBe(3);
   });
+});
 
-  it("fails OPEN when Redis is unreachable — a dead contact form is worse than spam", async () => {
-    const saved = process.env.REDIS_URL;
-    process.env.REDIS_URL = "redis://127.0.0.1:1";
-    // Force a fresh client for the bad URL by using a distinct key.
-    const res = await rateLimit(`unreachable:${randomUUID()}`, { limit: 1, windowSeconds: 60 });
-    process.env.REDIS_URL = saved;
-    expect(res.allowed).toBe(true);
+/**
+ * Each of these needs its own module instance: the Redis client and the
+ * "Redis is down" cooldown are module state, and a test that marks Redis dead
+ * would otherwise decide the outcome of every test after it.
+ */
+async function freshRateLimit(url: string) {
+  vi.resetModules();
+  process.env.REDIS_URL = url;
+  const mod = await import("./rate-limit");
+  return mod.rateLimit;
+}
+
+describe("rateLimit when Redis is unreachable", () => {
+  it("still counts, in process, rather than failing open", async () => {
+    // Failing open was the old behaviour: one dead cache and the submit form
+    // becomes an unmetered write endpoint.
+    const limited = await freshRateLimit(DEAD_URL);
+    const key = `test:${randomUUID()}`;
+    const opts = { limit: 2, windowSeconds: 60 };
+
+    expect(await limited(key, opts)).toMatchObject({ allowed: true, remaining: 1 });
+    expect(await limited(key, opts)).toMatchObject({ allowed: true, remaining: 0 });
+
+    const blocked = await limited(key, opts);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it("keeps the in-process fallback's keys separate", async () => {
+    const limited = await freshRateLimit(DEAD_URL);
+    const opts = { limit: 1, windowSeconds: 60 };
+    const a = `test:${randomUUID()}`, b = `test:${randomUUID()}`;
+    expect((await limited(a, opts)).allowed).toBe(true);
+    expect((await limited(b, opts)).allowed).toBe(true);
+    expect((await limited(a, opts)).allowed).toBe(false);
+  });
+
+  it("remembers the failure instead of reconnecting on every single call", async () => {
+    // A 3s connect timeout on every submit is a broken form in all but name.
+    const limited = await freshRateLimit(DEAD_URL);
+    const key = `test:${randomUUID()}`;
+    const opts = { limit: 5, windowSeconds: 60 };
+
+    await limited(key, opts);
+    // Redis is back — but we are inside the cooldown, so the next call must
+    // still use the in-process counter (a fresh Redis key would say 4).
+    process.env.REDIS_URL = GOOD_URL;
+    expect((await limited(key, opts)).remaining).toBe(3);
+  });
+
+  it("retries the connection once the cooldown has passed", async () => {
+    const limited = await freshRateLimit(DEAD_URL);
+    const key = `test:${randomUUID()}`;
+    const opts = { limit: 5, windowSeconds: 3600 };
+    await limited(key, opts);
+
+    process.env.REDIS_URL = GOOD_URL;
+    // Only Date is faked: the Redis client still needs real timers to connect.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 31_000 });
+    try {
+      // Back on Redis: a key nothing has touched before, so it counts from one.
+      expect((await limited(key, opts)).remaining).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
