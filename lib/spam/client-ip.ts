@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 /**
  * The client's IP, as far as anything can be trusted.
  *
@@ -25,10 +23,32 @@ export function clientIp(headers: Headers): string | null {
   return real !== undefined && real !== "" ? real : null;
 }
 
+let warnedMissingClientIp = false;
+
 /**
- * What to count against. An unidentifiable request gets a bucket of its own,
- * so it is never blocked by — and never blocks — anyone else.
+ * What to count against. There is nothing to count an unidentifiable
+ * request against: minting it a bucket of its own — as this used to do,
+ * `anon:${randomUUID()}` per call — writes a fresh Redis key (or, with
+ * Redis down, a fresh in-process Map entry) on every single request with no
+ * proxy header, which is an unbounded key generator wearing a rate limiter's
+ * clothes. Returning null tells the caller to skip counting entirely; the
+ * limit is a no-op for that request either way, since a bucket of one is
+ * never full.
+ *
+ * In production this is worth knowing about — it means requests are
+ * reaching the app with no X-Forwarded-For/X-Real-IP, almost always a proxy
+ * misconfiguration — so it is logged once per process, not once per
+ * request.
  */
-export function rateLimitSubject(ip: string | null): string {
-  return ip ?? `anon:${randomUUID()}`;
+export function rateLimitSubject(ip: string | null): string | null {
+  if (ip !== null) return ip;
+
+  if (process.env.NODE_ENV === "production" && !warnedMissingClientIp) {
+    warnedMissingClientIp = true;
+    console.warn(
+      "rateLimitSubject: no client IP header (X-Forwarded-For / X-Real-IP) present on a production request; rate limiting is not being applied to these requests",
+    );
+  }
+
+  return null;
 }

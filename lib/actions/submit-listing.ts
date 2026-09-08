@@ -50,10 +50,11 @@ export async function submitListing(
   }
 
   const ip = clientIp(await headers());
+  const subject = rateLimitSubject(ip);
 
   // Three an hour. A person listing their own business does it once; three is
   // room for a genuine retry and nothing like enough for a spam run.
-  const limit = await rateLimit(`submit-listing:${rateLimitSubject(ip)}`, {
+  const limit = await rateLimit(subject && `submit-listing:${subject}`, {
     limit: 3,
     windowSeconds: 3600,
   });

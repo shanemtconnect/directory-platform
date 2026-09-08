@@ -54,6 +54,17 @@ export interface RateLimitResult {
  */
 const memory = new Map<string, { count: number; expiresAt: number }>();
 
+/**
+ * Hard ceiling on the fallback map, independent of the sweep.
+ *
+ * The sweep only reclaims entries whose window has *expired* — a real
+ * outage, hit by enough distinct keys inside one window (a botnet doing the
+ * very thing this module exists to stop), can still grow the map without
+ * bound before anything expires. This is the backstop: once full, admitting
+ * a new key evicts the oldest one rather than growing further.
+ */
+export const RATE_LIMIT_MEMORY_MAX_ENTRIES = 10_000;
+
 function memoryLimit(
   redisKey: string,
   opts: { limit: number; windowSeconds: number },
@@ -64,7 +75,16 @@ function memoryLimit(
   const now = Date.now();
   for (const [k, v] of memory) if (v.expiresAt <= now) memory.delete(k);
 
-  const entry = memory.get(redisKey) ?? { count: 0, expiresAt: now + secondsLeft * 1000 };
+  let entry = memory.get(redisKey);
+  if (!entry) {
+    if (memory.size >= RATE_LIMIT_MEMORY_MAX_ENTRIES) {
+      // Map iteration order is insertion order, so the first key is the
+      // oldest one still tracked.
+      const oldestKey = memory.keys().next().value;
+      if (oldestKey !== undefined) memory.delete(oldestKey);
+    }
+    entry = { count: 0, expiresAt: now + secondsLeft * 1000 };
+  }
   entry.count += 1;
   memory.set(redisKey, entry);
 
@@ -75,11 +95,23 @@ function memoryLimit(
   };
 }
 
-/** Fixed-window counter in Redis, with an in-process counter behind it. */
+/**
+ * Fixed-window counter in Redis, with an in-process counter behind it.
+ *
+ * `key` is `null` when the caller had no subject to count against (see
+ * `rateLimitSubject`). There is nothing useful to write a counter under in
+ * that case, so this returns allowed without touching Redis or the
+ * in-process fallback at all — a bucket of one is never full, so writing it
+ * would only cost a Redis round trip (or a Map entry) for no effect.
+ */
 export async function rateLimit(
-  key: string,
+  key: string | null,
   opts: { limit: number; windowSeconds: number },
 ): Promise<RateLimitResult> {
+  if (key === null) {
+    return { allowed: true, remaining: opts.limit, retryAfterSeconds: 0 };
+  }
+
   const nowSeconds = Date.now() / 1000;
   const bucket = Math.floor(nowSeconds / opts.windowSeconds);
   const redisKey = `ratelimit:${key}:${bucket}`;

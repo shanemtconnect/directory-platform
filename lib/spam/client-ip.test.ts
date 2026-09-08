@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { clientIp, rateLimitSubject } from "./client-ip";
 
 const h = (init: Record<string, string>) => new Headers(init);
@@ -42,12 +42,43 @@ describe("rateLimitSubject", () => {
     expect(rateLimitSubject("198.51.100.4")).toBe("198.51.100.4");
   });
 
-  it("gives an unidentifiable request its own bucket, never a shared one", () => {
-    // The old code bucketed every such request under "unknown", so a single
-    // bot could lock out every direct-connection visitor on the site.
-    const a = rateLimitSubject(null);
-    const b = rateLimitSubject(null);
-    expect(a).not.toBe(b);
-    expect(a).not.toBe("unknown");
+  it("returns null for an unidentifiable request instead of minting a bucket", () => {
+    // The old code minted `anon:${randomUUID()}` per call, so with no proxy
+    // header every request got a fresh Redis key (or, with Redis down, a
+    // fresh in-process Map entry) — an unbounded key generator disguised as
+    // a rate limit. There is nothing useful to count against, so: no key.
+    expect(rateLimitSubject(null)).toBeNull();
+  });
+
+  it("warns once per process, only in production, when no client IP is present", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.resetModules();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const mod = await import("./client-ip");
+      mod.rateLimitSubject(null);
+      mod.rateLimitSubject(null);
+      mod.rateLimitSubject(null);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it("does not warn outside production", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.resetModules();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const mod = await import("./client-ip");
+      mod.rateLimitSubject(null);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });

@@ -41,7 +41,8 @@ export async function submitEnquiry(
   }
 
   const ip = clientIp(await headers());
-  const limit = await rateLimit(`enquiry:${rateLimitSubject(ip)}`, {
+  const subject = rateLimitSubject(ip);
+  const limit = await rateLimit(subject && `enquiry:${subject}`, {
     limit: 5,
     windowSeconds: 3600,
   });

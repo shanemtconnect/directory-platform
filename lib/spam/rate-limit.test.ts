@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { rateLimit } from "./rate-limit";
+import { rateLimit, RATE_LIMIT_MEMORY_MAX_ENTRIES } from "./rate-limit";
 import { randomUUID } from "node:crypto";
 
 const GOOD_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
@@ -8,6 +8,20 @@ const DEAD_URL = "redis://127.0.0.1:1";
 beforeEach(() => { process.env.REDIS_URL = GOOD_URL; });
 
 describe("rateLimit", () => {
+  it("does not write a counter, and always allows, when the key is null", async () => {
+    // A null key means the caller could not identify a subject to count
+    // against (see rateLimitSubject). There is nothing to rate-limit, so
+    // this must not touch Redis or the in-process fallback at all.
+    const opts = { limit: 1, windowSeconds: 60 };
+    for (let i = 0; i < 5; i++) {
+      expect(await rateLimit(null, opts)).toEqual({
+        allowed: true,
+        remaining: opts.limit,
+        retryAfterSeconds: 0,
+      });
+    }
+  });
+
   it("allows up to the limit then blocks", async () => {
     const key = `test:${randomUUID()}`;
     const opts = { limit: 3, windowSeconds: 60 };
@@ -72,6 +86,25 @@ describe("rateLimit when Redis is unreachable", () => {
     expect((await limited(b, opts)).allowed).toBe(true);
     expect((await limited(a, opts)).allowed).toBe(false);
   });
+
+  it("caps the in-process fallback map so an outage cannot grow memory without bound", async () => {
+    const limited = await freshRateLimit(DEAD_URL);
+    const opts = { limit: 5, windowSeconds: 60 };
+    const first = `test:${randomUUID()}`;
+
+    // Establish `first` as the oldest entry in the map.
+    expect((await limited(first, opts)).remaining).toBe(4);
+
+    // Fill the map to capacity with distinct keys so it must evict to admit
+    // any more — `first` is the oldest, so it goes first.
+    for (let i = 0; i < RATE_LIMIT_MEMORY_MAX_ENTRIES; i++) {
+      await limited(`test:${randomUUID()}`, opts);
+    }
+
+    // Evicted, so counting on `first` starts over instead of continuing
+    // from where it left off.
+    expect((await limited(first, opts)).remaining).toBe(4);
+  }, 20000);
 
   it("remembers the failure instead of reconnecting on every single call", async () => {
     // A 3s connect timeout on every submit is a broken form in all but name.
