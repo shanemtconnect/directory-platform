@@ -1,5 +1,7 @@
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { MAX_UPLOAD_BYTES } from "./validate";
 
 let cached: S3Client | null = null;
 
@@ -34,9 +36,40 @@ export async function deleteObject(bucket: string, key: string): Promise<void> {
   await client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
-/** Uploads go direct to R2, so files never land on the app server's disk. */
-export function presignPut(bucket: string, key: string, ttlSeconds = 900): Promise<string> {
-  return getSignedUrl(client(), new PutObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: ttlSeconds });
+export interface PresignedUpload {
+  /** POST the form here. */
+  url: string;
+  /** Hidden form fields, sent before the file part. */
+  fields: Record<string, string>;
+}
+
+/**
+ * Uploads go direct to R2, so files never land on the app server's disk — but
+ * a presigned PUT signs the key and nothing else. Whoever holds it can push a
+ * four-gigabyte file, or an HTML document with a Content-Type that makes the
+ * CDN serve it back as a script from our own domain.
+ *
+ * A POST policy is the only presigned form that carries conditions, so the
+ * size cap of global constraint 15 and the type restriction are enforced by
+ * R2 at upload time rather than discovered by the worker afterwards. The
+ * worker still sniffs the magic bytes: a Content-Type is a claim, not a fact.
+ */
+export function presignUpload(
+  bucket: string,
+  key: string,
+  opts: { contentTypePrefix?: string; maxBytes?: number; ttlSeconds?: number } = {},
+): Promise<PresignedUpload> {
+  return createPresignedPost(client(), {
+    Bucket: bucket,
+    Key: key,
+    Expires: opts.ttlSeconds ?? 900,
+    Conditions: [
+      // A zero-byte lower bound would let an empty file through and leave a
+      // row the worker retries for ever.
+      ["content-length-range", 1, opts.maxBytes ?? MAX_UPLOAD_BYTES],
+      ["starts-with", "$Content-Type", opts.contentTypePrefix ?? "image/"],
+    ],
+  });
 }
 
 /**
