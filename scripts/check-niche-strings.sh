@@ -33,8 +33,12 @@ HITS=$(grep -rnE --include='*.ts' --include='*.tsx' --include='*.md' \
 if [ -n "$HITS" ]; then
   echo "FAIL: hardcoded niche strings found. Use siteConfig.entity instead."
   # grep -i prepends its own line number from the piped stream; drop it so the
-  # file:line the reader needs is the first thing on the line.
-  echo "$HITS" | sed -E 's/^[0-9]+://'
+  # file:line the reader needs is the first thing on the line. The text after
+  # that is still the siteConfig-stripped copy used for matching above — look
+  # each match back up by file:line so what prints is the real source line.
+  echo "$HITS" | sed -E 's/^[0-9]+://' | while IFS=: read -r file lineno _; do
+    printf '%s:%s:%s\n' "$file" "$lineno" "$(sed -n "${lineno}p" "$file")"
+  done
   exit 1
 fi
 echo "OK: no hardcoded niche strings in ${DIRS// /, }"
