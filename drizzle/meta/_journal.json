@@ -8,6 +8,20 @@
       "when": 1788821098171,
       "tag": "0000_rainy_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788868031537,
+      "tag": "0001_swift_whirlwind",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788868082113,
+      "tag": "0002_black_doorman",
+      "breakpoints": true
     }
   ]
 }

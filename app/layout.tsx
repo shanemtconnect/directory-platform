@@ -4,6 +4,8 @@ import { siteConfig } from "@/config/site.config";
 import { themeStyleVars } from "@/lib/theme";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { organisationSchema, websiteSchema } from "@/lib/schema/builders";
+import { SiteHeader } from "@/components/layout/SiteHeader";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 
 export const metadata = {
   title: { default: siteConfig.name, template: `%s | ${siteConfig.name}` },
@@ -17,7 +19,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {/* Global identity nodes, emitted once. Page-level nodes reference these by @id. */}
         <JsonLd data={organisationSchema()} />
         <JsonLd data={websiteSchema()} />
+        <SiteHeader />
         {children}
+        <SiteFooter />
       </body>
     </html>
   );

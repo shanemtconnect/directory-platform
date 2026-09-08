@@ -2,11 +2,16 @@ import { pgTable, uuid, text, boolean, timestamp, jsonb, uniqueIndex, index } fr
 import { base } from "./_base";
 import { userRole, claimRequestStatus, evidenceType, verificationStatus } from "./enums";
 import { listings } from "./listings";
+import { user } from "./auth";
 
-/** user_id references Better Auth's `user` table, added in Phase 3. */
 export const profiles = pgTable("profiles", {
   ...base,
-  userId: text("user_id").notNull(),
+  /**
+   * Cascades on user deletion. Without the FK a deleted account leaves an
+   * orphaned profile behind — and if that row said role 'admin', a later user
+   * issued the same id would inherit it.
+   */
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   role: userRole("role").notNull().default("user"),
   name: text("name"),
   phone: text("phone"),
