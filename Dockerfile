@@ -77,6 +77,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 COPY --from=builder /app/cache-handler.mjs ./cache-handler.mjs
+# The handler's own imports, copied explicitly. Next's file tracer does pick
+# them up today — but the handler is loaded at runtime, not traced from the
+# entrypoint (see the prod-deps stage above), so tracing is not something to
+# rely on for it. A missed file here is silent: the import fails and every
+# container drops back to a per-process LRU.
+COPY --from=builder --chown=nextjs:nodejs /app/lib/cache/*.mjs ./lib/cache/
 # The standalone output ships a traced node_modules of its own, in pnpm's
 # symlinked shape. Replace it wholesale rather than merging: the hoisted tree is
 # a strict superset of the same lockfile, and merging a real directory onto a
