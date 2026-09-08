@@ -70,12 +70,16 @@ DATABASE_URL=postgres://directory:directory@localhost:5433/directory_dev \
 corepack pnpm test
 ```
 
-Copy `.env.example` to `.env` and fill it in. Three keys are required to boot
-and `validateEnv` refuses to start without them — `NEXT_PUBLIC_SITE_URL`,
-`DATABASE_URL`, `REDIS_URL`. The rest of `.env.example` is groundwork for later
-phases (auth, R2, PayPal, email) and is listed in `RUNTIME_ENV_PHASE5` in
-`config/validate.ts`, along with the phase that turns each group on. Turnstile
-and MapTiler stay optional: both degrade rather than break.
+Copy `.env.example` to `.env` and fill it in. **Five** keys are required to boot
+and `validateEnv` refuses to start without them (`RUNTIME_ENV` in
+`config/validate.ts`) — `NEXT_PUBLIC_SITE_URL`, `DATABASE_URL`, `REDIS_URL`,
+`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`. The last two are there because auth is
+wired: without the secret every session cookie is signed with a key the next
+boot does not have, and without the URL the callbacks point at the wrong origin.
+The rest of `.env.example` is groundwork for later phases (R2, PayPal, email)
+and is listed in `RUNTIME_ENV_PHASE5` in `config/validate.ts`, along with the
+phase that turns each group on. Turnstile and MapTiler stay optional: both
+degrade rather than break.
 
 `NEXT_PUBLIC_*` values are inlined by `next build`, so setting one at boot does
 nothing. They are build args, and a missing one warns rather than failing.
@@ -113,20 +117,27 @@ literal string `true`.
 ```bash
 docker build --target runner \
   --build-arg NEXT_PUBLIC_SITE_URL=https://example.co.uk \
+  --build-arg SITE_ENV=production \
   --build-arg NEXT_PUBLIC_MAPTILER_KEY=… \
   --build-arg NEXT_PUBLIC_MEDIA_URL=https://media.example.co.uk \
-  --build-arg DATABASE_URL=postgres://…  -t directory-platform .
+  -t directory-platform .
 
 ./scripts/verify-image.sh    # cache handler loads, assets retained, worker runs
 ```
 
-`DATABASE_URL` is a build arg because `next build` prerenders `/`, `/cities`
-and `/categories` from the database — the build genuinely queries it. (The
-city and category catch-all routes are not among these: their
-`generateStaticParams` return `[]`, so they need no database.) `docker build`
-now fails fast with a clear message if the arg is missing, rather than dying
-partway through prerendering on `ECONNREFUSED`. It is not baked into the
-runner; that gets its own at boot.
+`NEXT_PUBLIC_SITE_URL` and `SITE_ENV` are the two that matter and neither can be
+corrected at boot: the first is inlined into the client bundle, the second is
+frozen into `routes-manifest.json` (see above). The other two are optional and
+warn rather than failing.
+
+**No `DATABASE_URL`.** The build does not need one. `/`, `/cities` and
+`/categories` are ISR pages that read Postgres, but they ask
+`prerenderingWithoutDatabase()` first (`lib/db/build-phase.ts`) and prerender an
+empty-state shell when there is nothing to read; ISR fills in the real page on
+the first request, where a database is guaranteed because `instrumentation.ts`
+refuses to boot a server without one. The city and category catch-all routes
+never needed one: their `generateStaticParams` return `[]`. The runner gets its
+`DATABASE_URL` at boot.
 
 ### Migrating: the Coolify pre-deployment command
 
