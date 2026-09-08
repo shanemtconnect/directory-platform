@@ -18,14 +18,19 @@ import { expect, test, type APIResponse } from "@playwright/test";
  * has no way to emit a 301 from a server component, and 308 is the same
  * permanent signal — it just also forbids rewriting the method.
  *
- * KNOWN DEFECT, asserted around rather than hidden: on a COLD response
- * (`x-nextjs-cache: MISS`) these routes emit `Location` TWICE, with the same
- * value both times; a warm response emits it once. It reproduces on every
- * redirect from an ISR-cached route and predates this suite, so it belongs to
- * the ISR cache handler rather than to the routing rules under test here.
- * `locationOf` therefore asserts that the header names exactly ONE destination
- * — which is the thing that would actually break a client — and reports the
- * duplication rather than passing over it in silence.
+ * `locationOf` asserts ONE `Location` line, not merely one destination.
+ *
+ * It used to tolerate two, because on a cold response (`x-nextjs-cache: MISS`)
+ * Next 16.3.4 emitted `Location` twice with the same value: the redirect write
+ * from the render, plus the same header replayed from the fresh cache entry.
+ * That is fixed in lib/boot/location-header.ts, and this assertion is what
+ * keeps it fixed — a recipient may fold repeated field lines into one
+ * comma-joined value, which turns `/leeds` into `/leeds, /leeds`.
+ *
+ * Verified cold by hand as well as here: flush the ISR namespace, start the
+ * standalone server, and `curl -sI http://localhost:PORT/Leeds` — one
+ * `location: /leeds` beside `x-nextjs-cache: MISS`. The first test below
+ * forces a cold key of its own so a warm server cannot hide a regression.
  */
 
 function locationOf(res: APIResponse): string {
@@ -34,12 +39,30 @@ function locationOf(res: APIResponse): string {
     .filter((h) => h.name.toLowerCase() === "location")
     .map((h) => h.value);
 
-  expect(values.length, "no Location header").toBeGreaterThan(0);
   expect(
-    new Set(values).size,
-    `Location names more than one destination: ${values.join(" | ")}`,
-  ).toBe(1);
+    values,
+    `expected exactly one Location line (x-nextjs-cache: ${res.headers()["x-nextjs-cache"] ?? "none"})`,
+  ).toHaveLength(1);
   return values[0]!;
+}
+
+/**
+ * A case spelling of a slug that this run has almost certainly never asked for.
+ *
+ * The ISR cache is keyed on the pathname, so a fresh spelling is a fresh key
+ * and therefore a genuine `MISS` — the only state in which the doubled
+ * `Location` ever appeared. There are 2^n spellings of an n-letter slug, so a
+ * repeat is possible; it would only cost this one test its coldness, never
+ * its correctness.
+ *
+ * One letter is forced upper so the result is always a redirect — the
+ * all-lowercase draw is the canonical path and answers 200.
+ */
+function randomCasing(slug: string): string {
+  const forced = Math.floor(Math.random() * slug.length);
+  return [...slug]
+    .map((c, i) => (i === forced || Math.random() < 0.5 ? c.toUpperCase() : c))
+    .join("");
 }
 
 const CITY = "/leeds";
@@ -56,6 +79,16 @@ test.describe("routing canonicalisation", () => {
   test("a mixed-case path permanently redirects to its lowercase form", async ({ request }) => {
     const res = await request.get("/Leeds", { maxRedirects: 0 });
     expect(res.status()).toBe(PERMANENT);
+    expect(locationOf(res)).toBe(CITY);
+  });
+
+  test("a COLD mixed-case redirect emits exactly one Location", async ({ request }) => {
+    // The regression this guards is cache-state-dependent: Next emitted the
+    // header twice only on a MISS. An unseen spelling is how the test gets one
+    // without flushing a cache the rest of the suite is sharing.
+    const spelling = randomCasing("leeds");
+    const res = await request.get(`/${spelling}`, { maxRedirects: 0 });
+    expect(res.status(), `/${spelling}`).toBe(PERMANENT);
     expect(locationOf(res)).toBe(CITY);
   });
 

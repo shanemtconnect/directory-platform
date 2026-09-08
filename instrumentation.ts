@@ -19,6 +19,13 @@ import { validateEnv } from "./config/validate";
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  // Works around a Next 16.3.4 defect that emits `Location` twice on a cold
+  // ISR redirect. Node-only and dynamically imported for the same reason as
+  // the exit below — `node:http` has no business in the edge graph. See
+  // lib/boot/location-header.ts for the full diagnosis.
+  const { dedupeLocationHeader } = await import("./lib/boot/location-header");
+  dedupeLocationHeader();
+
   try {
     validateEnv(process.env, { phase: "runtime" });
   } catch (e) {
