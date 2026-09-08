@@ -15,11 +15,10 @@
 #    whole import graph resolves, `@/lib/db/client` included. It is not run to
 #    completion: it needs no Postgres to start, and would otherwise sit in cron
 #    forever, so it is started with a timeout and asserted on its startup line.
-# 5. The RUNNER can migrate a database. Coolify's pre-deployment command runs
-#    `node scripts/migrate.mjs` in this image, and the image carries prod deps
-#    only — so `drizzle/` or a missed dependency is a deploy that dies at the
-#    first step, or worse, a container that serves a site whose every enquiry
-#    form fails on a missing `job_queue` column.
+# 5. `node scripts/migrate.mjs` runs standalone in this image, and the image
+#    carries prod deps only — so `drizzle/` or a missed dependency is a deploy
+#    that dies at the first step, or worse, a container that serves a site
+#    whose every enquiry form fails on a missing `job_queue` column.
 # 6. The WORKER can seed the database the runner just migrated. Seeding needs
 #    tsx and `seeds/`, which only this stage has. Run against the same throwaway
 #    database as (5) on purpose: it is the real first-deploy order, and it
@@ -32,6 +31,13 @@
 #    noindex header can never be flipped without a rebuild. Checked from both
 #    sides: SITE_ENV=staging on a reachable origin builds, and omitting it on
 #    the same origin fails on the placeholder guard.
+# 8. MIGRATE_ON_BOOT=true actually migrates before serving. Coolify's
+#    pre-deployment command runs in the PREVIOUS container, so it never runs
+#    on a first deploy and would run the OLD image's migrator on later ones —
+#    the entrypoint of the NEW container is the only correct place. Checked
+#    end to end: a fresh throwaway database gets all 8 migrations applied and
+#    `/pricing` returns 200 once the container is up, and a wrong
+#    `DATABASE_URL` exits the container non-zero instead of serving anyway.
 #
 # This cannot be a RUN step in the Dockerfile: importing the handler needs REDIS_URL.
 #
@@ -76,6 +82,12 @@ ADMIN_DB=${ADMIN_DATABASE_URL:-postgres://directory:directory@host.docker.intern
 VERIFY_DB=${VERIFY_DB_NAME:-directory_imgverify}
 VERIFY_DB_URL=${ADMIN_DB%/*}/$VERIFY_DB
 
+# A second, separate throwaway database for the MIGRATE_ON_BOOT check below:
+# it has to start genuinely unmigrated, which $VERIFY_DB no longer is by the
+# time that check runs.
+BOOT_DB=${BOOT_DB_NAME:-directory_bootcheck}
+BOOT_DB_URL=${ADMIN_DB%/*}/$BOOT_DB
+
 # SITE_ENV is a BUILD arg, not a boot one: `next.config.ts` `headers()` is
 # evaluated during the build and frozen into routes-manifest.json, and
 # `validateProductionConfig` runs there too. Passed explicitly on every build
@@ -111,14 +123,20 @@ admin_sql() {
 # through must not leave a stray database or volume behind for the next run.
 VOL=""
 DB_CREATED=""
+BOOT_DB_CREATED=""
+BOOT_CONTAINER=""
 EXTRA_IMAGES=""
 cleanup() {
+  if [ -n "$BOOT_CONTAINER" ]; then docker rm -f "$BOOT_CONTAINER" > /dev/null 2>&1 || true; fi
   if [ -n "$EXTRA_IMAGES" ]; then docker rmi -f $EXTRA_IMAGES > /dev/null 2>&1 || true; fi
   # `if`, not `&&`: under `set -e` a false test would abort the trap and leave
   # the rest of the cleanup undone.
   if [ -n "$VOL" ]; then docker volume rm -f "$VOL" > /dev/null 2>&1 || true; fi
   if [ -n "$DB_CREATED" ]; then
     admin_sql "drop database if exists \"$VERIFY_DB\" with (force)" 2>/dev/null || true
+  fi
+  if [ -n "$BOOT_DB_CREATED" ]; then
+    admin_sql "drop database if exists \"$BOOT_DB\" with (force)" 2>/dev/null || true
   fi
   return 0
 }
@@ -202,6 +220,79 @@ set -e
 [ "$BAD_CODE" -ne 0 ] || fail "migrate.mjs exited 0 with no DATABASE_URL"
 grep -q "DATABASE_URL is not set" <<<"$BAD_OUT" || fail "no clear message: $BAD_OUT"
 echo "ok: exit $BAD_CODE, and it said why"
+
+# The entrypoint check: MIGRATE_ON_BOOT=true has to actually migrate a fresh
+# database before the server ever answers a request — not just that
+# scripts/migrate.mjs works standalone (already proven above), but that the
+# container wires it in ahead of `node server.js`, as the nextjs user, gated
+# to the web role.
+echo "--- boot: MIGRATE_ON_BOOT=true migrates a fresh database before serving ---"
+admin_sql "drop database if exists \"$BOOT_DB\" with (force)"
+admin_sql "create database \"$BOOT_DB\""
+BOOT_DB_CREATED=1
+
+BOOT_CONTAINER=$(docker run -d --add-host=host.docker.internal:host-gateway \
+  -e MIGRATE_ON_BOOT=true \
+  -e DATABASE_URL="$BOOT_DB_URL" \
+  -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
+  -e REDIS_URL="$RUNTIME_REDIS" \
+  -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
+  -e BETTER_AUTH_URL="$AUTH_URL" \
+  -p 127.0.0.1::3000 "$IMAGE")
+BOOT_PORT=$(docker port "$BOOT_CONTAINER" 3000/tcp | head -n1 | cut -d: -f2)
+
+# Poll rather than sleep-and-hope: migrating 8 files then booting Next.js takes
+# a variable few seconds, and a container that dies mid-migration must fail
+# this loop (not time out looking like a slow success).
+ready=""
+for _ in $(seq 1 30); do
+  if [ "$(docker inspect -f '{{.State.Running}}' "$BOOT_CONTAINER" 2>/dev/null)" != "true" ]; then
+    fail "container exited before serving: $(docker logs "$BOOT_CONTAINER" 2>&1 | tail -30)"
+  fi
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BOOT_PORT/pricing" 2>/dev/null || echo 000)
+  if [ "$CODE" = "200" ]; then ready=1; break; fi
+  sleep 1
+done
+[ -n "$ready" ] || fail "/pricing did not return 200 within 30s of boot: $(docker logs "$BOOT_CONTAINER" 2>&1 | tail -30)"
+echo "ok: /pricing returned 200 after boot"
+
+BOOT_LOG=$(docker logs "$BOOT_CONTAINER" 2>&1)
+grep -q "MIGRATE_ON_BOOT=true: running scripts/migrate.mjs before serving" <<<"$BOOT_LOG" \
+  || fail "entrypoint did not log the pre-migrate line: $BOOT_LOG"
+grep -q "migrations applied" <<<"$BOOT_LOG" || fail "entrypoint did not log the post-migrate line: $BOOT_LOG"
+
+ROWS=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e ADMIN_URL="$BOOT_DB_URL" "$IMAGE" \
+  node --input-type=module -e '
+    import postgres from "postgres";
+    const sql = postgres(process.env.ADMIN_URL, { max: 1, onnotice: () => {} });
+    const rows = await sql`select count(*)::int as n from drizzle.__drizzle_migrations`;
+    console.log(rows[0].n);
+    await sql.end();
+  ')
+[ "$ROWS" = "8" ] || fail "expected 8 rows in drizzle.__drizzle_migrations after boot, got $ROWS"
+echo "ok: drizzle.__drizzle_migrations has 8 rows"
+
+docker rm -f "$BOOT_CONTAINER" > /dev/null 2>&1 || true
+BOOT_CONTAINER=""
+
+echo "--- boot: MIGRATE_ON_BOOT=true with a wrong DATABASE_URL exits non-zero instead of serving ---"
+set +e
+WRONGBOOT_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e MIGRATE_ON_BOOT=true \
+  -e DATABASE_URL="postgres://directory:wrong-password@host.docker.internal:5433/$BOOT_DB" \
+  -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
+  -e REDIS_URL="$RUNTIME_REDIS" \
+  -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
+  -e BETTER_AUTH_URL="$AUTH_URL" \
+  "$IMAGE" 2>&1)
+WRONGBOOT_CODE=$?
+set -e
+[ "$WRONGBOOT_CODE" -ne 0 ] || fail "container booted (exit 0) with a wrong DATABASE_URL"
+if grep -q "Ready in" <<<"$WRONGBOOT_OUT"; then
+  fail "the server started despite a wrong DATABASE_URL: $WRONGBOOT_OUT"
+fi
+echo "ok: exit $WRONGBOOT_CODE, server never started"
 
 echo "--- building worker ---"
 build worker "$IMAGE-worker"
@@ -307,5 +398,7 @@ echo "ok: exit $NB_CODE, and it named the placeholder"
 
 echo "PASS: cache handler loads, assets survive a redeploy, a read-only volume"
 echo "      fails the boot, the worker runs its real entrypoint, the runner"
-echo "      migrates a fresh database and the worker seeds it, and SITE_ENV is"
-echo "      genuinely a build arg — staging builds, and its absence is caught."
+echo "      migrates a fresh database and the worker seeds it, MIGRATE_ON_BOOT"
+echo "      migrates before serving and refuses to boot on a bad DATABASE_URL,"
+echo "      and SITE_ENV is genuinely a build arg — staging builds, and its"
+echo "      absence is caught."
