@@ -96,9 +96,15 @@ export function SiteHeader() {
           <NavLinks routes={inline} className="flex list-none items-center gap-1 text-sm" />
         </nav>
 
+        {/*
+          Visible from md up so there is a search entry point at every width the
+          mobile <details> menu (md:hidden, below) does not cover — narrow at
+          md/lg where the inline nav and the two CTAs already crowd the bar,
+          full width once xl gives it room.
+        */}
         <SearchField
           id="site-search"
-          className="hidden min-w-0 items-center gap-2 xl:flex xl:w-64"
+          className="hidden min-w-0 items-center gap-2 md:flex md:w-36 lg:w-48 xl:w-64"
         />
 
         <a
