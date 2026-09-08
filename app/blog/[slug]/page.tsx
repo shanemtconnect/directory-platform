@@ -4,7 +4,8 @@ import { siteConfig } from "@/config/site.config";
 import { getPost, getPostSlugs, formatDate, articleSchema } from "@/lib/blog/posts";
 import { PostBody } from "@/components/blog/PostBody";
 import { JsonLd } from "@/components/seo/JsonLd";
-import { breadcrumbSchema } from "@/lib/schema/builders";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { contentSectionLabel } from "@/lib/features/navigation";
 
 export const revalidate = 3600;
 
@@ -51,15 +52,15 @@ export default async function BlogPost({ params }: Props) {
 
   return (
     <>
-      <JsonLd
-        data={breadcrumbSchema([
-          { name: "Home", path: "/" },
-          { name: "Guides", path: "/blog" },
-          { name: post.title, path: `/blog/${post.slug}` },
-        ])}
-      />
       <JsonLd data={articleSchema(post)} />
       <main>
+        <Breadcrumbs
+          trail={[
+            { name: "Home", path: "/" },
+            { name: contentSectionLabel(), path: "/blog" },
+            { name: post.title, path: `/blog/${post.slug}` },
+          ]}
+        />
         <article>
           <h1>{post.title}</h1>
           <p>
@@ -83,7 +84,7 @@ export default async function BlogPost({ params }: Props) {
           )}
         </article>
         <p>
-          <a href="/blog">All guides</a>
+          <a href="/blog">All {contentSectionLabel().toLowerCase()}</a>
         </p>
       </main>
     </>

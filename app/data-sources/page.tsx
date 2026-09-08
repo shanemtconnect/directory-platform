@@ -6,6 +6,7 @@ export const revalidate = 86400;
 export const metadata: Metadata = {
   title: "Where our listing information comes from",
   description: "How we compile listings, and how to correct or remove one.",
+  alternates: { canonical: "/data-sources" },
 };
 
 /**

@@ -12,6 +12,8 @@ import { Pagination } from "@/components/pillar/Pagination";
 // sitemap rather than left to compete with the pillar pages it should feed.
 export const metadata: Metadata = {
   title: "Search",
+  // Query-less canonical: every faceted variant of this page is the same page.
+  alternates: { canonical: "/search" },
   robots: { index: false, follow: true },
 };
 

@@ -17,6 +17,13 @@ export interface NavEntry {
  * build. If a flag flips and a link survives anywhere in the UI, that link was
  * not reading from here — which is the bug, not the flag.
  */
+/**
+ * What the content section is CALLED. The route is always /blog; contentHub
+ * only changes the wording, and the blog pages read it from here so the nav,
+ * the breadcrumb, the H1 and the title can never disagree.
+ */
+export const contentLabel = (f: FeatureMap): string => (f.contentHub ? "Guides" : "Blog");
+
 export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
   const e = siteConfig.entity;
 
@@ -42,7 +49,7 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
   // that exists, and advertising /guides was a link to a 404.
   routes.push({
     href: "/blog",
-    label: f.contentHub ? "Guides" : "Blog",
+    label: contentLabel(f),
     inNav: true,
     inFooter: true,
     inSitemap: true,
@@ -60,6 +67,7 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
 }
 
 export const enabledRoutes = (): NavEntry[] => buildRoutes(features, siteConfig.siteMode);
+export const contentSectionLabel = (): string => contentLabel(features);
 export const navRoutes = (): NavEntry[] => enabledRoutes().filter((r) => r.inNav);
 export const footerRoutes = (): NavEntry[] => enabledRoutes().filter((r) => r.inFooter);
 export const sitemapRoutes = (): NavEntry[] => enabledRoutes().filter((r) => r.inSitemap);

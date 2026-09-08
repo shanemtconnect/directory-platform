@@ -1,4 +1,19 @@
+import { siteConfig } from "@/config/site.config";
+
 export type SiteEnv = "production" | "staging";
+
+/**
+ * The site's absolute origin, with no trailing slash.
+ *
+ * ONE definition, because three things have to agree on it or the site
+ * contradicts itself: `metadataBase` (which every canonical and og:url is
+ * resolved against), the JSON-LD `@id`s, and the sitemap's `<loc>`s. Read at
+ * call time rather than frozen into a module constant so tests and a
+ * per-environment deploy can both set it.
+ */
+export function siteOrigin(): string {
+  return (process.env.NEXT_PUBLIC_SITE_URL ?? `https://${siteConfig.domain}`).replace(/\/+$/, "");
+}
 
 /**
  * Staging sites must never be indexed.

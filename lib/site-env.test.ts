@@ -1,8 +1,32 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { siteEnv, isStaging, NOINDEX_HEADER } from "./site-env";
+import { siteEnv, isStaging, siteOrigin, NOINDEX_HEADER } from "./site-env";
+import { siteConfig } from "@/config/site.config";
 
 const original = process.env.SITE_ENV;
-afterEach(() => { process.env.SITE_ENV = original; });
+const originalUrl = process.env.NEXT_PUBLIC_SITE_URL;
+afterEach(() => {
+  process.env.SITE_ENV = original;
+  if (originalUrl === undefined) delete process.env.NEXT_PUBLIC_SITE_URL;
+  else process.env.NEXT_PUBLIC_SITE_URL = originalUrl;
+});
+
+describe("siteOrigin", () => {
+  it("uses NEXT_PUBLIC_SITE_URL when it is set", () => {
+    process.env.NEXT_PUBLIC_SITE_URL = "https://staging.example.test";
+    expect(siteOrigin()).toBe("https://staging.example.test");
+  });
+
+  it("falls back to the configured domain", () => {
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    expect(siteOrigin()).toBe(`https://${siteConfig.domain}`);
+  });
+
+  it("never leaves a trailing slash, so no URL it builds has a double one", () => {
+    process.env.NEXT_PUBLIC_SITE_URL = "https://example.test//";
+    expect(siteOrigin()).toBe("https://example.test");
+    expect(new URL(siteOrigin())).toBeInstanceOf(URL);
+  });
+});
 
 describe("siteEnv", () => {
   it("defaults to production when unset — staging must be opted into", () => {

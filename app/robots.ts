@@ -1,6 +1,5 @@
 import type { MetadataRoute } from "next";
-import { siteConfig } from "@/config/site.config";
-import { isStaging } from "@/lib/site-env";
+import { isStaging, siteOrigin } from "@/lib/site-env";
 
 /**
  * Dynamic, deliberately.
@@ -15,7 +14,7 @@ import { isStaging } from "@/lib/site-env";
 export const dynamic = "force-dynamic";
 
 export default function robots(): MetadataRoute.Robots {
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? `https://${siteConfig.domain}`;
+  const base = siteOrigin();
 
   if (isStaging()) {
     // Belt to the X-Robots-Tag header's braces. No sitemap is advertised.

@@ -83,15 +83,20 @@ export default async function CategoryNationalPage({ params }: Props) {
 
   const e = siteConfig.entity;
   const isFirstPage = parsed.page === 1;
-  const noun = total === 1 ? e.singular : e.plural;
+  // The category's own nouns, so the count agrees with the H1 above it.
+  const noun = total === 1 ? category.singular : category.plural;
+  const pagePath = isFirstPage ? basePath : `${basePath}/page/${parsed.page}`;
 
   return (
     <>
       <JsonLd
         data={pillarSchema({
+          // Page N is its own document with its own listings; asserting page
+          // 1's url/@id makes the two collide.
           title: category.name,
-          path: basePath,
-          description: category.description,
+          path: pagePath,
+          // The description renders on page 1 only, so only page 1 claims it.
+          description: isFirstPage ? category.description : null,
           items: rows.map((r) => ({
             name: r.listing.name,
             path: `/${r.citySlug}/${r.listing.slug}`,
@@ -185,10 +190,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const total = await countCategoryListings(db as never, PUBLIC_VIEWER, category.id);
 
+  const basePath = `/categories/${category.slug}`;
+  const onPageOne = parsed.page === 1;
+  // Page N canonicalises to itself, not to page 1 — see the catch-all route.
+  const path = onPageOne ? basePath : `${basePath}/page/${parsed.page}`;
+  const title = onPageOne ? category.name : `${category.name} — page ${parsed.page}`;
+
+  const base =
+    category.description ?? `Browse ${category.plural} across every town and city we cover.`;
+
   return {
-    title: parsed.page > 1 ? `${category.name} — page ${parsed.page}` : category.name,
-    description:
-      category.description ?? `Browse ${category.plural} across every town and city we cover.`,
+    title,
+    description: onPageOne ? base : `${base} — page ${parsed.page}`,
+    alternates: { canonical: path },
+    openGraph: { title, url: path },
     robots: total === 0 ? { index: false, follow: true } : undefined,
   };
 }

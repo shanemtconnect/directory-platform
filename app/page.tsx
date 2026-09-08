@@ -18,6 +18,7 @@ export const revalidate = 3600;
 export const metadata: Metadata = {
   title: { absolute: `${siteConfig.name} — ${siteConfig.tagline}` },
   description: siteConfig.tagline,
+  alternates: { canonical: "/" },
 };
 
 export default async function HomePage() {

@@ -1,6 +1,7 @@
 import type { listings, cities, categories } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import { countryProfile } from "@/lib/geo/countries";
+import { siteOrigin } from "@/lib/site-env";
 import type { JsonLd } from "./types";
 import { prune } from "./types";
 
@@ -11,8 +12,7 @@ type Category = typeof categories.$inferSelect;
 const SCHEMA = "https://schema.org";
 
 export function siteUrl(path = ""): string {
-  const base = (process.env.NEXT_PUBLIC_SITE_URL ?? `https://${siteConfig.domain}`).replace(/\/$/, "");
-  return `${base}${path}`;
+  return `${siteOrigin()}${path}`;
 }
 
 /** Root layout. Identifies the publisher and wires up the sitelinks searchbox. */

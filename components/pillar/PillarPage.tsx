@@ -17,6 +17,12 @@ interface Props {
   categories: CategoryIndexRow[];
   nearby: CityIndexRow[];
   faq: FaqEntry[];
+  /**
+   * How many listings are in THIS page's scope — the category's count on
+   * /city/category, not the whole city's. The heading, the list and the
+   * ItemList's numberOfItems have to be three views of one number.
+   */
+  total: number;
   page: number;
   totalPages: number;
   basePath: string;
@@ -35,7 +41,7 @@ interface Props {
  */
 export function PillarPage({
   heading, featured, listings, categories, nearby, faq,
-  page, totalPages, basePath, cityPath,
+  total, page, totalPages, basePath, cityPath,
 }: Props) {
   const e = siteConfig.entity;
   const isFirstPage = page === 1;
@@ -57,7 +63,7 @@ export function PillarPage({
 
       {isFirstPage && featured.length > 0 && (
         <section aria-labelledby="featured" data-testid="featured">
-          <h2 id="featured">Featured {e.plural} in {heading.place}</h2>
+          <h2 id="featured">Featured {heading.nounPlural} in {heading.place}</h2>
           <ul>
             {featured.map((l) => (
               <ListingCard key={l.id} listing={l} basePath={cityPath} featured />
@@ -67,11 +73,15 @@ export function PillarPage({
       )}
 
       <section aria-labelledby="all">
+        {/* The scope's OWN total and the scope's OWN noun. Reading the city's
+            listingCount here made /leeds/{category} claim every listing in
+            Leeds above a list of one category's, contradicting both the list
+            below it and the ItemList's numberOfItems. */}
         <h2 id="all">
-          {heading.listingCount} {heading.listingCount === 1 ? e.singular : e.plural} in {heading.place}
+          {total} {total === 1 ? heading.nounSingular : heading.nounPlural} in {heading.place}
         </h2>
         {listings.length === 0 ? (
-          <p>No {e.plural} listed in {heading.place} yet.</p>
+          <p>No {heading.nounPlural} listed in {heading.place} yet.</p>
         ) : (
           <ul data-testid="listing-grid">
             {listings.map((l) => (

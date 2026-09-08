@@ -10,6 +10,21 @@ export type Interval = "annual" | "monthly";
 
 export const INTERVALS: readonly Interval[] = ["annual", "monthly"] as const;
 
+/** The cheaper headline, and the one that owns the bare /pricing URL. */
+export const DEFAULT_INTERVAL: Interval = "annual";
+
+/**
+ * Where each interval's page lives.
+ *
+ * A path, not `?interval=`: reading searchParams forces a route dynamic in
+ * Next 16, which silently killed the `revalidate` on the page the money
+ * arrives through. The default interval keeps the canonical URL; the others
+ * hang off it.
+ */
+export function intervalPath(interval: Interval): string {
+  return interval === DEFAULT_INTERVAL ? "/pricing" : `/pricing/${interval}`;
+}
+
 /** Anything we do not recognise falls back to annual — the cheaper headline. */
 export function parseInterval(raw: string | string[] | undefined): Interval {
   const v = Array.isArray(raw) ? raw[0] : raw;

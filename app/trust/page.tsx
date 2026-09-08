@@ -6,6 +6,7 @@ export const revalidate = 86400;
 export const metadata: Metadata = {
   title: "Trust and safety",
   description: "What our badges mean, what they don't, and how to report a problem.",
+  alternates: { canonical: "/trust" },
 };
 
 /**
@@ -54,9 +55,9 @@ export default function TrustPage() {
       <p>
         It confirms identity and credentials as at the date shown. It is <strong>not</strong> a
         guarantee of the quality of anyone&rsquo;s work, and it is not a recommendation. We do
-        not inspect work, and we do not arbitrate disputes. Please carry out your own checks
-        before committing money — references, written quotes, insurance and, where the trade
-        requires it, registration.
+        not assess what a business provides, and we do not arbitrate disputes. Please carry out
+        your own checks before committing money — references, a written quotation, insurance,
+        and any licence or registration the business is required to hold.
       </p>
 
       <h2>Reviews</h2>
