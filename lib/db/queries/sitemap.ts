@@ -1,6 +1,7 @@
 import { and, eq, asc, sql } from "drizzle-orm";
 import { cities, categories, listings } from "@/lib/db/schema";
-import type { Viewer } from "@/lib/db/viewer";
+import { publishedListings } from "@/lib/db/queries/listings";
+import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
 export interface SitemapEntry {
@@ -61,11 +62,16 @@ export function sitemapShardIds(listingCount: number): string[] {
 }
 
 /**
- * MERGE NOTE (Task 5): this is the sitemap's own copy of the published gate.
- * Task 5 is adding `publishedListings(viewer)` to queries/listings.ts as the
- * single base query; when it lands, this predicate is what it replaces.
+ * The one published gate, deliberately asked for the ANONYMOUS answer.
+ *
+ * `publishedListings()` widens to `true` for an admin, and a sitemap is not a
+ * viewer-dependent document: an admin-triggered regeneration must not write
+ * every draft listing's URL into the file Google fetches. Passing
+ * `PUBLIC_VIEWER` rather than the caller's viewer is how "the sitemap has
+ * exactly one correct content" is spelled in SQL — and it still routes through
+ * the single base query, so there is no second copy of the gate here.
  */
-const PUBLISHED = eq(listings.status, "published");
+const PUBLISHED = publishedListings(PUBLIC_VIEWER);
 
 /**
  * Every function here takes a viewer for consistency with the rest of the data

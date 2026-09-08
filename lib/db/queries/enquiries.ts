@@ -1,6 +1,7 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { enquiries, listings } from "@/lib/db/schema";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import { publishedListings } from "@/lib/db/queries/listings";
+import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
 /**
@@ -28,11 +29,6 @@ export type EnquiryResult =
   | { outcome: "created"; enquiryId: string }
   | { outcome: "unknown-listing" };
 
-function visibilityFilter(viewer: Viewer): SQL {
-  if (isAdmin(viewer)) return sql`true`;
-  return eq(listings.status, "published");
-}
-
 /**
  * Caller supplies the transaction: the insert and the counter must land
  * together or a listing's enquiry count starts drifting from its enquiries.
@@ -47,7 +43,7 @@ export async function createEnquiry(
   const [target] = await tx
     .select({ id: listings.id })
     .from(listings)
-    .where(and(eq(listings.id, input.listingId), visibilityFilter(viewer)))
+    .where(and(eq(listings.id, input.listingId), publishedListings(viewer)))
     .limit(1);
   if (!target) return { outcome: "unknown-listing" };
 
