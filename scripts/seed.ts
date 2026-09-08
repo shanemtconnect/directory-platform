@@ -9,6 +9,7 @@ import { allocateSlug, seedReservedSlugs, resolveSlug, ROOT_SCOPE } from "@/lib/
 import { slugify } from "@/lib/routing/slugify";
 import { siteConfig } from "@/config/site.config";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
+import { publishedListings } from "@/lib/db/queries/listings";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -280,7 +281,12 @@ async function writeIntroCopy(tx: TestDb): Promise<void> {
       .selectDistinct({ name: categories.name })
       .from(listings)
       .innerJoin(categories, eq(categories.id, listings.primaryCategoryId))
-      .where(and(eq(listings.cityId, city.id), eq(listings.status, "published")))
+      // publishedListings(), not a raw status check (global constraint 7). The
+      // intro copy names the categories a visitor will actually find on the
+      // city page, so it has to be gated by the same predicate the pillar query
+      // uses — a second spelling of "published" drifts the moment the
+      // definition gains a clause.
+      .where(and(eq(listings.cityId, city.id), publishedListings(PUBLIC_VIEWER)))
       .orderBy(categories.name);
 
     await tx
