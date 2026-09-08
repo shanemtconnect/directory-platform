@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { db } from "@/lib/db/client";
 import { createEnquiry } from "@/lib/db/queries/enquiries";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { notifyEnquiry } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
@@ -63,15 +64,19 @@ export async function submitEnquiry(
 
   // The published-only gate and the counter bump both live in the query, and
   // the transaction is here so they land together.
-  const result = await db.transaction(async (tx) =>
+  const result = await db.transaction(async (tx) => {
     // Same cast the test harness uses: a transaction handle and the root
     // client expose the same query surface to lib/db/queries.
-    createEnquiry(tx as unknown as TestDb, PUBLIC_VIEWER, { ...values, ip }),
-  );
+    const handle = tx as unknown as TestDb;
+    const created = await createEnquiry(handle, PUBLIC_VIEWER, { ...values, ip });
+    await notifyEnquiry(handle, PUBLIC_VIEWER, created);
+    return created;
+  });
   if (result.outcome === "unknown-listing") {
     return { status: "error", message: "That listing is no longer available." };
   }
 
-  // Phase 3 sends the owner notification email; the enquiry is durable either way.
+  // The notification is a queued job committed with the enquiry above, so a
+  // dead mail provider cannot cost us the lead — or slow this response down.
   return { status: "sent" };
 }

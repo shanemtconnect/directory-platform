@@ -160,6 +160,23 @@ describe("processNotifications — enquiries", () => {
     });
   });
 
+  it("queues nothing when the enquiry was refused", async () => {
+    await withTestDb(async (tx) => {
+      const refused = await createEnquiry(tx, PUBLIC_VIEWER, {
+        listingId: "00000000-0000-4000-8000-0000000000bb",
+        name: "Sam Enquirer",
+        email: "sam@example.co.uk",
+        phone: null,
+        message: "Anyone there?",
+        ip: null,
+      });
+      expect(refused.outcome).toBe("unknown-listing");
+      await notifyEnquiry(tx, PUBLIC_VIEWER, refused);
+
+      expect(await tx.select().from(jobQueue)).toHaveLength(0);
+    });
+  });
+
   it("drains everything waiting in one tick", async () => {
     await withTestDb(async (tx) => {
       await queuedEnquiry(tx);
