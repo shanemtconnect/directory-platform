@@ -53,6 +53,16 @@ const SERVER_ENV: Record<string, string> = {
   REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6380",
   NEXT_PUBLIC_SITE_URL: BASE_URL,
   /**
+   * `siteEnv()` treats anything that is not the literal "production" as
+   * staging, so an unset SITE_ENV would serve `Disallow: /` and an empty
+   * sitemap — and e2e/sitemap.spec.ts asserts the production shape of both.
+   * Pinned rather than passed through for the same reason NEXT_PUBLIC_SITE_URL
+   * is: this suite tests what a live site does. It reaches the BUILD as well as
+   * the server, which it has to — the X-Robots-Tag header is frozen into
+   * routes-manifest.json by `next build`.
+   */
+  SITE_ENV: process.env.SITE_ENV ?? "production",
+  /**
    * Cloudflare's published testing keys: the widget always passes and
    * siteverify always accepts. They are needed because this suite runs a
    * production build, and in production a missing secret now fails closed

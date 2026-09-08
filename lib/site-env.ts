@@ -24,9 +24,24 @@ export function siteOrigin(): string {
  * `X-Robots-Tag` response header is the directive that actually works, because
  * it is read from a page Google has fetched. We send both: the header to
  * prevent indexing, robots.txt to discourage the crawl in the first place.
+ *
+ * Indexing is OPTED INTO. Only the literal `"production"` is production;
+ * everything else — `"staging"`, a typo, an empty string, an unset variable —
+ * is staging. The two failure modes are not symmetrical: a production site that
+ * forgot the variable serves `noindex` until someone notices and rebuilds,
+ * which costs a day, while a staging site that forgot it gets its whole
+ * duplicate copy of the directory indexed, which costs months to undo and
+ * competes with the real site while it lasts.
+ *
+ * BUILD-TIME, not runtime. This function is read per request, but the
+ * `X-Robots-Tag` header that does the actual work comes from `next.config.ts`
+ * `headers()`, which Next evaluates during `next build` and freezes into
+ * `.next/routes-manifest.json`. Flipping staging -> production is a REBUILD;
+ * changing the environment variable alone leaves every response carrying
+ * `noindex` while robots.txt claims otherwise. See lib/site-env.test.ts.
  */
 export function siteEnv(): SiteEnv {
-  return process.env.SITE_ENV === "staging" ? "staging" : "production";
+  return process.env.SITE_ENV === "production" ? "production" : "staging";
 }
 
 export const isStaging = (): boolean => siteEnv() === "staging";

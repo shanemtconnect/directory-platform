@@ -80,6 +80,24 @@ and MapTiler stay optional: both degrade rather than break.
 `NEXT_PUBLIC_*` values are inlined by `next build`, so setting one at boot does
 nothing. They are build args, and a missing one warns rather than failing.
 
+### `SITE_ENV` is a build arg
+
+Only the literal `production` is production. Anything else — `staging`, a typo,
+an empty value, an unset variable — is staging, and staging is `noindex`
+site-wide. Indexing is opted into on purpose: a production site that forgot the
+variable serves `noindex` until someone notices and rebuilds, while a staging
+site that forgot it gets its whole duplicate copy of the directory indexed, and
+that takes months to undo.
+
+It is **build-time**. The `X-Robots-Tag: noindex` header comes from
+`next.config.ts` `headers()`, which Next evaluates during `next build` and
+writes into `.next/routes-manifest.json`; the standalone server reads that file
+and never re-runs `headers()`. `app/robots.ts` is `force-dynamic` and does read
+the variable per request. So changing only the container's environment gives a
+site whose `robots.txt` says `Allow: /` while every response still says
+`noindex` — **flipping staging → production is a rebuild**, with
+`--build-arg SITE_ENV=production`.
+
 ## Deploy
 
 The image builds two targets from one Dockerfile: `runner` (the app) and

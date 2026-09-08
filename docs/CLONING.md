@@ -163,8 +163,25 @@ that container only.
 **Optional** — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEOCODING_API_KEY`,
 `SENTRY_DSN`.
 
-**`SITE_ENV`** — anything other than `production` forces `noindex` site-wide.
-The wizard writes `staging`. Leave it there until the content is real.
+**`SITE_ENV`** — **a build arg, not a runtime variable.** Only the literal
+`production` is production; anything else — `staging`, a typo, an empty value,
+an unset variable — forces `noindex` site-wide. Indexing is opted into, because
+a production site that forgets the variable serves `noindex` for a day while a
+staging site that forgets it gets its whole duplicate directory indexed for
+months. The wizard writes `staging`. Leave it there until the content is real.
+
+Two things read it, and only one of them can be changed at boot:
+
+| Mechanism | Where it comes from | Follows a boot value? |
+| --- | --- | --- |
+| `X-Robots-Tag: noindex` on every response | `next.config.ts` `headers()`, evaluated by `next build` and frozen into `.next/routes-manifest.json` | **No** |
+| `robots.txt`, and whether the sitemap has any URLs | `app/robots.ts` / `app/sitemaps/`, `force-dynamic`, read per request | Yes |
+
+So **flipping staging → production is a rebuild**, with
+`--build-arg SITE_ENV=production`. Changing only the container's environment
+gives the worst state available: `robots.txt` says `Allow: /` while every
+response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
+`scripts/verify-image.sh` builds both ways to keep the arg wired.
 
 ---
 

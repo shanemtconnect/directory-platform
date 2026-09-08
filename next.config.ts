@@ -34,9 +34,22 @@ const nextConfig: NextConfig = {
    * crawl, using anchor text alone, and those listings are slow to remove. The
    * header is the directive that actually prevents indexing; robots.txt just
    * discourages the crawl.
+   *
+   * SITE_ENV is a BUILD-TIME switch. Next evaluates headers() during
+   * `next build` and writes the result into `.next/routes-manifest.json`; the
+   * standalone server reads that file and never calls this function again. So
+   * setting SITE_ENV at boot cannot add or remove this header — flipping
+   * staging -> production means rebuilding the image with
+   * `--build-arg SITE_ENV=production`. `app/robots.ts` is force-dynamic and
+   * DOES follow a boot value, which is why changing only the runtime variable
+   * produces the worst state of all: robots.txt says "Allow: /" while every
+   * response still says noindex.
+   *
+   * Matches `siteEnv()` in lib/site-env.ts: production is opted into, and
+   * anything else — unset included — gets the header.
    */
   async headers() {
-    if (process.env.SITE_ENV !== "staging") return [];
+    if (process.env.SITE_ENV === "production") return [];
     return [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: NOINDEX_HEADER }] }];
   },
 
