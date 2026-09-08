@@ -27,7 +27,17 @@ CacheHandler.onCreation(() => {
         console.info("[cache] REDIS CONNECTED");
       } catch (e) {
         console.warn("[cache] redis connect failed:", e.message);
-        await redisClient?.disconnect().catch(() => {});
+        // `disconnect()` THROWS synchronously (ClientClosedError) on a client
+        // that never opened, so a trailing `.catch()` never gets attached and
+        // the throw escapes this handler, rejects the onCreation promise and
+        // 500s every request — the LRU fallback below never ran. Observed with
+        // REDIS_URL pointed at a closed port: the whole site returned 500
+        // instead of degrading to the in-process cache.
+        try {
+          await redisClient?.disconnect();
+        } catch {
+          // Nothing to clean up; the client never opened.
+        }
       }
     }
 
