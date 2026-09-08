@@ -1,2 +1,6 @@
+# esbuild's postinstall script only downloads a platform binary that pnpm
+# already installs as an optional dependency, so it has nothing left to do.
+# Left as pnpm's placeholder text, `pnpm install --frozen-lockfile` exits 1 —
+# in CI, in the Dockerfile and on a fresh clone.
 allowBuilds:
-  esbuild: true
+  esbuild: false

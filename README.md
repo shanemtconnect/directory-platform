@@ -3,7 +3,10 @@
 A reusable, config-driven city directory built to be cloned into a new niche in
 under a day. Change one config file, seed cities and categories, deploy.
 
-**Status:** Phase 1 of 8 — foundation. 91 tests passing.
+**Status:** Phase 1 of 8 — foundation, plus a review-fixes pass. Vitest covers
+the units and the queries (rollback-per-test, against a real Postgres);
+Playwright runs a smoke suite against the standalone production build, twice —
+once with every optional flag off and once with all of them on.
 
 ## Stack
 
@@ -61,10 +64,19 @@ that refuses to start.
 ## Layout
 
 ```
-config/       site.config.ts — the only file a clone edits
-lib/routing/  slug registry, slugify, PillarScope, resolver
-lib/db/       Drizzle schema (40 tables) and queries
-lib/features/ build-time flags, route guard, single navigation source
-test/         rollback-per-test harness
-docs/         spikes and implementation plans
+config/          site.config.ts — the only file a clone edits
+lib/routing/     slug registry, slugify, PillarScope, resolver
+lib/db/          Drizzle schema (40 tables) and queries
+lib/features/    build-time flags, route guard, single navigation source
+seeds/<plural>/  cities, categories and listings CSVs, named after the entity
+scripts/         seed, reseed-dev, cache purge, the niche-string guard
+content/blog/    posts; content/blog/demo/ loads only in demo mode
+e2e/             Playwright specs, run against the standalone build
+test/            rollback-per-test harness
+docs/            spikes and implementation plans
 ```
+
+Two things a clone touches beyond `site.config.ts`: rename `seeds/venues/` to
+match the new `entity.plural` and replace the three CSVs inside it, and
+regenerate the banned-word list in `scripts/check-niche-strings.sh` so the new
+site bans its own niche words rather than the old site's.

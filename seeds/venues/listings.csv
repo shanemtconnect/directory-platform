@@ -1,0 +1,201 @@
+name,city,region,category,address_line1,postcode,phone,website
+The Abbey Barn,Richmond,North Yorkshire,Historic Halls,61 Park Avenue,DS19 5AZ,01632 960990,https://example.com/the-abbey-barn-166
+The Abbey Cellars,Richmond,North Yorkshire,Hotels,111 Mill Lane,DS12 7ST,01632 960689,https://example.com/the-abbey-cellars-17
+The Abbey Court,Richmond,North Yorkshire,Manor Houses,23 Farm Lane,GN16 9RP,01632 960934,https://example.com/the-abbey-court-169
+The Abbey Estate,Richmond,North Yorkshire,Barn Venues,47 Mill Lane,DS5 5QR,01632 960410,https://example.com/the-abbey-estate-161
+The Abbey Farm,Richmond,North Yorkshire,Farm Venues,54 High Street,TT10 7WW,01632 960836,https://example.com/the-abbey-farm-129
+The Abbey Grange,Richmond,North Yorkshire,Museum Venues,16 Bridge Road,CF3 2JR,01632 960252,https://example.com/the-abbey-grange-22
+The Abbey Grange,London,Greater London,Castles,104 Station Road,MN3 4NJ,01632 960150,https://example.com/the-abbey-grange-38
+The Abbey Hall,Richmond,North Yorkshire,Coastal Venues,53 Farm Lane,SN11 2GP,01632 960295,https://example.com/the-abbey-hall-71
+The Abbey Mill,Richmond,North Yorkshire,Coastal Venues,99 Bridge Road,PD9 4SX,01632 960628,https://example.com/the-abbey-mill-107
+The Abbey Pavilion,Richmond,North Yorkshire,Industrial Venues,36 Abbey Road,ER7 9FD,01632 960348,https://example.com/the-abbey-pavilion-76
+The Abbey Place,Richmond,North Yorkshire,Manor Houses,112 Church Road,WB5 9YP,01632 960895,https://example.com/the-abbey-place-79
+The Abbey Place,Birmingham,West Midlands,Hotels,89 Farm Lane,LL15 4ZN,01632 960204,https://example.com/the-abbey-place-147
+The Abbey Retreat,Richmond,North Yorkshire,Garden Venues,92 Park Avenue,LW8 5TD,01632 960240,https://example.com/the-abbey-retreat-42
+The Ash Cellars,Richmond,North Yorkshire,Country Houses,28 High Street,MM12 2YW,01632 960672,https://example.com/the-ash-cellars-106
+The Ash Court,Richmond,North Yorkshire,Vineyards,3 Mill Lane,GD15 2HZ,01632 960805,https://example.com/the-ash-court-96
+The Ash Estate,Richmond,North Yorkshire,Historic Halls,87 Church Road,CB5 3ZB,01632 960278,https://example.com/the-ash-estate-110
+The Ash Hall,Richmond,North Yorkshire,Historic Halls,82 Farm Lane,AS16 2SQ,01632 960724,https://example.com/the-ash-hall-53
+The Ash Hall,Manchester,Greater Manchester,Country Houses,99 High Street,CW2 5SG,01632 960784,https://example.com/the-ash-hall-187
+The Ash Mill,Richmond,North Yorkshire,City Venues,70 Castle Street,FC17 6DW,01632 960805,https://example.com/the-ash-mill-136
+The Ash Park,Richmond,North Yorkshire,Vineyards,71 Park Avenue,BT18 2RD,01632 960849,https://example.com/the-ash-park-3
+The Ash Park,Leeds,West Yorkshire,Boutique Venues,68 Abbey Road,EC3 5RU,01632 960787,https://example.com/the-ash-park-150
+The Ash Yard,Richmond,North Yorkshire,Vineyards,93 Abbey Road,LA17 4DJ,01632 960500,https://example.com/the-ash-yard-56
+The East Gardens,Richmond,North Yorkshire,Vineyards,6 Mill Lane,WL2 2SL,01632 960341,https://example.com/the-east-gardens-27
+The East Gardens,Liverpool,Merseyside,Pub & Inn Venues,109 Church Road,GH5 3DN,01632 960519,https://example.com/the-east-gardens-126
+The East Hall,Richmond,North Yorkshire,Garden Venues,45 Castle Street,DM20 2YB,01632 960438,https://example.com/the-east-hall-52
+The East Hall,Sheffield,South Yorkshire,Riverside Venues,52 Farm Lane,BT20 1JB,01632 960239,https://example.com/the-east-hall-191
+The East Lodge,Richmond,North Yorkshire,Country Houses,37 Church Road,WP18 2WE,01632 960781,https://example.com/the-east-lodge-130
+The Elm Cellars,Richmond,North Yorkshire,Hotels,107 Manor Way,RA11 3ZT,01632 960090,https://example.com/the-elm-cellars-115
+The Elm Court,Bristol,Bristol,Castles,106 Mill Lane,NL11 2RW,01632 960673,https://example.com/the-elm-court-72
+The Elm Court,Newcastle upon Tyne,Tyne and Wear,Country Houses,78 Castle Street,EN16 9TF,01632 960143,https://example.com/the-elm-court-164
+The Elm Estate,Nottingham,Nottinghamshire,Castles,27 Manor Way,BF15 7UT,01632 960621,https://example.com/the-elm-estate-156
+The Elm Lodge,Leicester,Leicestershire,Garden Venues,69 Abbey Road,AA10 8XS,01632 960843,https://example.com/the-elm-lodge-189
+The Elm Park,Southampton,Hampshire,Woodland Venues,87 Park Avenue,AL18 2TQ,01632 960598,https://example.com/the-elm-park-91
+The Elm Park,Portsmouth,Hampshire,Garden Venues,29 Church Road,WA20 9PZ,01632 960650,https://example.com/the-elm-park-92
+The Grange Barn,Brighton,East Sussex,Hotels,59 Mill Lane,LN4 5SG,01632 960976,https://example.com/the-grange-barn-10
+The Grange Barn,Plymouth,Devon,Golf Clubs,57 Station Road,GS19 6TT,01632 960523,https://example.com/the-grange-barn-37
+The Grange Barn,Reading,Berkshire,Vineyards,1 High Street,AF9 5PQ,01632 960890,https://example.com/the-grange-barn-108
+The Grange Court,Derby,Derbyshire,Historic Halls,104 High Street,ER5 3GZ,01632 960738,https://example.com/the-grange-court-127
+The Grange Estate,Wolverhampton,West Midlands,Hotels,35 Park Avenue,EL4 2XF,01632 960619,https://example.com/the-grange-estate-26
+The Grange Farm,Stoke-on-Trent,Staffordshire,Country Houses,99 Manor Way,EM8 6YZ,01632 960242,https://example.com/the-grange-farm-192
+The Grange Gardens,Coventry,West Midlands,Coastal Venues,39 Station Road,LW7 4LX,01632 960964,https://example.com/the-grange-gardens-170
+The Grange Grange,Bradford,West Yorkshire,Pub & Inn Venues,117 Church Road,WG10 6NB,01632 960667,https://example.com/the-grange-grange-175
+The Grange Hall,Cardiff,Cardiff,Stately Homes,106 Mill Lane,EF20 6YB,01632 960083,https://example.com/the-grange-hall-154
+The Grange Lodge,Swansea,Swansea,Manor Houses,88 Station Road,BM12 1QH,01632 960682,https://example.com/the-grange-lodge-29
+The Grange Lodge,Edinburgh,City of Edinburgh,Industrial Venues,107 Farm Lane,PS19 3SE,01632 960630,https://example.com/the-grange-lodge-94
+The Grange Mill,Glasgow,Glasgow City,Pub & Inn Venues,52 Station Road,WT1 2NJ,01632 960313,https://example.com/the-grange-mill-57
+The Grange Pavilion,Aberdeen,Aberdeen City,Garden Venues,54 Castle Street,ME15 1XS,01632 960542,https://example.com/the-grange-pavilion-195
+The Grange Place,Dundee,Dundee City,Historic Halls,6 Manor Way,GH19 7JS,01632 960762,https://example.com/the-grange-place-78
+The Grange Place,Belfast,County Antrim,Historic Halls,47 Park Avenue,EC14 9QA,01632 960184,https://example.com/the-grange-place-125
+The Grange Place,York,North Yorkshire,Coastal Venues,119 Farm Lane,EM2 5DQ,01632 960671,https://example.com/the-grange-place-172
+The Grange Retreat,Bath,Somerset,Country Houses,27 Park Avenue,GP20 8TB,01632 960562,https://example.com/the-grange-retreat-73
+The Grange Retreat,Oxford,Oxfordshire,Golf Clubs,10 Mill Lane,AR9 1HY,01632 960433,https://example.com/the-grange-retreat-186
+The Grange Yard,Cambridge,Cambridgeshire,Farm Venues,64 Church Road,SR12 4FW,01632 960773,https://example.com/the-grange-yard-8
+The Great Barn,Norwich,Norfolk,Farm Venues,64 High Street,DN10 8XW,01632 960871,https://example.com/the-great-barn-177
+The Great Farm,Exeter,Devon,Boutique Venues,36 Bridge Road,MC13 9TX,01632 960696,https://example.com/the-great-farm-162
+The Great Gardens,Richmond,North Yorkshire,Museum Venues,46 Mill Lane,RW9 1HN,01632 960886,https://example.com/the-great-gardens-140
+The Great House,London,Greater London,Stately Homes,68 Park Avenue,SC13 7ZT,01632 960994,https://example.com/the-great-house-9
+The Great House,Birmingham,West Midlands,Marquee Venues,71 Church Road,GL3 3JG,01632 960160,https://example.com/the-great-house-65
+The Great Lodge,Manchester,Greater Manchester,Farm Venues,78 Bridge Road,MC8 2XS,01632 960809,https://example.com/the-great-lodge-63
+The Great Place,Leeds,West Yorkshire,Coastal Venues,41 Church Road,HR3 6JA,01632 960859,https://example.com/the-great-place-132
+The Great Retreat,Liverpool,Merseyside,Marquee Venues,14 Manor Way,NW17 3BT,01632 960731,https://example.com/the-great-retreat-121
+The Great Yard,Sheffield,South Yorkshire,Historic Halls,97 Abbey Road,GT11 6RL,01632 960258,https://example.com/the-great-yard-48
+The Great Yard,Bristol,Bristol,Marquee Venues,62 Station Road,SA16 9NN,01632 960824,https://example.com/the-great-yard-155
+The High Barn,Newcastle upon Tyne,Tyne and Wear,Vineyards,76 Abbey Road,HH5 2XD,01632 960032,https://example.com/the-high-barn-0
+The High Cellars,Nottingham,Nottinghamshire,Historic Halls,91 Abbey Road,SD13 4LB,01632 960001,https://example.com/the-high-cellars-34
+The High Court,Leicester,Leicestershire,Historic Halls,18 Abbey Road,DH7 4XT,01632 960187,https://example.com/the-high-court-18
+The High Farm,Southampton,Hampshire,Industrial Venues,65 Bridge Road,NS5 7HS,01632 960942,https://example.com/the-high-farm-168
+The High House,Portsmouth,Hampshire,Boutique Venues,106 Farm Lane,GS15 4SP,01632 960408,https://example.com/the-high-house-103
+The High Lodge,Brighton,East Sussex,Industrial Venues,71 Castle Street,FT3 6QD,01632 960297,https://example.com/the-high-lodge-148
+The High Park,Plymouth,Devon,Boutique Venues,4 High Street,SE8 3GS,01632 960754,https://example.com/the-high-park-30
+The Hollow Cellars,Reading,Berkshire,Boutique Venues,58 Church Road,GM13 6TW,01632 960253,https://example.com/the-hollow-cellars-14
+The Hollow House,Derby,Derbyshire,Stately Homes,87 Abbey Road,MD19 1NY,01632 960406,https://example.com/the-hollow-house-51
+The Hollow House,Wolverhampton,West Midlands,Hotels,26 Bridge Road,RP11 9QF,01632 960521,https://example.com/the-hollow-house-163
+The Hollow Lodge,Stoke-on-Trent,Staffordshire,Manor Houses,65 Bridge Road,LN13 9NT,01632 960440,https://example.com/the-hollow-lodge-102
+The Hollow Mill,Coventry,West Midlands,Museum Venues,40 Bridge Road,RT15 5YS,01632 960635,https://example.com/the-hollow-mill-64
+The Hollow Park,Bradford,West Yorkshire,Marquee Venues,111 Church Road,CB8 5DJ,01632 960389,https://example.com/the-hollow-park-4
+The Hollow Place,Cardiff,Cardiff,Castles,80 Church Road,NR11 8XB,01632 960240,https://example.com/the-hollow-place-81
+The Hollow Retreat,Swansea,Swansea,Hotels,55 Mill Lane,WA17 4FN,01632 960629,https://example.com/the-hollow-retreat-135
+The Little Grange,Edinburgh,City of Edinburgh,Garden Venues,47 Manor Way,TT17 9ZG,01632 960939,https://example.com/the-little-grange-122
+The Little Hall,Glasgow,Glasgow City,Pub & Inn Venues,34 Castle Street,CE5 8XG,01632 960893,https://example.com/the-little-hall-13
+The Little Pavilion,Aberdeen,Aberdeen City,Boutique Venues,32 Station Road,BP8 2BA,01632 960859,https://example.com/the-little-pavilion-49
+The Little Yard,Dundee,Dundee City,Garden Venues,24 Farm Lane,TR11 1UP,01632 960217,https://example.com/the-little-yard-55
+The Long Barn,Belfast,County Antrim,Manor Houses,2 Manor Way,EL6 2AF,01632 960808,https://example.com/the-long-barn-98
+The Long Cellars,York,North Yorkshire,Museum Venues,42 Station Road,LW15 7YL,01632 960850,https://example.com/the-long-cellars-54
+The Long Estate,Bath,Somerset,Pub & Inn Venues,71 Mill Lane,DA20 4GN,01632 960565,https://example.com/the-long-estate-74
+The Long Gardens,Oxford,Oxfordshire,Historic Halls,14 Manor Way,PR5 6WX,01632 960247,https://example.com/the-long-gardens-157
+The Long Hall,Cambridge,Cambridgeshire,Stately Homes,90 Abbey Road,MM15 2TN,01632 960965,https://example.com/the-long-hall-68
+The Long Hall,Norwich,Norfolk,Historic Halls,68 Castle Street,SF7 3XQ,01632 960935,https://example.com/the-long-hall-89
+The Long Park,Exeter,Devon,Garden Venues,79 Castle Street,PM6 8XN,01632 960008,https://example.com/the-long-park-25
+The Long Pavilion,Chester,Cheshire,Garden Venues,43 Park Avenue,AL13 4TL,01632 960596,https://example.com/the-long-pavilion-180
+The Long Place,Durham,County Durham,Manor Houses,59 Manor Way,AC17 4RS,01632 960161,https://example.com/the-long-place-109
+The Long Place,Canterbury,Kent,Vineyards,69 Station Road,GN3 8QD,01632 960052,https://example.com/the-long-place-196
+The Long Retreat,Winchester,Hampshire,Museum Venues,58 High Street,NT20 9SX,01632 960761,https://example.com/the-long-retreat-41
+The Long Yard,Salisbury,Wiltshire,Industrial Venues,5 Manor Way,SA4 2FX,01632 960596,https://example.com/the-long-yard-28
+The Long Yard,Lincoln,Lincolnshire,Historic Halls,49 Castle Street,DA16 7GF,01632 960720,https://example.com/the-long-yard-113
+The Manor Barn,Harrogate,North Yorkshire,Coastal Venues,52 Castle Street,HB4 8NG,01632 960945,https://example.com/the-manor-barn-181
+The Manor Court,Cheltenham,Gloucestershire,Castles,34 Abbey Road,SN9 4PJ,01632 960134,https://example.com/the-manor-court-23
+The Manor Estate,Shrewsbury,Shropshire,Marquee Venues,91 Castle Street,MH12 3NA,01632 960129,https://example.com/the-manor-estate-60
+The Manor Grange,Inverness,Highland,Manor Houses,22 High Street,SB4 9FN,01632 960330,https://example.com/the-manor-grange-152
+The Manor House,Stirling,Stirling,Boutique Venues,15 Station Road,GE6 6WT,01632 960734,https://example.com/the-manor-house-184
+The Manor Mill,Windsor,Berkshire,Country Houses,5 Bridge Road,WF17 7FJ,01632 960970,https://example.com/the-manor-mill-167
+The Manor Mill,Stratford-upon-Avon,Warwickshire,Country Houses,24 Park Avenue,FS6 1RU,01632 960897,https://example.com/the-manor-mill-176
+The Manor Park,Richmond,North Yorkshire,Boutique Venues,35 Park Avenue,PS18 6QT,01632 960257,https://example.com/the-manor-park-58
+The Manor Pavilion,London,Greater London,Museum Venues,59 Bridge Road,TB15 3WS,01632 960059,https://example.com/the-manor-pavilion-185
+The Mill Barn,Birmingham,West Midlands,Pub & Inn Venues,116 Church Road,RS4 8TD,01632 960329,https://example.com/the-mill-barn-101
+The Mill Cellars,Manchester,Greater Manchester,Riverside Venues,45 Abbey Road,TS9 4WE,01632 960113,https://example.com/the-mill-cellars-111
+The Mill Court,Leeds,West Yorkshire,Coastal Venues,75 Castle Street,MC3 9RT,01632 960977,https://example.com/the-mill-court-120
+The Mill Court,Liverpool,Merseyside,Coastal Venues,69 Station Road,HT20 5TJ,01632 960316,https://example.com/the-mill-court-128
+The Mill Court,Sheffield,South Yorkshire,Castles,78 High Street,HP12 7YB,01632 960695,https://example.com/the-mill-court-145
+The Mill Estate,Bristol,Bristol,City Venues,15 Church Road,DE2 1NU,01632 960240,https://example.com/the-mill-estate-93
+The Mill Gardens,Newcastle upon Tyne,Tyne and Wear,Country Houses,10 Bridge Road,LW4 2RU,01632 960644,https://example.com/the-mill-gardens-62
+The Mill Hall,Nottingham,Nottinghamshire,Industrial Venues,10 Park Avenue,ML19 1QW,01632 960472,https://example.com/the-mill-hall-119
+The Mill House,Leicester,Leicestershire,Industrial Venues,101 Park Avenue,AE14 3DU,01632 960346,https://example.com/the-mill-house-80
+The Mill House,Southampton,Hampshire,Industrial Venues,111 Bridge Road,HE4 1NR,01632 960428,https://example.com/the-mill-house-158
+The Mill Lodge,Portsmouth,Hampshire,Boutique Venues,18 Farm Lane,AR19 1DS,01632 960186,https://example.com/the-mill-lodge-47
+The Mill Park,Brighton,East Sussex,Garden Venues,111 Church Road,HA7 7PL,01632 960990,https://example.com/the-mill-park-32
+The Mill Park,Plymouth,Devon,Farm Venues,94 Castle Street,DT17 4ZB,01632 960308,https://example.com/the-mill-park-100
+The Mill Park,Reading,Berkshire,Industrial Venues,84 Park Avenue,CE17 6RP,01632 960255,https://example.com/the-mill-park-146
+The Mill Pavilion,Derby,Derbyshire,Stately Homes,6 Station Road,EC15 1NH,01632 960907,https://example.com/the-mill-pavilion-139
+The North Gardens,Wolverhampton,West Midlands,Stately Homes,96 Church Road,LB5 7WE,01632 960487,https://example.com/the-north-gardens-99
+The North Grange,Stoke-on-Trent,Staffordshire,Woodland Venues,104 Manor Way,LH11 1JB,01632 960410,https://example.com/the-north-grange-6
+The North Grange,Coventry,West Midlands,Farm Venues,64 Park Avenue,NG6 8WT,01632 960509,https://example.com/the-north-grange-159
+The North Hall,Bradford,West Yorkshire,Barn Venues,9 Mill Lane,HH1 2BJ,01632 960880,https://example.com/the-north-hall-15
+The North House,Cardiff,Cardiff,Marquee Venues,95 Farm Lane,ND18 3HH,01632 960283,https://example.com/the-north-house-59
+The North House,Swansea,Swansea,Farm Venues,105 High Street,NE2 6XP,01632 960850,https://example.com/the-north-house-138
+The North Mill,Edinburgh,City of Edinburgh,Coastal Venues,79 Mill Lane,EL7 2BS,01632 960246,https://example.com/the-north-mill-190
+The North Park,Glasgow,Glasgow City,Marquee Venues,5 Bridge Road,LE4 1NT,01632 960373,https://example.com/the-north-park-88
+The North Park,Aberdeen,Aberdeen City,Woodland Venues,74 Abbey Road,BS1 8DP,01632 960587,https://example.com/the-north-park-114
+The North Park,Dundee,Dundee City,Golf Clubs,81 Park Avenue,CL7 9LF,01632 960629,https://example.com/the-north-park-153
+The North Pavilion,Belfast,County Antrim,Vineyards,93 High Street,SW1 7PR,01632 960860,https://example.com/the-north-pavilion-46
+The North Yard,York,North Yorkshire,Farm Venues,117 Park Avenue,GS4 9JF,01632 960846,https://example.com/the-north-yard-67
+The Oak Cellars,Bath,Somerset,Garden Venues,29 Station Road,LF4 7BU,01632 960836,https://example.com/the-oak-cellars-31
+The Oak Court,Oxford,Oxfordshire,Coastal Venues,73 High Street,PS5 4WS,01632 960174,https://example.com/the-oak-court-83
+The Oak Estate,Cambridge,Cambridgeshire,Industrial Venues,94 Manor Way,SF15 6TB,01632 960629,https://example.com/the-oak-estate-143
+The Oak Gardens,Norwich,Norfolk,Woodland Venues,91 Bridge Road,MN17 9XU,01632 960306,https://example.com/the-oak-gardens-165
+The Oak Hall,Exeter,Devon,Garden Venues,74 Farm Lane,LW7 9FY,01632 960248,https://example.com/the-oak-hall-16
+The Oak Lodge,Chester,Cheshire,Country Houses,1 Church Road,MW5 8TZ,01632 960019,https://example.com/the-oak-lodge-133
+The Oak Mill,Durham,County Durham,Farm Venues,105 Station Road,GC18 4YH,01632 960336,https://example.com/the-oak-mill-97
+The Oak Yard,Canterbury,Kent,Coastal Venues,64 Farm Lane,SR15 7PG,01632 960376,https://example.com/the-oak-yard-141
+The Old Cellars,Winchester,Hampshire,Riverside Venues,90 Farm Lane,WM2 4NN,01632 960072,https://example.com/the-old-cellars-66
+The Old Court,Salisbury,Wiltshire,Pub & Inn Venues,52 Station Road,CT14 4RU,01632 960151,https://example.com/the-old-court-39
+The Old Farm,Lincoln,Lincolnshire,Hotels,71 Manor Way,WH20 4RJ,01632 960794,https://example.com/the-old-farm-198
+The Old Gardens,Harrogate,North Yorkshire,Barn Venues,113 Bridge Road,DP10 4BJ,01632 960969,https://example.com/the-old-gardens-12
+The Old Grange,Cheltenham,Gloucestershire,City Venues,12 Abbey Road,NL5 4PE,01632 960099,https://example.com/the-old-grange-2
+The Old Hall,Shrewsbury,Shropshire,Garden Venues,76 Park Avenue,AG18 7JT,01632 960828,https://example.com/the-old-hall-1
+The Old Hall,Inverness,Highland,Museum Venues,37 Farm Lane,TH7 6BB,01632 960611,https://example.com/the-old-hall-160
+The Old House,Stirling,Stirling,City Venues,32 Church Road,HF17 8BX,01632 960467,https://example.com/the-old-house-40
+The Old Lodge,Windsor,Berkshire,Manor Houses,99 Manor Way,WD19 4TL,01632 960171,https://example.com/the-old-lodge-50
+The Old Place,Stratford-upon-Avon,Warwickshire,Barn Venues,103 Bridge Road,PM13 7XX,01632 960919,https://example.com/the-old-place-45
+The Old Yard,Richmond,North Yorkshire,Country Houses,75 Abbey Road,FW17 8LG,01632 960650,https://example.com/the-old-yard-70
+The Priory Barn,London,Greater London,Pub & Inn Venues,101 Church Road,BR12 5AQ,01632 960353,https://example.com/the-priory-barn-137
+The Priory Farm,Birmingham,West Midlands,City Venues,65 Park Avenue,CN20 6EN,01632 960682,https://example.com/the-priory-farm-35
+The Priory House,Manchester,Greater Manchester,Museum Venues,19 Park Avenue,GP12 3JE,01632 960202,https://example.com/the-priory-house-117
+The Priory Mill,Leeds,West Yorkshire,Garden Venues,88 High Street,BD14 6UE,01632 960005,https://example.com/the-priory-mill-174
+The Priory Retreat,Liverpool,Merseyside,Marquee Venues,2 Manor Way,DN6 8LG,01632 960809,https://example.com/the-priory-retreat-178
+The Priory Yard,Sheffield,South Yorkshire,Golf Clubs,45 Manor Way,MW5 8XU,01632 960565,https://example.com/the-priory-yard-77
+The Priory Yard,Bristol,Bristol,City Venues,42 Church Road,CS20 3XN,01632 960081,https://example.com/the-priory-yard-142
+The Rose Barn,Newcastle upon Tyne,Tyne and Wear,Woodland Venues,107 Park Avenue,LA19 1ZU,01632 960794,https://example.com/the-rose-barn-87
+The Rose Estate,Nottingham,Nottinghamshire,Marquee Venues,37 Church Road,WN16 6XL,01632 960587,https://example.com/the-rose-estate-171
+The Rose Farm,Leicester,Leicestershire,Riverside Venues,86 Church Road,RS17 6DR,01632 960189,https://example.com/the-rose-farm-179
+The Rose Grange,Southampton,Hampshire,Stately Homes,102 Farm Lane,PH4 4FJ,01632 960026,https://example.com/the-rose-grange-149
+The Rose House,Portsmouth,Hampshire,Golf Clubs,59 Bridge Road,PH8 3UF,01632 960382,https://example.com/the-rose-house-182
+The Rose Lodge,Brighton,East Sussex,Museum Venues,76 High Street,HS10 5BX,01632 960641,https://example.com/the-rose-lodge-193
+The Rose Mill,Plymouth,Devon,Castles,116 Mill Lane,SD4 8GN,01632 960047,https://example.com/the-rose-mill-82
+The Rose Pavilion,Reading,Berkshire,Golf Clubs,39 Station Road,BH13 1AH,01632 960785,https://example.com/the-rose-pavilion-112
+The Rose Place,Derby,Derbyshire,Historic Halls,87 Abbey Road,BN3 6EX,01632 960290,https://example.com/the-rose-place-123
+The Rose Place,Wolverhampton,West Midlands,Boutique Venues,60 Church Road,PM9 6WU,01632 960822,https://example.com/the-rose-place-199
+The Rose Retreat,Stoke-on-Trent,Staffordshire,Castles,28 Castle Street,AT20 2DX,01632 960271,https://example.com/the-rose-retreat-24
+The South Barn,Coventry,West Midlands,Golf Clubs,82 Abbey Road,FC15 6YN,01632 960706,https://example.com/the-south-barn-85
+The South Court,Bradford,West Yorkshire,Boutique Venues,37 Farm Lane,ME16 2AY,01632 960490,https://example.com/the-south-court-61
+The South Farm,Cardiff,Cardiff,Boutique Venues,7 Station Road,SD10 4NE,01632 960429,https://example.com/the-south-farm-134
+The South Gardens,Swansea,Swansea,Boutique Venues,91 Station Road,CE5 4RF,01632 960065,https://example.com/the-south-gardens-43
+The South Grange,Edinburgh,City of Edinburgh,Hotels,100 Castle Street,MG5 6GX,01632 960940,https://example.com/the-south-grange-11
+The South Grange,Glasgow,Glasgow City,Pub & Inn Venues,97 Station Road,MN4 8DF,01632 960880,https://example.com/the-south-grange-90
+The South Hall,Aberdeen,Aberdeen City,Farm Venues,34 High Street,NG16 7TF,01632 960252,https://example.com/the-south-hall-7
+The South Lodge,Dundee,Dundee City,Castles,91 Church Road,EP10 7FZ,01632 960317,https://example.com/the-south-lodge-124
+The South Park,Belfast,County Antrim,Museum Venues,75 Park Avenue,RN1 2LG,01632 960039,https://example.com/the-south-park-33
+The South Pavilion,York,North Yorkshire,Castles,30 Bridge Road,BS11 5AD,01632 960601,https://example.com/the-south-pavilion-69
+The South Pavilion,Bath,Somerset,Marquee Venues,31 Station Road,LL5 2ZY,01632 960051,https://example.com/the-south-pavilion-173
+The South Place,Oxford,Oxfordshire,Riverside Venues,27 Manor Way,BC7 9HU,01632 960310,https://example.com/the-south-place-197
+The South Retreat,Cambridge,Cambridgeshire,Coastal Venues,78 High Street,FP12 4LD,01632 960546,https://example.com/the-south-retreat-5
+The South Retreat,Norwich,Norfolk,Castles,119 Station Road,TD2 9AD,01632 960170,https://example.com/the-south-retreat-19
+The South Retreat,Exeter,Devon,Marquee Venues,46 Bridge Road,RW4 4RY,01632 960302,https://example.com/the-south-retreat-86
+The Stone Cellars,Chester,Cheshire,Boutique Venues,116 Bridge Road,TS2 4SR,01632 960968,https://example.com/the-stone-cellars-44
+The Stone Gardens,Durham,County Durham,Golf Clubs,73 Park Avenue,EG14 7GZ,01632 960415,https://example.com/the-stone-gardens-36
+The Stone Hall,Canterbury,Kent,Hotels,91 Park Avenue,TD5 8NW,01632 960425,https://example.com/the-stone-hall-75
+The Stone Hall,Winchester,Hampshire,Historic Halls,113 Castle Street,CT15 9QF,01632 960655,https://example.com/the-stone-hall-151
+The Stone House,Salisbury,Wiltshire,City Venues,12 Church Road,NL12 3UD,01632 960095,https://example.com/the-stone-house-104
+The Stone House,Lincoln,Lincolnshire,Coastal Venues,86 Church Road,EB19 9XP,01632 960420,https://example.com/the-stone-house-105
+The Stone House,Harrogate,North Yorkshire,City Venues,43 High Street,RC13 5PJ,01632 960078,https://example.com/the-stone-house-116
+The Stone Park,Cheltenham,Gloucestershire,Industrial Venues,16 High Street,RR3 9FQ,01632 960550,https://example.com/the-stone-park-188
+The Stone Pavilion,Shrewsbury,Shropshire,Marquee Venues,34 Farm Lane,RB6 7AR,01632 960292,https://example.com/the-stone-pavilion-20
+The Stone Pavilion,Truro,Cornwall,Marquee Venues,8 Mill Lane,MG2 9BP,01632 960598,https://example.com/the-stone-pavilion-21
+The Stone Pavilion,Inverness,Highland,Boutique Venues,68 Manor Way,GH20 2WT,01632 960079,https://example.com/the-stone-pavilion-183
+The Stone Pavilion,Stirling,Stirling,Coastal Venues,49 High Street,RN14 7FN,01632 960772,https://example.com/the-stone-pavilion-194
+The Stone Yard,Bangor,Gwynedd,Coastal Venues,88 Manor Way,GT15 4QE,01632 960557,https://example.com/the-stone-yard-95
+The Stone Yard,Windsor,Berkshire,Country Houses,19 Bridge Road,CR12 9GA,01632 960694,https://example.com/the-stone-yard-144
+The West Hall,Stratford-upon-Avon,Warwickshire,Woodland Venues,82 Park Avenue,HW19 3JT,01632 960470,https://example.com/the-west-hall-84
+The West Lodge,Richmond,Greater London,Castles,42 Manor Way,FW15 8YZ,01632 960154,https://example.com/the-west-lodge-118
+The West Yard,Richmond,North Yorkshire,Museum Venues,120 Mill Lane,ES3 4TQ,01632 960424,https://example.com/the-west-yard-131
