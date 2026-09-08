@@ -23,14 +23,30 @@
 #                          running build's. That is the old behaviour: use it to
 #                          force every page to re-render now.
 #   DRY_RUN=1              list what would go, delete nothing
-#   PREFIX=nextjs:         the shared namespace head (matches CACHE_NAMESPACE)
+#   CACHE_NAMESPACE=…      the namespace head, the same variable the app reads
+#                          (lib/cache/build-id.mjs). Default `nextjs`.
+#   PREFIX=nextjs:         the same thing spelled with its separator, for a
+#                          namespace this checkout is not configured for.
 #
 # Scoping: REDIS_URL may carry a database index (redis://host:6379/7) and
-# redis-cli honours it, so this only ever touches the db the app uses.
+# redis-cli honours it, so this only ever touches the db the app uses. If two
+# sites do share a database, they must not share a namespace — this script and
+# the app's own boot sweep both DEL everything under `<namespace>:*` that is not
+# the running build's, so a shared namespace means each deploy wipes the other
+# site's cache.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PREFIX="${PREFIX:-nextjs:}"
+# CACHE_NAMESPACE is what the app reads; PREFIX stays as the explicit override.
+PREFIX="${PREFIX:-${CACHE_NAMESPACE:-nextjs}:}"
+# Same character class lib/cache/build-id.mjs enforces, plus the one trailing
+# colon. A `*` here would purge namespaces belonging to another site.
+case "$PREFIX" in
+  *[!A-Za-z0-9_-]*:) echo "purge-cache: invalid namespace: ${PREFIX%:}" >&2; exit 1 ;;
+  ":" | "") echo "purge-cache: empty namespace" >&2; exit 1 ;;
+  *:) ;;
+  *) echo "purge-cache: PREFIX must end in a colon: $PREFIX" >&2; exit 1 ;;
+esac
 REDIS_URL="${REDIS_URL:-redis://localhost:6380}"
 DRY_RUN="${DRY_RUN:-}"
 

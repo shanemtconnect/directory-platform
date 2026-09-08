@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CACHE_NAMESPACE,
+  DEFAULT_CACHE_NAMESPACE,
+  selectNamespace,
   DEV_BUILD_ID,
   normalizeBuildId,
   selectBuildId,
@@ -77,11 +78,40 @@ describe("selectBuildId", () => {
 describe("cacheKeyPrefix", () => {
   it("namespaces by build id with a trailing separator", () => {
     expect(cacheKeyPrefix("abc")).toBe("nextjs:abc:");
-    expect(CACHE_NAMESPACE).toBe("nextjs");
+    expect(DEFAULT_CACHE_NAMESPACE).toBe("nextjs");
+  });
+
+  it("takes a namespace, so two sites can share one Redis database", () => {
+    expect(cacheKeyPrefix("abc", "barn-venues")).toBe("barn-venues:abc:");
   });
 
   it("refuses to build a prefix from an invalid id", () => {
     expect(() => cacheKeyPrefix("a:b")).toThrow(/build id/i);
+  });
+
+  it("refuses an invalid namespace rather than silently sharing one", () => {
+    // Falling back to `nextjs` here is the bug this variable exists to prevent:
+    // the boot sweep DELs every key outside the running build's prefix, so two
+    // sites sharing a namespace means each deploy wipes the other's cache.
+    for (const n of ["a:b", "a*", "a b", ""]) {
+      expect(() => cacheKeyPrefix("abc", n), n).toThrow(/namespace/i);
+    }
+  });
+});
+
+describe("selectNamespace", () => {
+  it("defaults when CACHE_NAMESPACE is unset or blank", () => {
+    expect(selectNamespace({})).toBe("nextjs");
+    expect(selectNamespace({ CACHE_NAMESPACE: "" })).toBe("nextjs");
+    expect(selectNamespace({ CACHE_NAMESPACE: "  \n" })).toBe("nextjs");
+  });
+
+  it("takes a set one, trimmed", () => {
+    expect(selectNamespace({ CACHE_NAMESPACE: " barn-venues\n" })).toBe("barn-venues");
+  });
+
+  it("throws on a set-but-unusable value", () => {
+    expect(() => selectNamespace({ CACHE_NAMESPACE: "barn venues" })).toThrow(/namespace/i);
   });
 });
 
@@ -99,6 +129,18 @@ describe("resolveCacheKeyPrefix", () => {
     mkdirSync(join(cwd, ".next"));
     writeFileSync(join(cwd, ".next", "BUILD_ID"), "8dhlIRUNLtpabNXf4Ajbu\n");
     expect(resolveCacheKeyPrefix({ cwd, env: {} })).toBe("nextjs:8dhlIRUNLtpabNXf4Ajbu:");
+    cleanup();
+  });
+
+  it("takes the namespace from CACHE_NAMESPACE", () => {
+    const cwd = scratch();
+    expect(resolveCacheKeyPrefix({ cwd, env: { NEXT_BUILD_ID: "envbuild", CACHE_NAMESPACE: "barn-venues" } }))
+      .toBe("barn-venues:envbuild:");
+    // …and the sweep follows it, or a second site on the same Redis database
+    // would still be swept by this one.
+    expect(namespaceScanPattern("barn-venues:envbuild:")).toBe("barn-venues:*");
+    expect(isStaleNamespaceKey("nextjs:other:/index", "barn-venues:envbuild:")).toBe(false);
+    expect(isStaleNamespaceKey("barn-venues:old:/index", "barn-venues:envbuild:")).toBe(true);
     cleanup();
   });
 

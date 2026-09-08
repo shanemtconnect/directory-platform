@@ -190,6 +190,17 @@ is still serving from its own namespace until traffic swaps, and sweeping
 immediately would pull the cache out from under it. `CACHE_SWEEP_DELAY_MS`
 overrides it (default `60000`); raise it if your deploys take longer to drain.
 
+**One Redis database index, or one `CACHE_NAMESPACE`, per site.** That sweep
+`DEL`s every key under `<namespace>:*` that is not the running build's, so two
+clones sharing both a Redis database and a namespace delete each other's cache
+on every deploy — invisibly, because a swept key looks exactly like a cold one.
+Either give each site its own database index (`redis://host:6379/3`,
+`…/4`, …) or set `CACHE_NAMESPACE` per site; either is enough. It is optional
+and defaults to `nextjs`, takes letters, digits, `_` and `-` up to 64
+characters, and a value outside that fails the boot rather than quietly
+reverting to the shared default. `scripts/purge-cache.sh` reads the same
+variable.
+
 Do **not** wire `scripts/purge-cache.sh` in as a post-deployment command. The
 runner image is `node:24-alpine` carrying the standalone server, the migrations
 and `scripts/migrate.mjs` — and nothing else. No bash, no `redis-cli`, none of
@@ -201,7 +212,7 @@ REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh
 ```
 
 With no arguments it keeps the build id in `.next/BUILD_ID` and deletes every
-other namespace. `KEEP_BUILD_ID=none` purges everything instead, which is the
+other namespace under `CACHE_NAMESPACE` (default `nextjs`). `KEEP_BUILD_ID=none` purges everything instead, which is the
 way to force every page to re-render now. `DRY_RUN=1` lists without deleting.
 
 **Expect a cold cache after a deploy.** The first request to each page renders
