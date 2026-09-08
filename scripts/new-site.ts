@@ -149,7 +149,7 @@ function describe(question: Question, fallback: unknown): string[] {
   }
   if (question.type === "list") lines.push(`  format: ${question.itemHint} (blank line to finish)`);
   if (question.type !== "list" && fallback !== undefined && fallback !== "") {
-    lines.push(`  default: ${String(fallback)}`);
+    lines.push(`  default: ${fallback === null ? "unlimited" : String(fallback)}`);
   }
   return lines;
 }

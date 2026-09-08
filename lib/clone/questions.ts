@@ -396,13 +396,6 @@ export const QUESTIONS: readonly Question[] = [
         : "must be a bare hostname such as example.com — no scheme, no path",
   },
   {
-    key: "tagline",
-    type: "text",
-    prompt: "Tagline",
-    default: (a) => (a.entityPlural ? `Find ${a.entityPlural} near you` : ""),
-    validate: nonEmpty("Tagline"),
-  },
-  {
     key: "legalEntity",
     type: "text",
     prompt: "Legal entity",
@@ -464,6 +457,15 @@ export const QUESTIONS: readonly Question[] = [
     prompt: "What you call the person who owns one",
     default: (a) => (a.entitySingular ? `${a.entitySingular} owner` : "owner"),
     validate: lowerNoun("Owner noun"),
+  },
+
+  // Asked after the nouns, because its default is built from them.
+  {
+    key: "tagline",
+    type: "text",
+    prompt: "Tagline",
+    default: (a) => (a.entityPlural === undefined ? "" : `Find ${a.entityPlural} near you`),
+    validate: nonEmpty("Tagline"),
   },
 
   // --- market ---

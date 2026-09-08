@@ -6,7 +6,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs, nextSteps, CliError } from "./new-site";
+import { parseArgs, nextSteps, run, CliError } from "./new-site";
 import { SEED_HEADERS } from "@/lib/clone/scaffold-seed";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -136,6 +136,71 @@ describe("nextSteps", () => {
   it("says the legal entity is still a placeholder when it was let through", () => {
     const steps = nextSteps({ niche: "x", allowedPlaceholders: true }).join("\n");
     expect(steps).toMatch(/legalEntity/);
+  });
+});
+
+describe("the wizard, asking questions", () => {
+  /**
+   * Drives the real prompt loop. Anything not scripted is answered with a blank
+   * line, which accepts the default — so this also proves no question's default
+   * is unusable at the point the operator reaches it.
+   */
+  function scriptedIo(script: readonly (readonly [RegExp, string])[]) {
+    const remaining = [...script];
+    const printed: string[] = [];
+    let pending: string | undefined;
+    let asks = 0;
+    return {
+      printed,
+      out(line: string) {
+        printed.push(line);
+        const i = remaining.findIndex(([pattern]) => pattern.test(line));
+        if (i >= 0) pending = remaining.splice(i, 1)[0]![1];
+      },
+      ask: async (): Promise<string> => {
+        asks++;
+        if (asks > 500) throw new Error("the prompt loop is not terminating");
+        const answer = pending ?? "";
+        pending = undefined;
+        return answer;
+      },
+    };
+  }
+
+  it("walks the whole schema, accepting defaults on a blank line", async () => {
+    const io = scriptedIo([
+      [/^Site name$/, "Studio Finder"],
+      [/^Domain$/, "studiofinder.co.uk"],
+      [/^Legal entity$/, "Studio Finder Ltd"],
+      [/^One listed thing is a/, "studio"],
+      [/^Seed directory name$/, "studios"],
+    ]);
+
+    expect(await run(["--target", target], io)).toBe(0);
+
+    const config = readFileSync(join(target, "config", "site.config.ts"), "utf8");
+    expect(config).toContain('name: "Studio Finder"');
+    expect(config).toContain('singular: "studio"');
+    expect(config).toContain('plural: "studios"');
+    expect(config).toContain('tagline: "Find studios near you"');
+    expect(config).toContain('supportEmail: "hello@studiofinder.co.uk"');
+    expect(existsSync(join(target, "seeds", "studios", "listings.csv"))).toBe(true);
+  });
+
+  it("re-asks after a bad answer instead of giving up", async () => {
+    const io = scriptedIo([
+      [/^Site name$/, "Studio Finder"],
+      [/^Domain$/, "https://studiofinder.co.uk"],
+      [/^ {2}✗ /, "studiofinder.co.uk"],
+      [/^Legal entity$/, "Studio Finder Ltd"],
+      [/^One listed thing is a/, "studio"],
+      [/^Seed directory name$/, "studios"],
+    ]);
+
+    expect(await run(["--target", target], io)).toBe(0);
+    expect(io.printed.join("\n")).toMatch(/✗ must be a bare hostname/);
+    expect(readFileSync(join(target, "config", "site.config.ts"), "utf8"))
+      .toContain('domain: "studiofinder.co.uk"');
   });
 });
 
