@@ -137,9 +137,17 @@ function asList(value: FrontmatterValue | undefined): string[] {
 
 const SAFE_HREF = /^(https?:\/\/|\/|#|mailto:)/i;
 
+/**
+ * `//evil.example/x` and `/\evil.example/x` both parse as protocol-relative
+ * off-site URLs while looking site-relative to the `^\/` branch above, so they
+ * are rejected before the allow-list is consulted.
+ */
+const PROTOCOL_RELATIVE = /^\/[/\\]/;
+
 function href(raw: string): string | null {
   const url = raw.trim();
   if (url === "") return null;
+  if (PROTOCOL_RELATIVE.test(url)) return null;
   return SAFE_HREF.test(url) ? url : null;
 }
 
@@ -210,7 +218,9 @@ export function renderMarkdown(source: string): string {
 
     const heading = HEADING_RE.exec(line);
     if (heading && heading[1] !== undefined) {
-      const level = heading[1].length;
+      // Demoted one level: the page already renders the post title as its h1,
+      // so a `#` in the body would give the document a second one.
+      const level = Math.min(heading[1].length + 1, 6);
       out.push(`<h${level}>${inline(heading[2] ?? "")}</h${level}>`);
       i += 1;
       continue;

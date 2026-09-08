@@ -35,6 +35,8 @@ const ATTACKS = [
   '[x](" onmouseover="alert(1))',
   "<a href=\"javascript:alert(1)\">x</a>",
   "![img](javascript:alert(1))",
+  "[x](//evil.test/steal)",
+  "[x](/\\evil.test/steal)",
 ];
 
 describe("renderMarkdown — adversarial", () => {
@@ -45,12 +47,14 @@ describe("renderMarkdown — adversarial", () => {
       expect(eventAttributes(html)).toEqual([]);
       expect(html).not.toMatch(/href\s*=\s*"\s*javascript:/i);
       expect(html).not.toMatch(/href\s*=\s*"\s*data:/i);
+      // A protocol-relative href leaves the site while looking site-relative.
+      expect(html).not.toMatch(/href\s*=\s*"\s*\/[/\\]/);
     });
   }
 
   it("still renders legitimate markdown", () => {
     const html = renderMarkdown("# Title\n\nSome **bold** and [a link](https://ok.test).");
-    expect(html).toContain("<h1>");
+    expect(html).toContain("<h2>");
     expect(html).toContain("<strong>");
     expect(html).toContain('href="https://ok.test"');
   });

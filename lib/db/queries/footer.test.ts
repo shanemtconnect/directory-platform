@@ -79,7 +79,7 @@ describe("getFooterMatrix — indexability", () => {
       await makeListing(tx, { cityId: thin, verticalId: v, primaryCategoryId: cat });
       await indexable(tx, good);
 
-      const allowed = new Set((await sitemapCities(tx)).map((e) => e.path));
+      const allowed = new Set((await sitemapCities(tx, PUBLIC_VIEWER)).map((e) => e.path));
       const linkedCities = hrefs(await getFooterMatrix(tx, PUBLIC_VIEWER))
         .map((h) => `/${h.split("/")[1]}`);
 

@@ -3,6 +3,9 @@ import type { TierSpec, TierName } from "@/config/types";
 import { siteConfig } from "@/config/site.config";
 import {
   parseInterval,
+  intervalPath,
+  DEFAULT_INTERVAL,
+  INTERVALS,
   priceFor,
   isFree,
   annualSaving,
@@ -54,6 +57,20 @@ describe("parseInterval", () => {
   });
   it("takes the first value of a repeated param", () => {
     expect(parseInterval(["monthly", "annual"])).toBe("monthly");
+  });
+});
+
+describe("intervalPath", () => {
+  it("gives the default interval the bare /pricing URL", () => {
+    // The interval lives in the path, not a query string: reading searchParams
+    // forces the route dynamic in Next 16 and drops it out of the ISR cache.
+    expect(intervalPath(DEFAULT_INTERVAL)).toBe("/pricing");
+    expect(DEFAULT_INTERVAL).toBe("annual");
+  });
+
+  it("gives every other interval its own path, with no query string", () => {
+    expect(intervalPath("monthly")).toBe("/pricing/monthly");
+    for (const i of INTERVALS) expect(intervalPath(i)).not.toContain("?");
   });
 });
 

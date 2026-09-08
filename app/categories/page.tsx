@@ -4,13 +4,15 @@ import { siteConfig } from "@/config/site.config";
 import { listCategories } from "@/lib/db/queries/indexes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { JsonLd } from "@/components/seo/JsonLd";
-import { breadcrumbSchema, pillarSchema } from "@/lib/schema/builders";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { pillarSchema } from "@/lib/schema/builders";
 
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: `All ${siteConfig.entity.plural}`,
   description: `Browse every type of ${siteConfig.entity.singular}.`,
+  alternates: { canonical: "/categories" },
 };
 
 export default async function CategoriesIndex() {
@@ -19,7 +21,6 @@ export default async function CategoriesIndex() {
 
   return (
     <>
-      <JsonLd data={breadcrumbSchema([{ name: "Home", path: "/" }, { name: e.Plural, path: "/categories" }])} />
       <JsonLd
         data={pillarSchema({
           title: `All ${e.plural}`,
@@ -28,6 +29,7 @@ export default async function CategoriesIndex() {
         })}
       />
       <main>
+        <Breadcrumbs trail={[{ name: "Home", path: "/" }, { name: e.Plural, path: "/categories" }]} />
         <h1>All {e.plural}</h1>
         {categories.length === 0 ? (
           <p>No categories have listings yet.</p>

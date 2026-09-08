@@ -2,6 +2,7 @@ import { siteConfig } from "@/config/site.config";
 import { countryProfile } from "@/lib/geo/countries";
 import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { PublicListing as Listing } from "@/lib/db/queries/listings";
+import { displayedDescription } from "@/lib/listing/display";
 import { EnquiryForm } from "./EnquiryForm";
 
 interface Props {
@@ -21,10 +22,9 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
   const e = siteConfig.entity;
   const profile = countryProfile(city.country);
 
-  const description =
-    tier.descriptionDisplay === "full"
-      ? (listing.description ?? listing.shortDescription)
-      : truncate(listing.description ?? listing.shortDescription, tier.excerptChars);
+  // Shared with the JSON-LD builder so the markup can never assert a longer
+  // description than the one on the page.
+  const description = displayedDescription(listing, tier);
 
   return (
     <main>
@@ -75,10 +75,24 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
       {listing.claimStatus === "unclaimed" && (
         <section data-testid="claim-cta">
           <h2>Is this your {e.singular}?</h2>
-          <p><a href={`/claim/${listing.slug}`}>Claim it free</a> to edit the details.</p>
-          <p><a href="/data-sources">Where this information came from</a> · <a href={`/report/${listing.id}`}>Report incorrect information</a></p>
+          <p><a href={mailto(`Claim ${listing.name}`)}>Claim it free</a> to edit the details.</p>
         </section>
       )}
+
+      {/* On EVERY listing, not just unclaimed ones. A claimed listing can carry
+          a wrong address or belong to a business that has closed, and the
+          person who spots it is the visitor, whatever the claim status says.
+          Both links are mailto: until /claim and /report ship — an advertised
+          route that 404s is worse than an inbox. */}
+      <section data-testid="correction-links">
+        <p>
+          <a href="/data-sources">Where this information came from</a>
+          {" · "}
+          <a href={mailto(`Report ${listing.name}`)}>Report incorrect information</a>
+          {" · "}
+          <a href={mailto(`Remove ${listing.name}`)}>Request removal</a>
+        </p>
+      </section>
 
       {related.length > 0 && (
         <section aria-labelledby="nearby">
@@ -102,9 +116,9 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
   );
 }
 
-function truncate(text: string | null, chars: number): string | null {
-  if (!text || text.length <= chars) return text;
-  return `${text.slice(0, chars).replace(/\s+\S*$/, "")}…`;
+/** A support mailto with the subject already filled in. */
+function mailto(subject: string): string {
+  return `mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent(subject)}`;
 }
 
 function monthYear(d: Date): string {

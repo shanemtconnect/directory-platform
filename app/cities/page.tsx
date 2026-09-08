@@ -5,13 +5,15 @@ import { listCities } from "@/lib/db/queries/indexes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { countryProfile } from "@/lib/geo/countries";
 import { JsonLd } from "@/components/seo/JsonLd";
-import { breadcrumbSchema, pillarSchema } from "@/lib/schema/builders";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { pillarSchema } from "@/lib/schema/builders";
 
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: `${siteConfig.entity.Plural} by location`,
   description: `Browse ${siteConfig.entity.plural} by town and city.`,
+  alternates: { canonical: "/cities" },
 };
 
 export default async function CitiesIndex() {
@@ -30,7 +32,6 @@ export default async function CitiesIndex() {
 
   return (
     <>
-      <JsonLd data={breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Locations", path: "/cities" }])} />
       <JsonLd
         data={pillarSchema({
           title: `${e.Plural} by location`,
@@ -39,6 +40,7 @@ export default async function CitiesIndex() {
         })}
       />
       <main>
+        <Breadcrumbs trail={[{ name: "Home", path: "/" }, { name: "Locations", path: "/cities" }]} />
         <h1>{e.Plural} by location</h1>
         {cities.length === 0 ? (
           <p>No locations are listed yet.</p>

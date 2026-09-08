@@ -22,8 +22,8 @@ export const RESERVED_SLUGS = [
   "awards", "badge", "blog", "categories", "cities", "claim", "contact",
   "cost", "data-sources", "faq", "get-quotes", "guides", "images", "jobs",
   "leave-review", "page", "post-a-job", "pricing", "privacy", "robots", "safety",
-  "search", "select-listing-type", "shortlist", "sitemap", "terms", "tools",
-  "trust", "_next",
+  "search", "select-listing-type", "shortlist", "sitemap", "sitemaps", "terms",
+  "tools", "trust", "_next",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

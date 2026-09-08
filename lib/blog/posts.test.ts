@@ -82,6 +82,13 @@ describe("renderMarkdown escaping", () => {
     expect(html).toContain("&quot;");
   });
 
+  it("drops a protocol-relative href, keeping the label", () => {
+    // `//evil.example/x` inherits the page scheme and leaves the site — it is
+    // an off-site link wearing a site-relative costume.
+    expect(renderMarkdown("[go](//evil.example/x)")).toBe("<p>go</p>");
+    expect(renderMarkdown("[go](/\\evil.example/x)")).toBe("<p>go</p>");
+  });
+
   it("drops javascript: and data: hrefs, keeping the label", () => {
     expect(renderMarkdown("[click](javascript:alert1)")).toBe("<p>click</p>");
     expect(renderMarkdown("[click](data:text/html,<script>)")).not.toContain("href");
@@ -94,8 +101,14 @@ describe("renderMarkdown escaping", () => {
 });
 
 describe("renderMarkdown", () => {
-  it("renders headings at the right level", () => {
-    expect(renderMarkdown("# One\n\n### Three")).toBe("<h1>One</h1>\n<h3>Three</h3>");
+  it("demotes body headings one level so a post has a single h1", () => {
+    // The page renders the post title as the h1. A `#` in the body must not
+    // produce a second one.
+    expect(renderMarkdown("# One\n\n### Three")).toBe("<h2>One</h2>\n<h4>Three</h4>");
+  });
+
+  it("does not demote past h6", () => {
+    expect(renderMarkdown("###### Six")).toBe("<h6>Six</h6>");
   });
 
   it("joins wrapped lines into one paragraph and separates blocks", () => {

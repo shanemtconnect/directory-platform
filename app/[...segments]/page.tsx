@@ -1,4 +1,5 @@
 import { notFound, permanentRedirect, redirect } from "next/navigation";
+import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
 import { resolveRoute } from "@/lib/routing/resolve";
@@ -11,6 +12,8 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-detail";
 import { listingSchema, pillarSchema, breadcrumbSchema, faqSchema } from "@/lib/schema/builders";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
+import { displayedDescription, displayedSocials } from "@/lib/listing/display";
+import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
 
 export const revalidate = 3600;
@@ -111,6 +114,10 @@ export default async function CatchAllPage({ params }: Props) {
               city: detail.city,
               category: detail.category,
               path,
+              // Exactly what ListingDetail renders, from the same helper: the
+              // excerpt on a free tier, the socials only where they are shown.
+              description: displayedDescription(detail.listing, siteConfig.tiers[detail.listing.tier]),
+              sameAs: displayedSocials(detail.listing.socials, siteConfig.tiers[detail.listing.tier]),
               imageUrls: detail.images
                 .map((i) => absoluteMediaUrl(i.storagePath))
                 .filter((u): u is string => u !== null),
@@ -131,9 +138,7 @@ export default async function CatchAllPage({ params }: Props) {
     }
 
     case "pillar": {
-      const heading = await pillarHeading(
-        db as never, PUBLIC_VIEWER, result.scope, siteConfig.entity.Plural,
-      );
+      const heading = await pillarHeading(db as never, PUBLIC_VIEWER, result.scope, siteConfig.entity);
       if (!heading) notFound();
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
@@ -159,14 +164,24 @@ export default async function CatchAllPage({ params }: Props) {
       const faq = parseFaq(heading.faq);
 
       const basePath = pillarBasePath(segments);
+      const cityPath = `/${segments[0]}`;
+      // Page 2 is its own URL with its own listings on it. Identifying it as
+      // page 1 tells Google both pages are the same document.
+      const pagePath = result.page === 1 ? basePath : `${basePath}/page/${result.page}`;
+
       return (
         <>
           <JsonLd
             data={pillarSchema({
               title: heading.title,
-              path: basePath,
-              description: heading.introHtml ? stripTags(heading.introHtml) : null,
-              items: rows.map((l) => ({ name: l.name, path: `${basePath}/${l.slug}` })),
+              path: pagePath,
+              // The intro renders on page 1 only, so only page 1 describes
+              // itself with it.
+              description:
+                result.page === 1 && heading.introHtml ? stripTags(heading.introHtml) : null,
+              // A listing lives at /city/slug, never under the category
+              // segment — /leeds/{category}/{listing} is a 404.
+              items: rows.map((l) => ({ name: l.name, path: `${cityPath}/${l.slug}` })),
             })}
           />
           <JsonLd
@@ -183,10 +198,11 @@ export default async function CatchAllPage({ params }: Props) {
             categories={categories}
             nearby={nearby}
             faq={faq}
+            total={total}
             page={result.page}
             totalPages={totalPages}
             basePath={basePath}
-            cityPath={`/${segments[0]}`}
+            cityPath={cityPath}
           />
         </>
       );
@@ -194,23 +210,69 @@ export default async function CatchAllPage({ params }: Props) {
   }
 }
 
+/** Trimmed to a length a SERP will actually show, on a word boundary. */
+function metaDescription(text: string, max = 155): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max).replace(/\s+\S*$/, "")}…`;
+}
+
 /**
+ * Every kind the resolver can return gets its own metadata.
+ *
+ * Previously only pillars did, so every listing page on the site — the majority
+ * of the URLs — shipped the bare site name as its title and the site tagline as
+ * its description, and nothing carried a canonical at all.
+ *
  * A city that has not earned indexing renders and works, but is noindex,follow
  * and stays out of the sitemap. This is the single most important SEO rule in
  * the build — thin one-listing city pages drag the whole domain down.
  */
-export async function generateMetadata({ params }: Props) {
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { segments } = await params;
   const result = await resolveRoute(db as never, segments, siteConfig.siteMode);
+
+  if (result.kind === "listing") {
+    const detail = await getListingDetail(db as never, PUBLIC_VIEWER, result.listingId);
+    if (!detail) return {};
+
+    const { listing, city, category } = detail;
+    const noun = category?.singular ?? siteConfig.entity.Singular;
+    const title = `${listing.name} — ${noun} in ${city.name}`;
+    // The description the PAGE shows, so the snippet and the page agree.
+    const shown = displayedDescription(listing, siteConfig.tiers[listing.tier]);
+    const path = `/${city.slug}/${listing.slug}`;
+
+    return {
+      title,
+      description: shown ? metaDescription(shown) : undefined,
+      alternates: { canonical: path },
+      openGraph: pageOpenGraph({ title, url: path }),
+    };
+  }
+
   if (result.kind !== "pillar") return {};
 
-  const heading = await pillarHeading(
-    db as never, PUBLIC_VIEWER, result.scope, siteConfig.entity.Plural,
-  );
+  const heading = await pillarHeading(db as never, PUBLIC_VIEWER, result.scope, siteConfig.entity);
   if (!heading) return {};
 
+  const basePath = pillarBasePath(segments);
+  const onPageOne = result.page === 1;
+  // Page N is its own canonical. Pointing it at page 1 asks Google to drop
+  // every listing that only appears on page N.
+  const path = onPageOne ? basePath : `${basePath}/page/${result.page}`;
+  const title = onPageOne ? heading.title : `${heading.title} — page ${result.page}`;
+
+  const intro = heading.introHtml ? metaDescription(stripTags(heading.introHtml)) : null;
+  const description = intro === null
+    ? undefined
+    : onPageOne ? intro : `${intro} — page ${result.page}`;
+
   return {
-    title: heading.title,
+    title,
+    description,
+    alternates: { canonical: path },
+    openGraph: pageOpenGraph({ title, url: path }),
     robots: heading.isIndexable ? undefined : { index: false, follow: true },
   };
 }

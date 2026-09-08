@@ -11,9 +11,29 @@ export interface PillarHeading {
   /** What the H1 says, built from entity nouns — never a hardcoded niche word. */
   title: string;
   place: string;
+  /**
+   * What the things on THIS page are called. On a city pillar that is the
+   * site's entity noun; on /city/category it is the category's own noun, so
+   * the sub-heading agrees with the H1 instead of widening back out to the
+   * whole site.
+   */
+  nounSingular: string;
+  nounPlural: string;
   introHtml: string | null;
   isIndexable: boolean;
+  /** The WHOLE scope parent's count. Never the count for this page's scope. */
   listingCount: number;
+}
+
+/**
+ * Just the nouns, so a clone's entity words arrive from config, not from here.
+ * `Plural` is the title-cased form the H1 uses; `plural` is the sentence-cased
+ * one that follows a number.
+ */
+export interface EntityNouns {
+  readonly singular: string;
+  readonly plural: string;
+  readonly Plural: string;
 }
 
 /**
@@ -32,7 +52,7 @@ export async function pillarHeading(
   tx: Db,
   viewer: Viewer,
   scope: PillarScope,
-  entityPlural: string,
+  entity: EntityNouns,
 ): Promise<PillarHeading | null> {
   const indexability = await scopeIndexability(tx, viewer, scope);
   if (!indexability) return null;
@@ -41,15 +61,21 @@ export async function pillarHeading(
     const [city] = await tx.select().from(cities).where(eq(cities.id, scope.cityId)).limit(1);
     if (!city) return null;
 
-    let noun = entityPlural;
+    // The H1 uses the category's display NAME, title-cased; the counted
+    // sub-heading uses its sentence-case nouns ("12 {plural} in Leeds").
+    let heading = entity.Plural;
+    let nouns: { singular: string; plural: string } = entity;
     if (scope.type === "city-category") {
       const [cat] = await tx.select().from(categories).where(eq(categories.id, scope.categoryId)).limit(1);
       if (!cat) return null;
-      noun = cat.name;
+      heading = cat.name;
+      nouns = { singular: cat.singular, plural: cat.plural };
     }
     return {
-      title: `${noun} in ${city.name}`,
+      title: `${heading} in ${city.name}`,
       place: city.name,
+      nounSingular: nouns.singular,
+      nounPlural: nouns.plural,
       introHtml: city.introHtml,
       ...indexability,
       faq: city.faq,
@@ -65,6 +91,8 @@ export async function pillarHeading(
     return {
       title: `${vertical.name} in ${area.name}`,
       place: area.name,
+      nounSingular: vertical.singular,
+      nounPlural: vertical.plural,
       introHtml: area.introHtml,
       ...indexability,
       faq: area.faq,
@@ -73,6 +101,8 @@ export async function pillarHeading(
   return {
     title: vertical.name,
     place: vertical.name,
+    nounSingular: vertical.singular,
+    nounPlural: vertical.plural,
     introHtml: vertical.introHtml,
     ...indexability,
     faq: null,
