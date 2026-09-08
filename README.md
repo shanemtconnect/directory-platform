@@ -72,6 +72,12 @@ The image builds two targets from one Dockerfile: `runner` (the app) and
 `worker` (the same image running `worker/index.ts` under tsx, with
 `WORKER_ENABLED=true`).
 
+**Set `WORKER_ENABLED=true` only on the worker service.** A shared env file
+that leaks it into the web container's environment (even as `=false`) is
+enough to disable the web container's static-asset retention below —
+`docker-entrypoint.sh` only runs it when `WORKER_ENABLED` is unset or not the
+literal string `true`.
+
 ```bash
 docker build --target runner \
   --build-arg NEXT_PUBLIC_SITE_URL=https://example.co.uk \
@@ -82,8 +88,12 @@ docker build --target runner \
 ./scripts/verify-image.sh    # cache handler loads, assets retained, worker runs
 ```
 
-`DATABASE_URL` is a build arg because `/cities` and the city pages prerender
-from the database — the build genuinely queries it. It is not baked into the
+`DATABASE_URL` is a build arg because `next build` prerenders `/`, `/cities`
+and `/categories` from the database — the build genuinely queries it. (The
+city and category catch-all routes are not among these: their
+`generateStaticParams` return `[]`, so they need no database.) `docker build`
+now fails fast with a clear message if the arg is missing, rather than dying
+partway through prerendering on `ECONNREFUSED`. It is not baked into the
 runner; that gets its own at boot.
 
 **Mount a volume at `STATIC_ASSETS_DIR`.** This is not optional tuning. The ISR

@@ -20,7 +20,11 @@ set -eu
 # sharing the volume would symlink a directory it must not own. It still wants
 # the privilege drop at the bottom of this file, so guard the block rather than
 # overriding the entrypoint.
-if [ -n "${STATIC_ASSETS_DIR:-}" ] && [ -z "${WORKER_ENABLED:-}" ]; then
+#
+# Match worker/index.ts's own check (`!== "true"`) exactly: WORKER_ENABLED is
+# merely present in a web container that inherits it (e.g. =false) from a
+# shared env file, and a presence check would silently skip retention there.
+if [ -n "${STATIC_ASSETS_DIR:-}" ] && [ "${WORKER_ENABLED:-}" != "true" ]; then
   # `mkdir -p` on a directory that already exists exits 0 whether or not it can
   # be written to, so it proves nothing about a read-only mount. The only honest
   # probe is a real write.
@@ -52,10 +56,15 @@ if [ -n "${STATIC_ASSETS_DIR:-}" ] && [ -z "${WORKER_ENABLED:-}" ]; then
     # and printed a success message over an empty directory.
     cp -Rn /app/.next/static/* "$STATIC_ASSETS_DIR/"
 
-    # Verify before destroying. `cp -Rn` can exit 0 having copied less than
-    # everything (a full disk mid-copy, a per-file permission failure BusyBox
-    # does not propagate), and the image's copy is the only remaining source of
-    # these files. Every file the image shipped must be on the volume first.
+    # Verify before destroying. This only proves every file the image shipped
+    # exists on the volume — `[ -e ]` says nothing about its size or content,
+    # so a file truncated mid-copy would still pass. Catching that is the
+    # fatal, unguarded `cp` above: under `set -e` a copy that aborts partway
+    # through kills the script before this loop, or the deletion below, ever
+    # runs. What this loop catches instead is a file `cp -Rn` skipped
+    # entirely — e.g. a per-file permission failure BusyBox does not
+    # propagate as a nonzero exit — leaving the image's copy as the only
+    # remaining source of it.
     missing=$(cd /app/.next/static && find . -type f | while read -r f; do
       [ -e "$STATIC_ASSETS_DIR/$f" ] || echo "$f"
     done | head -n 5)
@@ -72,6 +81,8 @@ if [ -n "${STATIC_ASSETS_DIR:-}" ] && [ -z "${WORKER_ENABLED:-}" ]; then
   ln -sfn "$STATIC_ASSETS_DIR" /app/.next/static
   chown -R nextjs:nodejs "$STATIC_ASSETS_DIR" 2>/dev/null || true
   echo "[entrypoint] .next/static -> $STATIC_ASSETS_DIR (assets retained across deploys)"
+elif [ -n "${STATIC_ASSETS_DIR:-}" ]; then
+  echo "[entrypoint] worker container: skipping static asset retention"
 fi
 
 # Drop privileges here rather than with USER, because the volume above is

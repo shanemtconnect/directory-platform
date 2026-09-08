@@ -110,12 +110,16 @@ fi
 echo "ok: $(grep -c '^\[worker\]' <<<"$W_OUT") worker startup lines, no unresolved imports"
 
 echo "--- worker: missing env stops the process instead of idling ---"
+# DATABASE_URL is set here so `@/lib/db/client` resolves at import time instead
+# of throwing before validateEnv gets a chance to run — REDIS_URL is the only
+# thing missing, so this exercises validateEnv's own process.exit(1) path.
 set +e
-E_OUT=$(docker run --rm -e WORKER_ENABLED=true -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
-  "$IMAGE-worker" ./node_modules/.bin/tsx worker/index.ts 2>&1)
+docker run --rm -e WORKER_ENABLED=true -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
+  -e DATABASE_URL="$BUILD_DB" \
+  "$IMAGE-worker" ./node_modules/.bin/tsx worker/index.ts > /dev/null 2>&1
 E_CODE=$?
 set -e
-[ "$E_CODE" -ne 0 ] || fail "worker booted with no DATABASE_URL/REDIS_URL"
+[ "$E_CODE" -ne 0 ] || fail "worker booted with no REDIS_URL"
 echo "ok: exit $E_CODE"
 
 echo "PASS: cache handler loads, assets survive a redeploy, a read-only volume"
