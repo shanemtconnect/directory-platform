@@ -9,6 +9,10 @@ BANNED='venue|venues|wedding|weddings|couple|couples|bride|groom'
 
 # Scanned as well as app/components/lib/worker: scripts/ (the seed default
 # niche lived there) and content/ (posts are shipped source, not user data).
+#
+# `*.mjs` is in the include list because scripts/ is not all TypeScript any more:
+# scripts/migrate.mjs is plain ESM so the prod-only runner image can execute it,
+# and a file the image ships is a file this guard has to read.
 DIRS='app components lib worker scripts content'
 
 # Demo blog posts are niche-specific ON PURPOSE and load only under
@@ -23,7 +27,7 @@ EXEMPT='^content/blog/demo/|^scripts/check-niche-strings\.sh:'
 # rest of the line, so only the literal text is judged. Line numbers survive
 # because grep -n runs first and sed never adds or removes lines.
 HITS=$(grep -rnE --include='*.ts' --include='*.tsx' --include='*.md' \
-        --include='*.mdx' --include='*.sh' -e '' $DIRS 2>/dev/null \
+        --include='*.mdx' --include='*.sh' --include='*.mjs' -e '' $DIRS 2>/dev/null \
       | grep -vE '\.test\.|\.spec\.' \
       | grep -vE "$EXEMPT" \
       | sed -E 's/siteConfig\.[A-Za-z.]+//g' \
