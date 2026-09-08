@@ -4,7 +4,6 @@ import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { EnquiryForm } from "./EnquiryForm";
 
-
 interface Props {
   detail: Detail;
   related: Listing[];
