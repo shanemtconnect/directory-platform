@@ -67,37 +67,35 @@ export interface SeedReport {
  * The indexing gate (`is_indexable` needs `intro_html IS NOT NULL`) cannot tell
  * real copy from a placeholder, so a seed that writes `<p>Intro copy.</p>`
  * hands every city an indexable page it has not earned. Everything below is
- * either a fact from the row (name, region, count, the categories actually
- * present) or a noun from `siteConfig` — nothing niche-specific is written
- * here, so a plumber clone reads correctly with no edit.
+ * either a fact from the row (name, region, the categories actually present)
+ * or a noun from `siteConfig` — nothing niche-specific is written here, so a
+ * plumber clone reads correctly with no edit.
+ *
+ * No listing count: this copy is rendered on the public pillar page and
+ * stripped into its meta description, and `writeIntroCopy` only ever fills
+ * `intro_html` where it is NULL — it never revisits a city once written. A
+ * count baked in here is true at seed time and false the moment a listing is
+ * added or unpublished afterwards.
  */
 function buildIntroHtml(input: {
   city: string;
   region: string | null;
-  count: number;
-  /** Plural label and singular label of each category present, name-ordered. */
-  categories: { name: string; singular: string }[];
+  /** Name of each category present, name-ordered. */
+  categories: { name: string }[];
 }): string {
   const e = siteConfig.entity;
   const place = escapeHtml(input.region ? `${input.city}, ${input.region}` : input.city);
-  const noun = input.count === 1 ? e.singular : e.plural;
-  const verb = input.count === 1 ? "is" : "are";
 
   const named = input.categories.slice(0, 3);
   const list = new Intl.ListFormat(siteConfig.locale, { style: "long", type: "conjunction" })
     .format(named.map((c) => escapeHtml(c.name.toLowerCase())));
 
-  // The category labels are plural, so a one-listing city needs the singular or
-  // the sentence reads "the one listed so far is castles".
-  let coverage = "";
-  if (named.length > 0) {
-    coverage = input.count === 1
-      ? ` The one listed so far is a ${escapeHtml(named[0]!.singular.toLowerCase())}.`
-      : ` They ${input.categories.length > named.length ? "include" : "are"} ${list}.`;
-  }
+  const coverage = named.length > 0
+    ? ` ${input.categories.length > named.length ? "Categories include" : "They include"} ${list}.`
+    : "";
 
   return (
-    `<p>There ${verb} ${input.count} ${noun} listed in ${place} on ${escapeHtml(siteConfig.name)}.` +
+    `<p>${escapeHtml(siteConfig.name)} lists ${escapeHtml(e.plural)} in ${place}.` +
     `${coverage}</p>` +
     `<p>Every entry has its own page with an address, contact details and an enquiry form, ` +
     `so you can compare ${escapeHtml(e.plural)} in ${place} side by side before you get in touch.</p>`
@@ -264,14 +262,14 @@ export async function runSeed(tx: TestDb, niche: string = DEFAULT_NICHE): Promis
 async function writeIntroCopy(tx: TestDb): Promise<void> {
   const pending = await tx
     .select({
-      id: cities.id, name: cities.name, region: cities.region, count: cities.listingCount,
+      id: cities.id, name: cities.name, region: cities.region,
     })
     .from(cities)
     .where(isNull(cities.introHtml));
 
   for (const city of pending) {
     const present = await tx
-      .selectDistinct({ name: categories.name, singular: categories.singular })
+      .selectDistinct({ name: categories.name })
       .from(listings)
       .innerJoin(categories, eq(categories.id, listings.primaryCategoryId))
       .where(and(eq(listings.cityId, city.id), eq(listings.status, "published")))
@@ -283,7 +281,6 @@ async function writeIntroCopy(tx: TestDb): Promise<void> {
         introHtml: buildIntroHtml({
           city: city.name,
           region: city.region,
-          count: city.count,
           categories: present,
         }),
       })

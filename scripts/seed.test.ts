@@ -214,6 +214,21 @@ describe("city intro copy", () => {
     });
   }, 60000);
 
+  it("never claims a listing count, which writeIntroCopy cannot keep current", async () => {
+    // writeIntroCopy only ever fills intro_html where it is NULL (see the test
+    // above), so a number baked in here is true at seed time and false the
+    // first time a listing is added or unpublished afterwards — on a page
+    // that is also the meta description.
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      for (const city of rows) {
+        expect(city.introHtml, `${city.name} intro asserts a digit count`)
+          .not.toMatch(/\d/);
+      }
+    });
+  }, 60000);
+
   it("never overwrites intro copy an editor has already written", async () => {
     await withTestDb(async (tx) => {
       await runSeed(tx, NICHE);
