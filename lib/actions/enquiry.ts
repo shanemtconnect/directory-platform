@@ -1,12 +1,13 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db/client";
-import { enquiries, listings } from "@/lib/db/schema";
+import { createEnquiry } from "@/lib/db/queries/enquiries";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
+import type { TestDb } from "@/test/db";
 import { validateEnquiry } from "./validation";
 
 export interface EnquiryState {
@@ -59,29 +60,16 @@ export async function submitEnquiry(
     return { status: "error", message: "We couldn't verify that you're human. Please try again." };
   }
 
-  // Only published listings can receive an enquiry — the same gate the pillar
-  // pages use. A pending or removed listing must not collect leads.
-  const [target] = await db
-    .select({ id: listings.id })
-    .from(listings)
-    .where(and(eq(listings.id, values.listingId), eq(listings.status, "published")))
-    .limit(1);
-  if (!target) return { status: "error", message: "That listing is no longer available." };
-
-  await db.transaction(async (tx) => {
-    await tx.insert(enquiries).values({
-      listingId: values.listingId,
-      name: values.name,
-      email: values.email,
-      phone: values.phone,
-      message: values.message,
-      ip,
-    });
-    await tx
-      .update(listings)
-      .set({ enquiryCount: sql`${listings.enquiryCount} + 1` })
-      .where(eq(listings.id, values.listingId));
-  });
+  // The published-only gate and the counter bump both live in the query, and
+  // the transaction is here so they land together.
+  const result = await db.transaction(async (tx) =>
+    // Same cast the test harness uses: a transaction handle and the root
+    // client expose the same query surface to lib/db/queries.
+    createEnquiry(tx as unknown as TestDb, PUBLIC_VIEWER, { ...values, ip }),
+  );
+  if (result.outcome === "unknown-listing") {
+    return { status: "error", message: "That listing is no longer available." };
+  }
 
   // Phase 3 sends the owner notification email; the enquiry is durable either way.
   return { status: "sent" };
