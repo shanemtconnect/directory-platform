@@ -4,9 +4,14 @@
  * Two rules, and the second is the one that used to be wrong.
  *
  *  - No secret configured: verification is SKIPPED, but only outside
- *    production. Local and staging run without a key; a production deploy that
- *    lost its secret must not quietly accept every bot, so there it fails
- *    closed and says why.
+ *    production. The gate is `NODE_ENV !== "production"`, so it is LOCAL and
+ *    the test suite that run without a key — not staging. A staging container
+ *    is a production build with `NODE_ENV=production`, so it fails closed too
+ *    and every enquiry on it is rejected until a secret is set. That is the
+ *    right way round (a deploy that lost its secret must not quietly accept
+ *    every bot), so give staging Cloudflare's published always-pass testing
+ *    keys rather than relaxing the check: site `1x00000000000000000000AA`,
+ *    secret `1x0000000000000000000000000000000AA`.
  *  - Cloudflare unreachable, or slow: fails CLOSED. An outage that leaves the
  *    form open is an open door with a queue of bots already outside it, and the
  *    person who came to send an enquiry can try again in a minute.

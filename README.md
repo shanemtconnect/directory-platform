@@ -139,6 +139,13 @@ refuses to boot a server without one. The city and category catch-all routes
 never needed one: their `generateStaticParams` return `[]`. The runner gets its
 `DATABASE_URL` at boot.
 
+**Staging needs a Turnstile key too.** `lib/spam/turnstile.ts` skips
+verification only when `NODE_ENV !== "production"`, and a staging container is a
+production build — so without `TURNSTILE_SECRET_KEY` it fails closed and rejects
+every enquiry. Cloudflare's published always-pass testing keys are the right
+thing there: `TURNSTILE_SITE_KEY=1x00000000000000000000AA`,
+`TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA`.
+
 ### Migrating: the Coolify pre-deployment command
 
 ```
