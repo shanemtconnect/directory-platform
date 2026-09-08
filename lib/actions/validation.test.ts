@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { siteConfig } from "@/config/site.config";
-import { isUuid, stripCrlf, validateEnquiry, validateSubmission } from "./validation";
+import { isUuid, normaliseBody, stripCrlf, validateEnquiry, validateSubmission } from "./validation";
 
 const LISTING_ID = "3f7c1c8a-6b6e-4a1e-9c2a-9a5a7b1d4e21";
 const CATEGORY_ID = "8c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
@@ -64,6 +64,24 @@ describe("stripCrlf", () => {
   });
 });
 
+describe("normaliseBody", () => {
+  it("leaves ordinary text alone", () => {
+    expect(normaliseBody("Sam Owner")).toBe("Sam Owner");
+  });
+
+  it("keeps paragraph breaks instead of flattening them to spaces", () => {
+    expect(normaliseBody("one\n\ntwo")).toBe("one\n\ntwo");
+  });
+
+  it("normalises CRLF line endings to a bare LF", () => {
+    expect(normaliseBody("one\r\ntwo\r\nthree")).toBe("one\ntwo\nthree");
+  });
+
+  it("strips a lone CR that has no matching LF", () => {
+    expect(normaliseBody("one\rtwo")).toBe("onetwo");
+  });
+});
+
 describe("validateEnquiry", () => {
   it("accepts a good enquiry and hands back trimmed values", () => {
     const { values, errors } = validateEnquiry(enquiry({ name: "  Sam Owner  " }));
@@ -106,11 +124,18 @@ describe("validateEnquiry", () => {
     );
   });
 
-  it("strips CR/LF out of the message", () => {
+  it("keeps paragraph breaks in the message instead of flattening them", () => {
     const { values } = validateEnquiry(
-      enquiry({ message: "Line one about the booking.\nLine two about the date." }),
+      enquiry({ message: "Line one about the booking.\n\nLine two about the date." }),
     );
-    expect(values?.message).not.toMatch(/[\r\n]/);
+    expect(values?.message).toBe("Line one about the booking.\n\nLine two about the date.");
+  });
+
+  it("still normalises CRLF endings in the message to a bare LF", () => {
+    const { values } = validateEnquiry(
+      enquiry({ message: "Line one about the booking.\r\nLine two about the date." }),
+    );
+    expect(values?.message).toBe("Line one about the booking.\nLine two about the date.");
   });
 
   it("still catches the ordinary mistakes", () => {
@@ -145,6 +170,28 @@ describe("validateSubmission", () => {
     );
     expect(values?.name).toBe("The Old Mill Bcc: victim@example.com");
     expect(values?.phone).toBe("01632 960000");
+  });
+
+  it("keeps paragraph breaks in the description instead of flattening them", () => {
+    const { values } = validateSubmission(
+      submission({
+        description:
+          "The first paragraph of a long enough description.\n\nA second paragraph, also long enough.",
+      }),
+    );
+    expect(values?.description).toBe(
+      "The first paragraph of a long enough description.\n\nA second paragraph, also long enough.",
+    );
+  });
+
+  it("still normalises CRLF endings in the description to a bare LF", () => {
+    const { values } = validateSubmission(
+      submission({
+        description:
+          "The first paragraph of a long enough description.\r\nA second line, also long enough.",
+      }),
+    );
+    expect(values?.description).not.toMatch(/\r/);
   });
 
   it("still catches the ordinary mistakes", () => {

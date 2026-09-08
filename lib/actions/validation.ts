@@ -16,9 +16,16 @@ import { countryProfile, validatePostcode } from "@/lib/geo/countries";
  *  - Anything compared against a uuid column is shape-checked first. Postgres
  *    answers `invalid input syntax for type uuid` with an exception, which
  *    leaves the action as a 500 instead of a field error.
- *  - CR and LF are removed from every string. Today they would only make a
- *    mess of an admin screen; the moment any of this reaches an email header
- *    they are an injection.
+ *  - CR and LF are removed from every single-line field (name, email, phone,
+ *    postcode, and the rest of the header-bound fields). Today they would
+ *    only make a mess of an admin screen; the moment any of this reaches an
+ *    email header they are an injection.
+ *  - The two free-text body fields — the enquiry `message` and the listing
+ *    `description` — get `normaliseBody` instead: CRLF is normalised to LF
+ *    and a lone CR is dropped, but a paragraph break survives. Those fields
+ *    are never read into a header, so there is nothing to inject; collapsing
+ *    them to a single line just destroys formatting a visitor typed on
+ *    purpose.
  */
 
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,8 +39,21 @@ export function stripCrlf(value: string): string {
   return value.replace(/[\r\n]+/g, " ");
 }
 
+/**
+ * For free-text body fields only (`message`, `description`). Normalises
+ * CRLF to a bare LF and drops a lone CR, but leaves LF alone — so a
+ * paragraph break a visitor typed on purpose survives, unlike `stripCrlf`.
+ */
+export function normaliseBody(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "");
+}
+
 function field(form: FormData, key: string): string {
   return stripCrlf(String(form.get(key) ?? "")).trim();
+}
+
+function bodyField(form: FormData, key: string): string {
+  return normaliseBody(String(form.get(key) ?? "")).trim();
 }
 
 type Result<T> = { values: T; errors?: undefined } | { values?: undefined; errors: Record<string, string> };
@@ -56,7 +76,7 @@ export function validateEnquiry(form: FormData): Result<EnquiryValues> {
   const name = field(form, "name");
   const email = field(form, "email");
   const phone = field(form, "phone");
-  const message = field(form, "message");
+  const message = bodyField(form, "message");
 
   // A hidden field, so this is never a typo — it is a tampered form or a bot.
   if (!isUuid(listingId)) errors.listingId = "That listing could not be found.";
@@ -134,7 +154,7 @@ export function validateSubmission(form: FormData): Result<Omit<SubmissionInput,
   const postcode = field(form, "postcode");
   const phone = field(form, "phone");
   const websiteRaw = field(form, "website");
-  const description = field(form, "description");
+  const description = bodyField(form, "description");
   const submitterName = field(form, "submitterName");
   const submitterEmail = field(form, "submitterEmail");
   const tier = field(form, "tier");
