@@ -13,6 +13,7 @@ import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-deta
 import { listingSchema, pillarSchema, breadcrumbSchema, faqSchema } from "@/lib/schema/builders";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
+import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
 
 export const revalidate = 3600;
@@ -238,7 +239,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title,
       description: shown ? metaDescription(shown) : undefined,
       alternates: { canonical: path },
-      openGraph: { type: "website", title, url: path },
+      openGraph: pageOpenGraph({ title, url: path }),
     };
   }
 
@@ -263,7 +264,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title,
     description,
     alternates: { canonical: path },
-    openGraph: { title, url: path },
+    openGraph: pageOpenGraph({ title, url: path }),
     robots: heading.isIndexable ? undefined : { index: false, follow: true },
   };
 }

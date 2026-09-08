@@ -6,6 +6,7 @@ import { PostBody } from "@/components/blog/PostBody";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
 import { contentSectionLabel } from "@/lib/features/navigation";
+import { pageOpenGraph } from "@/lib/seo/open-graph";
 
 export const revalidate = 3600;
 
@@ -34,14 +35,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title: post.title,
     description: post.description === "" ? undefined : post.description,
     alternates: { canonical: `/blog/${post.slug}` },
-    openGraph: {
+    // Posts carry no image of their own yet, so pageOpenGraph's site-wide
+    // card is what a share of this URL shows — better than the blank/absent
+    // og:image a bare `type: "article"` override used to leave behind.
+    openGraph: pageOpenGraph({
       type: "article",
       title: post.title,
       description: post.description === "" ? undefined : post.description,
       publishedTime: post.date,
       modifiedTime: post.updated ?? post.date,
       authors: post.author ? [post.author] : undefined,
-    },
+    }),
   };
 }
 

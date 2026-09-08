@@ -20,8 +20,12 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin()),
   title: { default: siteConfig.name, template: `%s | ${siteConfig.name}` },
   description: siteConfig.tagline,
-  // Defaults, inherited by every page. A page that sets its own title and
-  // description overrides these; the rest are the same site-wide.
+  // Defaults, inherited by every page — but only by a page that does NOT set
+  // its own `openGraph`. Next does not deep-merge a page's `openGraph` into
+  // this one, it replaces it wholesale, so `og:site_name`/`og:locale`/
+  // `og:image` below are lost the instant a page declares its own block. A
+  // page that needs one builds it with lib/seo/open-graph.ts's
+  // `pageOpenGraph()`, which restates these defaults so nothing is dropped.
   openGraph: {
     siteName: siteConfig.name,
     // og:locale is underscored (en_GB), unlike the html lang attribute.
