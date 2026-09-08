@@ -89,6 +89,27 @@ elif [ -n "${STATIC_ASSETS_DIR:-}" ]; then
   echo "[entrypoint] worker container: skipping static asset retention"
 fi
 
+# Coolify's pre-deployment command runs inside the PREVIOUS container, not this
+# one — on a first deploy there is no previous container, so it never runs at
+# all, and on a later deploy it would run the OLD image's migrate.mjs against
+# the NEW schema. Running it here, in the new container, before it ever serves
+# a request, is the only place that is both new-image and pre-traffic.
+#
+# Web role only: the worker's own boot guard has nothing to do with schema, and
+# a worker container starting concurrently with the web one would race it here.
+# Same user as the server below, for the same reason (files/locks created as
+# nextjs, not root) — `su-exec` only when actually root; already-unprivileged
+# (docker run --user) needs no re-exec.
+if [ "${MIGRATE_ON_BOOT:-}" = "true" ] && [ "${WORKER_ENABLED:-}" != "true" ]; then
+  echo "[entrypoint] MIGRATE_ON_BOOT=true: running scripts/migrate.mjs before serving"
+  if [ "$(id -u)" = "0" ]; then
+    su-exec nextjs:nodejs node scripts/migrate.mjs
+  else
+    node scripts/migrate.mjs
+  fi
+  echo "[entrypoint] migrations applied"
+fi
+
 # Drop privileges here rather than with USER, because the volume above is
 # created root-owned. Already unprivileged (docker run --user) is fine too.
 if [ "$(id -u)" = "0" ]; then
