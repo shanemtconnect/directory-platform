@@ -56,6 +56,30 @@ function build() {
       cookieCache: { enabled: true, maxAge: 60 * 5 },
     },
 
+    /**
+     * Set explicitly because the default is `enabled: isProduction` — i.e. OFF
+     * in development and in any container that does not set NODE_ENV, which is
+     * the opposite of what you want from a security default you cannot see.
+     *
+     * Storage stays "memory", which means PER INSTANCE: behind several
+     * replicas this cap is multiplied by the replica count, and it resets on
+     * every deploy. That is why it is not the only limiter on the path — the
+     * route handler in app/api/auth/[...all]/route.ts counts POSTs in Redis,
+     * shared across replicas, and is the cap that actually binds. This one is
+     * the per-process floor beneath it, and it also covers the paths Better
+     * Auth gives stricter custom rules of its own.
+     *
+     * "database" storage was not chosen: it writes a row per request per
+     * subject to the auth database, which is a write amplifier on exactly the
+     * traffic pattern a limiter exists to survive.
+     */
+    rateLimit: {
+      enabled: true,
+      window: 60,
+      max: 100,
+      storage: "memory",
+    },
+
     advanced: {
       // Cookies are already same-site; this keeps the prefix predictable across
       // the many domains this codebase gets cloned onto.
