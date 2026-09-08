@@ -118,7 +118,7 @@ describe("pillarHeading — the indexing gate is never bypassed", () => {
       const heading = await pillarHeading(
         tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId }, PLURAL,
       );
-      expect(heading?.title).toBe(`${PLURAL} in Leeds`);
+      expect(heading?.title).toBe(`${PLURAL.Plural} in Leeds`);
     });
   });
 });
