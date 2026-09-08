@@ -9,8 +9,28 @@ validateFeatureDependencies(resolveFeatures(siteConfig.features));
 validateEnv(process.env, { phase: "build" });
 validateCountry(siteConfig);
 
+const NOINDEX_HEADER = "noindex, nofollow, noarchive, nosnippet, noimageindex";
+
 const nextConfig: NextConfig = {
   output: "standalone",
+
+  /**
+   * Staging must never be indexed.
+   *
+   * Set here rather than in middleware: middleware runs in the Edge runtime,
+   * which in standalone mode cannot resolve node:crypto and 500s every request.
+   * headers() runs in Node and applies to every route, including assets.
+   *
+   * robots.txt alone is NOT enough — Google indexes URLs it is forbidden to
+   * crawl, using anchor text alone, and those listings are slow to remove. The
+   * header is the directive that actually prevents indexing; robots.txt just
+   * discourages the crawl.
+   */
+  async headers() {
+    if (process.env.SITE_ENV !== "staging") return [];
+    return [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: NOINDEX_HEADER }] }];
+  },
+
   // Redis-backed ISR. The handler guards against connecting during the build;
   // see docs/spikes/2026-09-07-phase-0-isr-cache-handler.md.
   cacheHandler: fileURLToPath(new URL("./cache-handler.mjs", import.meta.url)),
