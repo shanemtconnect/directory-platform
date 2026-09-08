@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { cities, categories, verticals, areas } from "@/lib/db/schema";
 import type { Viewer } from "@/lib/db/viewer";
 import type { PillarScope } from "@/lib/routing/scope";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 export interface PillarHeading {
   /** Admin-edited jsonb; validated by the caller before rendering. */
@@ -21,7 +21,7 @@ export interface PillarHeading {
  * and categories are public taxonomy.
  */
 export async function pillarHeading(
-  tx: TestDb,
+  tx: Db,
   _viewer: Viewer,
   scope: PillarScope,
   entityPlural: string,

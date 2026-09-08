@@ -4,7 +4,7 @@ import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { PER_PAGE } from "@/lib/db/queries/listings";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 /**
  * Queries behind the NATIONAL category page — /categories/[slug].
@@ -41,7 +41,7 @@ export interface CategoryRow {
  * links.
  */
 export async function getCategoryBySlug(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   slug: string,
 ): Promise<CategoryRow | null> {
@@ -78,7 +78,7 @@ export interface NationalListingRow {
  * path the way a city pillar can.
  */
 export async function listCategoryListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   categoryId: string,
   opts: { page?: number; perPage?: number } = {},
@@ -98,7 +98,7 @@ export async function listCategoryListings(
 
 /** Total for pagination, and the zero that drives the noindex decision. */
 export async function countCategoryListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   categoryId: string,
 ): Promise<number> {
@@ -138,7 +138,7 @@ export interface CategoryCityRow {
  * /[city]/[category] for one of those is a link to a 404.
  */
 export async function citiesForCategory(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   categoryId: string,
   opts: { onlyIndexable?: boolean } = {},

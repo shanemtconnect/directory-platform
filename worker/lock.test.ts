@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import * as schema from "@/lib/db/schema";
+import type { Db } from "@/lib/db/client";
 import { withAdvisoryLock, lockKey } from "./lock";
 
 const url = process.env.TEST_DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_test";
 const connect = () => {
   const c = postgres(url, { max: 1 });
-  return { c, db: drizzle(c) as never };
+  return { c, db: drizzle(c, { schema }) as Db };
 };
 
 describe("withAdvisoryLock", () => {

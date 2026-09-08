@@ -2,7 +2,7 @@ import { eq, isNull } from "drizzle-orm";
 import { listingImages } from "@/lib/db/schema";
 import { generateDerivatives, type DerivativeKey } from "@/lib/media/derivatives";
 import { getObject, putObject } from "@/lib/media/r2";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 const BATCH = 20;
 
@@ -11,7 +11,7 @@ const BATCH = 20;
  * writes them back. Deliberately batched and idempotent: a row is only marked
  * done once every derivative is written, so a crash mid-batch just reprocesses.
  */
-export async function processPendingDerivatives(db: TestDb): Promise<number> {
+export async function processPendingDerivatives(db: Db): Promise<number> {
   const pending = await db
     .select({ id: listingImages.id, listingId: listingImages.listingId, storagePath: listingImages.storagePath })
     .from(listingImages)

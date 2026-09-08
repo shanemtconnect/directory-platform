@@ -5,7 +5,7 @@ import { allocateSlug, ROOT_SCOPE } from "@/lib/routing/slugs";
 import { normalisePostcode } from "@/lib/geo/countries";
 import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 /**
  * Two modes, and they are not interchangeable.
@@ -44,7 +44,7 @@ export const normaliseName = (s: string): string => s.trim().toLowerCase().repla
 export const normalisePhone = (s: string): string => s.replace(/[^0-9]/g, "");
 
 /** A suppressed business must stay suppressed however the postcode is retyped. */
-export async function checkSuppressed(tx: TestDb, row: ImportRow): Promise<boolean> {
+export async function checkSuppressed(tx: Db, row: ImportRow): Promise<boolean> {
   if (!row.postcode) return false;
   const [hit] = await tx
     .select({ id: suppressions.id })
@@ -60,7 +60,7 @@ export async function checkSuppressed(tx: TestDb, row: ImportRow): Promise<boole
 }
 
 export async function findDuplicate(
-  tx: TestDb,
+  tx: Db,
   row: ImportRow,
 ): Promise<{ listingId: string; reason: string } | null> {
   const clauses = [];
@@ -90,7 +90,7 @@ export async function findDuplicate(
 }
 
 async function insertImportedListing(
-  tx: TestDb,
+  tx: Db,
   row: ImportRow,
   opts: { source: "scraped" | "import"; description: string | null },
 ): Promise<void> {
@@ -130,7 +130,7 @@ async function insertImportedListing(
 }
 
 export async function importRows(
-  tx: TestDb,
+  tx: Db,
   rows: ImportRow[],
   opts: { dryRun: boolean; mode: ImportMode },
 ): Promise<ImportReport> {

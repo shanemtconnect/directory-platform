@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 /** Stable 64-bit key from a job name, since pg_advisory_lock takes a bigint. */
 export function lockKey(name: string): bigint {
@@ -16,7 +16,7 @@ export function lockKey(name: string): bigint {
  * runs again until the container restarts, and nobody notices for weeks.
  */
 export async function withAdvisoryLock(
-  db: TestDb,
+  db: Db,
   name: string,
   fn: () => Promise<void>,
 ): Promise<boolean> {

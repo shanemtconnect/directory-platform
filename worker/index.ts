@@ -17,7 +17,7 @@ function schedule(name: string, expr: string, fn: () => Promise<void>): void {
   cron.schedule(expr, async () => {
     const startedAt = now();
     try {
-      const ran = await withAdvisoryLock(db as never, name, fn);
+      const ran = await withAdvisoryLock(db, name, fn);
       const ms = Date.now() - startedAt.getTime();
       console.log(`[worker] ${name} ${ran ? "ok" : "skipped (lock held elsewhere)"} in ${ms}ms`);
       if (ran) {
@@ -43,7 +43,7 @@ function schedule(name: string, expr: string, fn: () => Promise<void>): void {
 //   Phase 6 — backlink verification
 schedule("derivatives", "*/1 * * * *", async () => {
   const { processPendingDerivatives } = await import("./jobs/derivatives");
-  await processPendingDerivatives(db as never);
+  await processPendingDerivatives(db);
 });
 
 console.log("[worker] started");

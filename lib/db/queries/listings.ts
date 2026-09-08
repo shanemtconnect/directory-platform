@@ -4,7 +4,7 @@ import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { PillarScope } from "@/lib/routing/scope";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 export const PER_PAGE = 24;
 
@@ -44,7 +44,7 @@ function where(viewer: Viewer, scope: PillarScope): SQL {
 }
 
 export async function listListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   scope: PillarScope,
   opts: { page?: number; perPage?: number } = {},
@@ -61,7 +61,7 @@ export async function listListings(
 }
 
 export async function countListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   scope: PillarScope,
 ): Promise<number> {

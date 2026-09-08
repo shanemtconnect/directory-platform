@@ -3,7 +3,7 @@ import { listings, cities, categories, listingImages } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 export type ListingDetail = {
   listing: typeof listings.$inferSelect;
@@ -14,7 +14,7 @@ export type ListingDetail = {
 
 /** Same visibility gate as the pillar query: published only, unless admin. */
 export async function getListingDetail(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   listingId: string,
 ): Promise<ListingDetail | null> {
@@ -42,7 +42,7 @@ export async function getListingDetail(
 
 /** Other listings in the same city — internal linking, and useful to a visitor. */
 export async function relatedListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   listingId: string,
   cityId: string,

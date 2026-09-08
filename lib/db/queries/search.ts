@@ -4,7 +4,7 @@ import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
 import type { CustomField } from "@/config/types";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 export const SEARCH_PER_PAGE = 24;
 
@@ -78,7 +78,7 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
 }
 
 export async function search(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   params: SearchParams,
 ): Promise<SearchResult> {

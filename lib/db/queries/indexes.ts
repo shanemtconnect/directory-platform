@@ -1,7 +1,7 @@
 import { sql, eq, and, gt, desc, asc } from "drizzle-orm";
 import { cities, categories, listings, verticals, slugs } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 export interface CityIndexRow {
   id: string;
@@ -20,7 +20,7 @@ export interface CityIndexRow {
  * pages we have told Google to ignore. Admin views pass false.
  */
 export async function listCities(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   opts: { onlyIndexable?: boolean; minListings?: number } = {},
 ): Promise<CityIndexRow[]> {
@@ -52,7 +52,7 @@ export interface CategoryIndexRow {
 
 /** Categories with a live count, so an empty category is never linked. */
 export async function listCategories(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
 ): Promise<CategoryIndexRow[]> {
   const rows = await tx
@@ -87,7 +87,7 @@ export async function listCategories(
  * in this city rather than linking a dead URL.
  */
 export async function categoriesInCity(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   cityId: string,
 ): Promise<CategoryIndexRow[]> {
@@ -124,7 +124,7 @@ export async function categoriesInCity(
  * Only indexable cities: linking to a noindexed page wastes the crawl.
  */
 export async function nearbyCities(
-  tx: TestDb,
+  tx: Db,
   cityId: string,
   limit = 6,
 ): Promise<CityIndexRow[]> {

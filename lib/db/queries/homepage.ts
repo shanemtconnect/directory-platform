@@ -9,7 +9,7 @@ import {
   type CityIndexRow,
   type CategoryIndexRow,
 } from "@/lib/db/queries/indexes";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 /**
  * Homepage blocks. Nothing here is new policy — the homepage is the most
@@ -30,7 +30,7 @@ export const FEATURED_LIMIT = 6;
  * the admin bypass come with it for free.
  */
 export async function topCities(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   limit = TOP_CITIES,
 ): Promise<CityIndexRow[]> {
@@ -43,7 +43,7 @@ export async function topCities(
  * no published listings, so an empty type is never linked from here.
  */
 export async function topCategories(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   limit = TOP_CATEGORIES,
 ): Promise<CategoryIndexRow[]> {
@@ -76,7 +76,7 @@ export interface FeaturedListingRow {
  * so the same six paid listings do not sit on the homepage forever.
  */
 export async function featuredListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   limit = FEATURED_LIMIT,
 ): Promise<FeaturedListingRow[]> {
