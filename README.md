@@ -146,19 +146,28 @@ every enquiry. Cloudflare's published always-pass testing keys are the right
 thing there: `TURNSTILE_SITE_KEY=1x00000000000000000000AA`,
 `TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA`.
 
-### Migrating: the Coolify pre-deployment command
+### Migrating: `MIGRATE_ON_BOOT=true` on the web service
+
+Set `MIGRATE_ON_BOOT=true` in the web service's environment. Coolify's
+**pre-deployment command** executes inside the *previous* running container,
+not the new one — on a first deploy there is no previous container so it never
+runs at all, and on a later deploy it would run the OLD image's
+`scripts/migrate.mjs` against the NEW schema. `docker-entrypoint.sh` runs the
+migration inside the new container itself, before the server starts serving,
+which is the only place that is both the new image and pre-traffic. A failed
+migration aborts boot (non-zero exit, no server) rather than serving a broken
+schema — a container that starts ahead of its own migration does not merely
+break the worker: `createSubmission` inserts into `job_queue` inside the same
+transaction as the enquiry, so a missing column takes down every enquiry form
+on the site.
+
+For a manual or one-off migration (e.g. against a database you're inspecting
+by hand, or a container started without `MIGRATE_ON_BOOT`), run the same
+script directly:
 
 ```
 node scripts/migrate.mjs
 ```
-
-Set that as the app's **pre-deployment command**. Coolify runs it in the newly
-built `runner` image with the service's environment, so it picks up
-`DATABASE_URL` on its own, and a non-zero exit aborts the deploy before the new
-container takes traffic — which is the whole point. A container that starts
-ahead of its own migration does not merely break the worker: `createSubmission`
-inserts into `job_queue` inside the same transaction as the enquiry, so a
-missing column takes down every enquiry form on the site.
 
 Not `pnpm db:migrate`. That is `drizzle-kit migrate`, and `drizzle-kit` is a
 devDependency the prod-only runner tree does not contain. `scripts/migrate.mjs`

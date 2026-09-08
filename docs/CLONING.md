@@ -221,17 +221,21 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
    container filesystem and every redeploy throws them away.
    *(`STATIC_ASSETS_DIR` is read by the media layer; add it to `.env.example`
    when that lands, and set it here in the meantime.)*
-5. **Pre-deploy command:** `node scripts/migrate.mjs`. Coolify runs it against
-   the new image before switching traffic, so a migration failure aborts the
-   deploy instead of half-applying it. Never run migrations from the app
-   container's start command — every replica would race.
+5. **Environment:** set `MIGRATE_ON_BOOT=true` on this (web) service. Coolify's
+   pre-deployment command runs inside the *previous* running container, so it
+   never runs on a first deploy and on later deploys it would run the OLD
+   image's migrator against the NEW schema; `docker-entrypoint.sh` runs
+   `scripts/migrate.mjs` in the new container itself, before it serves any
+   traffic, and a migration failure aborts boot instead of half-applying it.
 
-   **Not `corepack pnpm db:migrate`.** That is `drizzle-kit migrate`, and
-   `drizzle-kit` is a devDependency the prod-only runner tree does not contain,
-   so the step would die on the first deploy. `scripts/migrate.mjs` is plain ESM
-   calling the same migrator over the same `drizzle/` folder, importing only
-   `drizzle-orm` and `postgres` — both already in the image.
-   `scripts/verify-image.sh` runs it inside the built image on every check.
+   For a manual or one-off migration, run the same script directly:
+   `node scripts/migrate.mjs`. **Not `corepack pnpm db:migrate`.** That is
+   `drizzle-kit migrate`, and `drizzle-kit` is a devDependency the prod-only
+   runner tree does not contain, so the step would die on the first deploy.
+   `scripts/migrate.mjs` is plain ESM calling the same migrator over the same
+   `drizzle/` folder, importing only `drizzle-orm` and `postgres` — both
+   already in the image. `scripts/verify-image.sh` runs it inside the built
+   image on every check.
 6. **Second application** from the same repo for the worker: Dockerfile target
    `worker`, `WORKER_ENABLED=true`, no domain, no health check on a port.
 7. **Redis** must be reachable at `REDIS_URL`. The ISR cache handler is
