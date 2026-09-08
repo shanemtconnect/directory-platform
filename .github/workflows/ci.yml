@@ -35,6 +35,16 @@ jobs:
         with:
           node-version: 24
       - run: corepack enable
+
+      - name: pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -59,8 +69,20 @@ jobs:
   # End-to-end smoke tests against a real production build and a seeded
   # database. Separate job, not a step on `test`: it needs seed data, a
   # browser, and a running server, none of which the unit job wants.
+  #
+  # Run twice, flags off and flags on. The `test` job proves both builds
+  # COMPILE; only Playwright proves both of them SERVE — that a route behind a
+  # disabled flag is gone from the nav rather than merely 404ing, and that the
+  # enabled build's extra routes actually resolve.
   e2e:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: YAML reads a bare off/on as a boolean, and
+        # SITE_FLAGS_OVERRIDE=false is not a value the build understands.
+        flags: ["off", "on"]
+    name: e2e (flags ${{ matrix.flags }})
     services:
       postgres:
         image: postgres:16-alpine
@@ -81,6 +103,11 @@ jobs:
       REDIS_URL: redis://localhost:6380
       # Pinned to the test origin so sitemap <loc> assertions have a real base.
       NEXT_PUBLIC_SITE_URL: http://localhost:3200
+      # Flags are build-time constants, so this has to be set for the build the
+      # Playwright webServer runs, not just for the test process.
+      SITE_FLAGS_OVERRIDE: ${{ matrix.flags }}
+      # The demo blog posts are opt-in; the suite uses them as fixtures.
+      NEXT_PUBLIC_DEMO_MODE: "true"
 
     steps:
       - uses: actions/checkout@v4
@@ -88,10 +115,35 @@ jobs:
         with:
           node-version: 24
       - run: corepack enable
+
+      - name: pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
 
+      # Keyed on the lockfile: the browser build has to match the client that
+      # drives it, and @playwright/test only changes version when that changes.
+      # No restore-keys — a near-miss restore would hand us the wrong browser.
+      - uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
+
+      # The cached browser skips the download but not the shared libraries.
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
       - name: Migrate
         run: pnpm db:migrate
@@ -99,13 +151,37 @@ jobs:
       - name: Seed
         run: pnpm seed
 
-      # playwright.config.ts starts the server itself (build + start -p 3200).
+      # playwright.config.ts starts the server itself: build, assemble the
+      # standalone bundle, then run node .next/standalone/server.js.
       - name: E2E
         run: pnpm test:e2e
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: playwright-report
+          name: playwright-report-flags-${{ matrix.flags }}
           path: playwright-report/
           retention-days: 7
+
+  # The image IS the deliverable, and nothing else in CI builds it, so a
+  # Dockerfile that no longer builds is only discovered at deploy time.
+  #
+  # This job is RED on arrival, and deliberately so — it is reporting two real
+  # faults in the shipped Dockerfile that no check could see before:
+  #   1. the deps stage copies package.json and pnpm-lock.yaml but not
+  #      pnpm-workspace.yaml, so `pnpm install --frozen-lockfile` exits 1 on
+  #      ERR_PNPM_IGNORED_BUILDS;
+  #   2. `pnpm build` collects page data for /categories, which needs a
+  #      database, and the builder stage has no DATABASE_URL (nor an ARG for
+  #      one) — so the image has never been buildable.
+  # Both live in Dockerfile, which belongs to another task. See the task-8
+  # report.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the runner image
+        run: |
+          docker build --target runner \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://ci.example \
+            -t directory-platform:ci .
