@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { createClient, type RedisClientType } from "@redis/client";
 import { randomUUID } from "node:crypto";
 import {
@@ -28,6 +28,14 @@ afterAll(async () => {
 
 beforeEach(async () => {
   ns = `vitest-sweep-${randomUUID()}`;
+});
+
+// The sweep under test deliberately spares the current build's keys, so it
+// cannot be its own cleanup: without this, every run leaves a handful of
+// fixtures behind in a Redis that is shared with the dev stack.
+afterEach(async () => {
+  const stale = await keysUnder(`${ns}:*`);
+  if (stale.length > 0) await client.del(stale);
 });
 
 async function seed(keys: string[]) {
