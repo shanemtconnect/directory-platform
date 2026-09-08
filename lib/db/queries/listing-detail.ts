@@ -1,12 +1,15 @@
-import { eq, and, ne, sql } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 import { listings, cities, categories, listingImages } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import type { Viewer } from "@/lib/db/viewer";
+import {
+  publishedListings, publicListingColumns, type PublicListing,
+} from "@/lib/db/queries/listings";
 import type { Db } from "@/lib/db/client";
 
 export type ListingDetail = {
-  listing: typeof listings.$inferSelect;
+  listing: PublicListing;
   city: typeof cities.$inferSelect;
   category: typeof categories.$inferSelect | null;
   images: (typeof listingImages.$inferSelect)[];
@@ -19,15 +22,11 @@ export async function getListingDetail(
   listingId: string,
 ): Promise<ListingDetail | null> {
   const [row] = await tx
-    .select({ listing: listings, city: cities, category: categories })
+    .select({ listing: publicListingColumns, city: cities, category: categories })
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))
-    .where(
-      isAdmin(viewer)
-        ? eq(listings.id, listingId)
-        : and(eq(listings.id, listingId), eq(listings.status, "published")),
-    )
+    .where(and(eq(listings.id, listingId), publishedListings(viewer)))
     .limit(1);
   if (!row) return null;
 
@@ -47,15 +46,15 @@ export async function relatedListings(
   listingId: string,
   cityId: string,
   limit = 6,
-) {
+): Promise<PublicListing[]> {
   return tx
-    .select()
+    .select(publicListingColumns)
     .from(listings)
     .where(
       and(
         eq(listings.cityId, cityId),
         ne(listings.id, listingId),
-        isAdmin(viewer) ? sql`true` : eq(listings.status, "published"),
+        publishedListings(viewer),
       ),
     )
     .orderBy(...listingRankOrder(siteConfig.timezone))

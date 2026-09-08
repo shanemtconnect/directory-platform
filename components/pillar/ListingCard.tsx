@@ -1,7 +1,5 @@
-import type { listings as listingsTable } from "@/lib/db/schema";
+import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { siteConfig } from "@/config/site.config";
-
-type Listing = typeof listingsTable.$inferSelect;
 
 /**
  * Opening hours are rendered as data attributes and the open/closed state is

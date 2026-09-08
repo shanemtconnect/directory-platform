@@ -3,7 +3,10 @@ import { listings, cities, categories } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
 import type { CustomField } from "@/config/types";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import type { Viewer } from "@/lib/db/viewer";
+import {
+  publishedListings, publicListingColumns, type PublicListing,
+} from "@/lib/db/queries/listings";
 import type { Db } from "@/lib/db/client";
 
 export const SEARCH_PER_PAGE = 24;
@@ -18,7 +21,7 @@ export interface SearchParams {
 }
 
 export interface SearchResult {
-  rows: (typeof listings.$inferSelect & { cityName: string; citySlug: string })[];
+  rows: (PublicListing & { cityName: string; citySlug: string })[];
   total: number;
   page: number;
   totalPages: number;
@@ -32,9 +35,7 @@ export interface SearchResult {
  * broken.
  */
 function buildWhere(viewer: Viewer, params: SearchParams): SQL {
-  const clauses: SQL[] = [];
-
-  if (!isAdmin(viewer)) clauses.push(eq(listings.status, "published"));
+  const clauses: SQL[] = [publishedListings(viewer)];
 
   const q = params.q?.trim();
   if (q) {
@@ -88,7 +89,7 @@ export async function search(
   const [rows, countRows] = await Promise.all([
     tx
       .select({
-        listing: listings,
+        listing: publicListingColumns,
         cityName: cities.name,
         citySlug: cities.slug,
       })

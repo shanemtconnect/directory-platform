@@ -1,10 +1,9 @@
 import { siteConfig } from "@/config/site.config";
 import { countryProfile } from "@/lib/geo/countries";
 import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
-import type { listings as listingsTable } from "@/lib/db/schema";
+import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { EnquiryForm } from "./EnquiryForm";
 
-type Listing = typeof listingsTable.$inferSelect;
 
 interface Props {
   detail: Detail;

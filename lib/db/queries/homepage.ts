@@ -2,7 +2,8 @@ import { and, eq } from "drizzle-orm";
 import { cities, listings } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import type { Viewer } from "@/lib/db/viewer";
+import { publishedListings } from "@/lib/db/queries/listings";
 import {
   listCities,
   listCategories,
@@ -82,8 +83,7 @@ export async function featuredListings(
 ): Promise<FeaturedListingRow[]> {
   if (limit <= 0) return [];
 
-  const conditions = [eq(listings.tier, "premium")];
-  if (!isAdmin(viewer)) conditions.push(eq(listings.status, "published"));
+  const conditions = [eq(listings.tier, "premium"), publishedListings(viewer)];
 
   return tx
     .select({

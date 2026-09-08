@@ -1,9 +1,11 @@
-import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { categories, cities, listings, slugs } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import { PER_PAGE } from "@/lib/db/queries/listings";
+import {
+  PER_PAGE, publishedListings, publicListingColumns, type PublicListing,
+} from "@/lib/db/queries/listings";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -18,12 +20,6 @@ import type { Db } from "@/lib/db/client";
  * Every function takes a viewer and applies its own filter. There is no RLS
  * behind this — the data layer is the only gate.
  */
-
-/** The published gate. Admins see everything; everyone else sees published. */
-function visibilityFilter(viewer: Viewer): SQL {
-  if (isAdmin(viewer)) return sql`true`;
-  return eq(listings.status, "published");
-}
 
 export interface CategoryRow {
   id: string;
@@ -65,7 +61,7 @@ export async function getCategoryBySlug(
 }
 
 export interface NationalListingRow {
-  listing: typeof listings.$inferSelect;
+  listing: PublicListing;
   cityName: string;
   citySlug: string;
 }
@@ -87,10 +83,10 @@ export async function listCategoryListings(
   const perPage = opts.perPage ?? PER_PAGE;
 
   return tx
-    .select({ listing: listings, cityName: cities.name, citySlug: cities.slug })
+    .select({ listing: publicListingColumns, cityName: cities.name, citySlug: cities.slug })
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(and(visibilityFilter(viewer), eq(listings.primaryCategoryId, categoryId))!)
+    .where(and(publishedListings(viewer), eq(listings.primaryCategoryId, categoryId))!)
     .orderBy(...listingRankOrder(siteConfig.timezone))
     .limit(perPage)
     .offset((page - 1) * perPage);
@@ -105,7 +101,7 @@ export async function countCategoryListings(
   const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(listings)
-    .where(and(visibilityFilter(viewer), eq(listings.primaryCategoryId, categoryId))!);
+    .where(and(publishedListings(viewer), eq(listings.primaryCategoryId, categoryId))!);
   return row?.n ?? 0;
 }
 
@@ -163,7 +159,7 @@ export async function citiesForCategory(
       and(
         eq(listings.cityId, cities.id),
         eq(listings.primaryCategoryId, categoryId),
-        visibilityFilter(viewer),
+        publishedListings(viewer),
       ),
     )
     .innerJoin(
