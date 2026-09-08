@@ -6,6 +6,10 @@ import { listListings, countListings, PER_PAGE } from "@/lib/db/queries/listings
 import { pillarHeading } from "@/lib/db/queries/cities";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { PillarPage } from "@/components/pillar/PillarPage";
+import { ListingDetail } from "@/components/listing/ListingDetail";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-detail";
+import { listingSchema, pillarSchema, breadcrumbSchema } from "@/lib/schema/builders";
 
 export const revalidate = 3600;
 
@@ -34,6 +38,18 @@ interface Props {
 // No searchParams: reading them forces the route dynamic in Next 16, which
 // would keep the city pillar pages out of the ISR cache entirely. Pagination
 // lives in the path instead — /[city]/page/2.
+/** Images live on the Cloudflare-proxied R2 domain; schema.org needs absolutes. */
+function absoluteMediaUrl(path: string | null): string | null {
+  const base = process.env.NEXT_PUBLIC_MEDIA_URL;
+  if (!base || !path) return null;
+  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+}
+
+/** Schema descriptions are plain text; intro copy is stored as HTML. */
+function stripTags(html: string): string {
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /** Strips any trailing /page/N so pagination links build from the clean path. */
 function pillarBasePath(segments: string[]): string {
   const rest =
@@ -56,14 +72,42 @@ export default async function CatchAllPage({ params }: Props) {
       if (result.status === 301) permanentRedirect(result.to);
       redirect(result.to);
 
-    // Phase 2 renders the detail page. Phase 1 proves resolution reaches it.
-    case "listing":
-      return (
-        <main>
-          <h1>Listing</h1>
-          <p data-testid="listing-id">{result.listingId}</p>
-        </main>
+    case "listing": {
+      const detail = await getListingDetail(db as never, PUBLIC_VIEWER, result.listingId);
+      if (!detail) notFound();
+
+      const related = await relatedListings(
+        db as never, PUBLIC_VIEWER, result.listingId, detail.listing.cityId,
       );
+      const cityPath = `/${segments[0]}`;
+      const path = `/${segments.join("/")}`;
+
+      return (
+        <>
+          <JsonLd
+            data={listingSchema({
+              listing: detail.listing,
+              city: detail.city,
+              category: detail.category,
+              path,
+              imageUrls: detail.images
+                .map((i) => absoluteMediaUrl(i.storagePath))
+                .filter((u): u is string => u !== null),
+              // No rating is passed: reviews land in Phase 6, and until the
+              // rating is visible on the page it must not be in the markup.
+            })}
+          />
+          <JsonLd
+            data={breadcrumbSchema([
+              { name: "Home", path: "/" },
+              { name: detail.city.name, path: cityPath },
+              { name: detail.listing.name, path },
+            ])}
+          />
+          <ListingDetail detail={detail} related={related} cityPath={cityPath} />
+        </>
+      );
+    }
 
     case "pillar": {
       const heading = await pillarHeading(
@@ -76,14 +120,31 @@ export default async function CatchAllPage({ params }: Props) {
         countListings(db as never, PUBLIC_VIEWER, result.scope),
       ]);
 
+      const basePath = pillarBasePath(segments);
       return (
-        <PillarPage
-          heading={heading}
-          listings={rows}
-          page={result.page}
-          totalPages={Math.max(1, Math.ceil(total / PER_PAGE))}
-          basePath={pillarBasePath(segments)}
-        />
+        <>
+          <JsonLd
+            data={pillarSchema({
+              title: heading.title,
+              path: basePath,
+              description: heading.introHtml ? stripTags(heading.introHtml) : null,
+              items: rows.map((l) => ({ name: l.name, path: `${basePath}/${l.slug}` })),
+            })}
+          />
+          <JsonLd
+            data={breadcrumbSchema([
+              { name: "Home", path: "/" },
+              { name: heading.place, path: basePath },
+            ])}
+          />
+          <PillarPage
+            heading={heading}
+            listings={rows}
+            page={result.page}
+            totalPages={Math.max(1, Math.ceil(total / PER_PAGE))}
+            basePath={basePath}
+          />
+        </>
       );
     }
   }
