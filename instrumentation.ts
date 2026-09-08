@@ -11,9 +11,14 @@ import { validateEnv } from "./config/validate";
  * The Edge runtime loads this file too, where `process.env` holds only what was
  * inlined at build time — validating there would fail on variables that are
  * present and correct, so it is skipped.
+ *
+ * Async because the node-only work is behind dynamic `import()`. Next awaits
+ * `register()`, so the process still refuses to serve a request before the
+ * environment has been checked.
  */
-export function register(): void {
+export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+
   try {
     validateEnv(process.env, { phase: "runtime" });
   } catch (e) {
@@ -24,8 +29,10 @@ export function register(): void {
     // request. To an orchestrator that is a healthy container serving errors,
     // which is precisely the silent failure this hook exists to prevent.
     //
-    // Exit instead. A crash-looping container is visible in any deploy UI.
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    // Exit instead. A crash-looping container is visible in any deploy UI. The
+    // exit lives in lib/boot/exit.ts and is imported dynamically so that
+    // `process.exit` never appears in the Edge bundle Turbopack analyses.
+    const { fatal } = await import("./lib/boot/exit");
+    fatal(e instanceof Error ? e.message : String(e));
   }
 }
