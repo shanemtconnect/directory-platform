@@ -7,6 +7,7 @@ import {
   createSubmission,
   findSubmissionDuplicate,
 } from "@/lib/db/queries/submissions";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
@@ -17,8 +18,12 @@ export interface SubmitListingState {
   status: "idle" | "duplicate" | "error";
   message?: string;
   fieldErrors?: Record<string, string>;
-  /** Set with status 'duplicate'. The route offers a claim instead of a second row. */
-  existing?: { name: string; claimPath: string };
+  /**
+   * Set with status 'duplicate' only when the match is a listing the public
+   * can already see. A match we hold but have not published is reported
+   * without a name or a link — see DuplicateMatch.
+   */
+  existing?: { name: string; listingPath: string };
 }
 
 /**
@@ -72,7 +77,7 @@ export async function submitListing(
     // client expose the same query surface to lib/db/queries.
     const handle = tx as unknown as TestDb;
 
-    const duplicate = await findSubmissionDuplicate(handle, values);
+    const duplicate = await findSubmissionDuplicate(handle, PUBLIC_VIEWER, values);
     if (duplicate) return { kind: "duplicate" as const, duplicate };
 
     return {
@@ -82,11 +87,22 @@ export async function submitListing(
   });
 
   if (result.kind === "duplicate") {
+    const match = result.duplicate;
+    if (match.kind === "pending") {
+      return {
+        status: "duplicate",
+        message:
+          "We already hold a record for this business, and it is not live yet. " +
+          "There is nothing more to do — we will pick it up when we review it.",
+      };
+    }
+    // The listing's own page, not a /claim/{slug} route that does not exist —
+    // and listing slugs are per city, so the city is half of the address.
     return {
       status: "duplicate",
       existing: {
-        name: result.duplicate.name,
-        claimPath: `/claim/${result.duplicate.slug}`,
+        name: match.name,
+        listingPath: `/${match.citySlug}/${match.slug}`,
       },
     };
   }
