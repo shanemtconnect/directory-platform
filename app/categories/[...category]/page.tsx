@@ -43,16 +43,23 @@ interface Props {
   params: Promise<{ category: string[] }>;
 }
 
-/** Splits a trailing /page/N. Anything else with extra segments is a 404. */
+/**
+ * Splits a trailing /page/N. Anything else with extra segments is a 404.
+ *
+ * One spelling of a page number only: `Number()` also accepts "1e0", "0x2",
+ * "02" and " 2", and each of those is another URL serving the same results.
+ */
+const PAGE_NUMBER = /^[1-9]\d*$/;
+
 function parseSegments(segments: string[]): { slug: string; page: number } | null {
   let rest = segments;
   let page = 1;
 
   if (segments.length >= 2 && segments[segments.length - 2] === "page") {
-    const n = Number(segments[segments.length - 1]);
-    if (!Number.isInteger(n) || n < 1) return null;
+    const raw = segments[segments.length - 1] ?? "";
+    if (!PAGE_NUMBER.test(raw)) return null;
     rest = segments.slice(0, -2);
-    page = n;
+    page = Number(raw);
   }
 
   if (rest.length !== 1) return null;

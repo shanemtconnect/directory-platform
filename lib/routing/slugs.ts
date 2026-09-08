@@ -1,5 +1,7 @@
 import { and, eq } from "drizzle-orm";
-import { slugs, redirects } from "@/lib/db/schema";
+import {
+  slugs, redirects, cities, verticals, areas, categories, listings,
+} from "@/lib/db/schema";
 import type { TestDb } from "@/test/db";
 import { slugify, isReserved, RESERVED_SLUGS } from "./slugify";
 
@@ -24,13 +26,24 @@ export class SlugError extends Error {
   }
 }
 
-async function isTaken(tx: Tx, parentScope: string, slug: string): Promise<boolean> {
-  const [row] = await tx
-    .select({ slug: slugs.slug })
-    .from(slugs)
-    .where(and(eq(slugs.parentScope, parentScope), eq(slugs.slug, slug)))
-    .limit(1);
-  return row !== undefined;
+/**
+ * Claims one candidate, or reports that someone else already holds it.
+ *
+ * Insert-and-see rather than check-then-insert: two imports of the same
+ * business name used to pass the "is it taken?" check together, and the loser's
+ * INSERT raised 23505 — which poisons the whole surrounding transaction in
+ * Postgres, so the caller aborted instead of taking the next candidate.
+ */
+async function claim(
+  tx: Tx,
+  values: { parentScope: string; slug: string; kind: SlugKind; entityId: string | null },
+): Promise<boolean> {
+  const inserted = await tx
+    .insert(slugs)
+    .values(values)
+    .onConflictDoNothing()
+    .returning({ slug: slugs.slug });
+  return inserted.length > 0;
 }
 
 /**
@@ -76,14 +89,13 @@ export async function allocateSlug(
   for (let n = 2; n <= 50; n++) candidates.push(`${stem}-${n}`);
 
   for (const candidate of candidates) {
-    if (await isTaken(tx, input.parentScope, candidate)) continue;
-    await tx.insert(slugs).values({
+    const claimed = await claim(tx, {
       parentScope: input.parentScope,
       slug: candidate,
       kind: input.kind,
       entityId: input.entityId,
     });
-    return candidate;
+    if (claimed) return candidate;
   }
   throw new SlugError(`Exhausted slug candidates for "${bare}" in scope ${input.parentScope}`);
 }
@@ -109,13 +121,36 @@ export async function resolveSlug(
 /** Idempotent. Run from the seed and from any migration path. */
 export async function seedReservedSlugs(tx: Tx): Promise<void> {
   for (const slug of RESERVED_SLUGS) {
-    if (await isTaken(tx, ROOT_SCOPE, slug)) continue;
-    await tx.insert(slugs).values({
-      parentScope: ROOT_SCOPE,
-      slug,
-      kind: "static",
-      entityId: null,
-    });
+    await claim(tx, { parentScope: ROOT_SCOPE, slug, kind: "static", entityId: null });
+  }
+}
+
+/**
+ * The registry says where a URL resolves; the entity's own `slug` column is
+ * what every link on the site is BUILT from — the sitemap, the homepage, the
+ * category pages. Leaving it stale means every internal link keeps emitting the
+ * old URL and 301s on the way in, which is exactly the link equity a rename is
+ * supposed to preserve.
+ */
+async function writeEntitySlug(
+  tx: Tx, kind: Exclude<SlugKind, "static">, entityId: string, slug: string,
+): Promise<void> {
+  switch (kind) {
+    case "city":
+      await tx.update(cities).set({ slug }).where(eq(cities.id, entityId));
+      return;
+    case "vertical":
+      await tx.update(verticals).set({ slug }).where(eq(verticals.id, entityId));
+      return;
+    case "area":
+      await tx.update(areas).set({ slug }).where(eq(areas.id, entityId));
+      return;
+    case "category":
+      await tx.update(categories).set({ slug }).where(eq(categories.id, entityId));
+      return;
+    case "listing":
+      await tx.update(listings).set({ slug }).where(eq(listings.id, entityId));
+      return;
   }
 }
 
@@ -139,6 +174,11 @@ export async function reallocateSlug(
     disambiguator?: string;
   },
 ): Promise<string> {
+  if (input.kind === "static") {
+    throw new SlugError("A static slug belongs to a route, not an entity, and cannot be renamed");
+  }
+  const kind = input.kind;
+
   const [current] = await tx
     .select({ slug: slugs.slug })
     .from(slugs)
@@ -161,14 +201,24 @@ export async function reallocateSlug(
     entityId: input.entityId,
     disambiguator: input.disambiguator,
   });
+  // A category has two kinds of registry row: the root one that names its
+  // national page at /categories/<slug> — its identity — and a per-city alias
+  // that makes /<city>/<slug> resolve. Renaming an alias must not move the
+  // national page out from under everything linking to it.
+  const isCategoryAlias = kind === "category" && input.parentScope !== ROOT_SCOPE;
+  if (!isCategoryAlias) await writeEntitySlug(tx, kind, input.entityId, allocated);
+
+  const newPath = input.newPathFor(allocated);
+
+  // Collapse the chain first. Rename twice and /alpha -> /beta -> /gamma is two
+  // hops: it leaks link equity, and Google stops following after a handful.
+  // Every URL that pointed at the old path now points at the new one directly.
+  await tx.update(redirects).set({ toPath: newPath }).where(eq(redirects.toPath, input.oldPath));
 
   await tx
     .insert(redirects)
-    .values({ fromPath: input.oldPath, toPath: input.newPathFor(allocated), statusCode: 301 })
-    .onConflictDoUpdate({
-      target: redirects.fromPath,
-      set: { toPath: input.newPathFor(allocated) },
-    });
+    .values({ fromPath: input.oldPath, toPath: newPath, statusCode: 301 })
+    .onConflictDoUpdate({ target: redirects.fromPath, set: { toPath: newPath } });
 
   return allocated;
 }

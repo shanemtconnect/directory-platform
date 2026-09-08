@@ -1,18 +1,29 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable, uuid, text, integer, boolean, timestamp, jsonb, date,
-  uniqueIndex, index,
+  uniqueIndex, index, check,
 } from "drizzle-orm/pg-core";
 import { base } from "./_base";
 import { badgeStyle } from "./enums";
 import { listings } from "./listings";
 
-/** Any slug change writes a row here and serves a 301. Never break a URL. */
+/**
+ * Any slug change writes a row here and serves a 301. Never break a URL.
+ *
+ * The router serves five status codes and nothing else, so the database refuses
+ * the rest: a row the router cannot act on is a URL quietly serving the wrong
+ * thing. 410 is the tombstone for a URL that is gone rather than moved — such a
+ * row stores its own path in `to_path`, since there is nowhere to send anyone.
+ */
 export const redirects = pgTable("redirects", {
   ...base,
   fromPath: text("from_path").notNull(),
   toPath: text("to_path").notNull(),
   statusCode: integer("status_code").notNull().default(301),
-}, (t) => [uniqueIndex("redirects_from_key").on(t.fromPath)]);
+}, (t) => [
+  uniqueIndex("redirects_from_key").on(t.fromPath),
+  check("redirects_status_code_check", sql`${t.statusCode} in (301, 302, 307, 308, 410)`),
+]);
 
 export const auditLog = pgTable("audit_log", {
   ...base,

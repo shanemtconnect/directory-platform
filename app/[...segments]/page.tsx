@@ -87,7 +87,10 @@ export default async function CatchAllPage({ params }: Props) {
       notFound();
 
     case "redirect":
-      if (result.status === 301) permanentRedirect(result.to);
+      // A 410 row is a tombstone: the URL is gone, not moved, and it stores its
+      // own path, so redirecting to it would loop.
+      if (result.status === 410) notFound();
+      if (result.status === 301 || result.status === 308) permanentRedirect(result.to);
       redirect(result.to);
 
     case "listing": {
@@ -142,6 +145,11 @@ export default async function CatchAllPage({ params }: Props) {
         cityId ? nearbyCities(db as never, cityId) : Promise.resolve([]),
       ]);
 
+      const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+      // A page number past the end has nothing on it and must not be a soft 404
+      // — /leeds/page/999 rendered an empty, indexable page.
+      if (result.page > totalPages) notFound();
+
       // Premium listings shown as a featured row on page 1. They also appear in
       // the main grid — the row is prominence, not a separate inventory.
       const featured = result.page === 1
@@ -176,7 +184,7 @@ export default async function CatchAllPage({ params }: Props) {
             nearby={nearby}
             faq={faq}
             page={result.page}
-            totalPages={Math.max(1, Math.ceil(total / PER_PAGE))}
+            totalPages={totalPages}
             basePath={basePath}
             cityPath={`/${segments[0]}`}
           />
