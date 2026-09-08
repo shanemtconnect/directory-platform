@@ -14,5 +14,18 @@ import { validateEnv } from "./config/validate";
  */
 export function register(): void {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  validateEnv(process.env, { phase: "runtime" });
+  try {
+    validateEnv(process.env, { phase: "runtime" });
+  } catch (e) {
+    // Throwing is not enough. Next catches whatever `register()` throws, logs
+    // "Failed to prepare server" plus an unhandledRejection, and then keeps the
+    // process alive: observed on a runner image with DATABASE_URL unset, the
+    // container stayed `running`, kept the port open, and answered 500 to every
+    // request. To an orchestrator that is a healthy container serving errors,
+    // which is precisely the silent failure this hook exists to prevent.
+    //
+    // Exit instead. A crash-looping container is visible in any deploy UI.
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
 }

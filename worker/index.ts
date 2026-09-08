@@ -9,7 +9,16 @@ import { now } from "@/lib/clock";
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
 // the exception: `@/lib/db/client` throws its own message at import time, which
 // under ES module evaluation order happens before this line.)
-validateEnv(process.env, { phase: "runtime" });
+try {
+  validateEnv(process.env, { phase: "runtime" });
+} catch (e) {
+  // Exit rather than let the throw propagate, for the same reason
+  // `instrumentation.ts` does: an unhandled rejection at module scope does not
+  // reliably stop a Node process, and a worker that is "up" but never runs a
+  // job is invisible. `process.exit` is not.
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+}
 
 if (process.env.WORKER_ENABLED !== "true") {
   console.log("[worker] WORKER_ENABLED is not 'true' — exiting");
