@@ -36,10 +36,52 @@ export type PublicListingImage = Omit<
   "createdAt" | "updatedAt" | "derivativesAttempts" | "derivativesError"
 >;
 
+/**
+ * The city columns the detail page and its metadata read, and no others.
+ *
+ * `select({ city: cities })` returned the whole row, and a city row carries
+ * `introHtml` — the several-kilobyte block of copy written for the CITY pillar
+ * page. It has nothing to do with a listing, and it was shipping inside the RSC
+ * payload of every listing page on the site, once per render, to every visitor.
+ * `faq`, `metaDescription` and the operational counters rode along with it.
+ *
+ * Same rule as `publicListingColumns` and `publicImageColumns`: project what
+ * the page renders, nothing else. `country` is here for `countryProfile()`,
+ * `region` for the address line and the JSON-LD `addressRegion`, `slug` for the
+ * canonical path.
+ */
+export const listingDetailCityColumns = {
+  id: cities.id,
+  name: cities.name,
+  slug: cities.slug,
+  region: cities.region,
+  country: cities.country,
+} as const;
+
+/** The category columns the page and the JSON-LD read. */
+export const listingDetailCategoryColumns = {
+  id: categories.id,
+  name: categories.name,
+  slug: categories.slug,
+  singular: categories.singular,
+  plural: categories.plural,
+  schemaTypeOverride: categories.schemaTypeOverride,
+} as const;
+
+export type ListingDetailCity = Pick<
+  typeof cities.$inferSelect,
+  "id" | "name" | "slug" | "region" | "country"
+>;
+
+export type ListingDetailCategory = Pick<
+  typeof categories.$inferSelect,
+  "id" | "name" | "slug" | "singular" | "plural" | "schemaTypeOverride"
+>;
+
 export type ListingDetail = {
   listing: PublicListing;
-  city: typeof cities.$inferSelect;
-  category: typeof categories.$inferSelect | null;
+  city: ListingDetailCity;
+  category: ListingDetailCategory | null;
   images: PublicListingImage[];
 };
 
@@ -50,7 +92,11 @@ export async function getListingDetail(
   listingId: string,
 ): Promise<ListingDetail | null> {
   const [row] = await tx
-    .select({ listing: publicListingColumns, city: cities, category: categories })
+    .select({
+      listing: publicListingColumns,
+      city: listingDetailCityColumns,
+      category: listingDetailCategoryColumns,
+    })
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))

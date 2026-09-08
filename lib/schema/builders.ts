@@ -60,8 +60,14 @@ export function breadcrumbSchema(trail: { name: string; path: string }[]): JsonL
 
 export interface ListingSchemaInput {
   listing: Listing;
-  city: City;
-  category: Category | null;
+  /**
+   * Only the three fields this builder reads. Narrow on purpose: the detail
+   * query projects a city down to what the page uses (city rows carry the
+   * pillar page's `introHtml`), so asking for a whole row here would have
+   * forced it back into the RSC payload of every listing page.
+   */
+  city: Pick<City, "name" | "region" | "country">;
+  category: Pick<Category, "schemaTypeOverride"> | null;
   path: string;
   /**
    * The description text the page DISPLAYED — an excerpt on a free tier, the
