@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   escapeHtml,
   parseFrontmatter,
@@ -199,6 +199,21 @@ describe("posts on disk", () => {
 
   it("getPostSlugs matches the published posts", () => {
     expect(getPostSlugs()).toEqual(posts.map((p) => p.slug));
+  });
+
+  it("returns no demo posts when the demo flag is unset", () => {
+    // The demo directory is opt-in: a clone that never sets the flag ships an
+    // empty blog rather than three articles about someone else's niche.
+    vi.stubEnv("NEXT_PUBLIC_DEMO_MODE", undefined);
+    try {
+      expect(getAllPosts()).toEqual([]);
+      expect(getPostSlugs()).toEqual([]);
+      const demoSlug = posts[0]?.slug;
+      expect(demoSlug).toBeDefined();
+      if (demoSlug) expect(getPost(demoSlug)).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("getPost round-trips a real slug and rejects unknown or traversing slugs", () => {
