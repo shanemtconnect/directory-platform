@@ -30,7 +30,7 @@ export function SignupForm() {
   }
 
   return (
-    <form action={onSubmit} data-testid="signup-form">
+    <form action={onSubmit} data-testid="signup-form" className="card max-w-md">
       <p>
         <label htmlFor="name">Your name</label>
         <input id="name" name="name" required autoComplete="name" />
@@ -46,7 +46,9 @@ export function SignupForm() {
         <small>At least {MIN_PASSWORD} characters.</small>
       </p>
       {error && <p role="alert" data-testid="signup-error">{error}</p>}
-      <button type="submit" disabled={pending}>{pending ? "Creating…" : "Create account"}</button>
+      <button type="submit" disabled={pending} className="btn btn-primary w-full">
+        {pending ? "Creating…" : "Create account"}
+      </button>
     </form>
   );
 }

@@ -12,12 +12,14 @@ export const metadata: Metadata = {
 export default function LoginPage() {
   return (
     <main>
-      <h1>Sign in</h1>
-      <p>Manage your {siteConfig.entity.singular} listing.</p>
-      <LoginForm />
-      <p>
-        No account yet? <a href="/signup">Create one</a>.
-      </p>
+      <div className="mx-auto max-w-md">
+        <h1>Sign in</h1>
+        <p className="text-muted">Manage your {siteConfig.entity.singular} listing.</p>
+        <LoginForm />
+        <p className="mt-4 text-sm">
+          No account yet? <a href="/signup">Create one</a>.
+        </p>
+      </div>
     </main>
   );
 }

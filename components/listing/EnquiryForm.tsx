@@ -19,16 +19,16 @@ export function EnquiryForm({ listingId, listingName, turnstileSiteKey }: Enquir
 
   if (state.status === "sent") {
     return (
-      <div id="enquire" data-testid="enquiry-sent" role="status">
-        <h2>Enquiry sent</h2>
+      <div id="enquire" data-testid="enquiry-sent" role="status" className="card bg-raised">
+        <h2 className="mt-0">Enquiry sent</h2>
         <p>Your message has gone to {listingName}. They&rsquo;ll reply to you directly.</p>
       </div>
     );
   }
 
   return (
-    <form id="enquire" action={action} data-testid="enquiry-form">
-      <h2>Enquire with {listingName}</h2>
+    <form id="enquire" action={action} data-testid="enquiry-form" className="card">
+      <h2 className="mt-0 text-[length:var(--text-h3)]">Enquire with {listingName}</h2>
       <input type="hidden" name="listingId" value={listingId} />
 
       {/* Honeypot. Hidden from people and from screen readers, visible to bots. */}
@@ -71,11 +71,11 @@ export function EnquiryForm({ listingId, listingName, turnstileSiteKey }: Enquir
         <p role="alert" data-testid="enquiry-error">{state.message}</p>
       )}
 
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} className="btn btn-primary w-full">
         {pending ? "Sending…" : "Send enquiry"}
       </button>
 
-      <p>
+      <p className="mt-3 mb-0">
         <small>
           Your message goes straight to the {siteConfig.entity.ownerNoun}. We don&rsquo;t sell your details.
         </small>

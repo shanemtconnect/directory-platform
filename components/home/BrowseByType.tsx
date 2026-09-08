@@ -12,7 +12,7 @@ export function BrowseByType({ categories }: { categories: CategoryIndexRow[] })
         <p>No types have {e.plural} yet.</p>
       ) : (
         <>
-          <ul data-testid="home-categories">
+          <ul data-testid="home-categories" className="link-grid">
             {categories.map((c) => (
               <li key={c.id}>
                 <a href={`/categories/${c.slug}`}>{c.name}</a>{" "}
@@ -20,8 +20,8 @@ export function BrowseByType({ categories }: { categories: CategoryIndexRow[] })
               </li>
             ))}
           </ul>
-          <p>
-            <a href="/categories">All {e.plural}</a>
+          <p className="mt-6 mb-0">
+            <a href="/categories" className="btn btn-secondary">All {e.plural}</a>
           </p>
         </>
       )}

@@ -15,7 +15,7 @@ export function BrowseByLocation({ cities }: { cities: CityIndexRow[] }) {
         <p>No locations are listed yet.</p>
       ) : (
         <>
-          <ul data-testid="home-cities">
+          <ul data-testid="home-cities" className="link-grid">
             {cities.map((c) => (
               <li key={c.id}>
                 <a href={`/${c.slug}`}>
@@ -25,8 +25,8 @@ export function BrowseByLocation({ cities }: { cities: CityIndexRow[] }) {
               </li>
             ))}
           </ul>
-          <p>
-            <a href="/cities">All locations</a>
+          <p className="mt-6 mb-0">
+            <a href="/cities" className="btn btn-secondary">All locations</a>
           </p>
         </>
       )}

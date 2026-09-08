@@ -78,12 +78,15 @@ export function SiteHeader() {
   const e = siteConfig.entity;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-surface">
-      <Container className="flex flex-wrap items-center gap-x-4 gap-y-3 py-3">
+    // `relative` so the mobile panel below can anchor to the whole bar rather
+    // than to the little <details> at the end of it, which would push it off
+    // the side of a 390px screen.
+    <header className="relative z-40 border-b border-line bg-surface md:sticky md:top-0">
+      <Container className="flex flex-nowrap items-center gap-3 py-3">
         <a
           href="/"
           rel="home"
-          className="mr-auto font-heading text-lg font-semibold tracking-tight text-ink no-underline sm:text-xl"
+          className="mr-auto truncate font-heading text-lg font-semibold tracking-tight text-ink no-underline sm:text-xl"
         >
           {siteConfig.name}
         </a>
@@ -95,17 +98,17 @@ export function SiteHeader() {
 
         <SearchField
           id="site-search"
-          className="hidden items-center gap-2 lg:flex lg:w-64 xl:w-72"
+          className="hidden min-w-0 items-center gap-2 xl:flex xl:w-64"
         />
 
         <a
           href={SIGN_IN.href}
-          className="hidden min-h-11 items-center px-2 text-sm text-ink no-underline hover:text-primary hover:underline md:inline-flex"
+          className="hidden min-h-11 shrink-0 items-center px-2 text-sm text-ink no-underline hover:text-primary hover:underline md:inline-flex"
         >
           {SIGN_IN.label}
         </a>
 
-        <a href="/add-listing" className="btn btn-primary text-sm">
+        <a href="/add-listing" className="btn btn-primary hidden shrink-0 text-sm md:inline-flex">
           Add your {e.singular}
         </a>
 
@@ -115,21 +118,24 @@ export function SiteHeader() {
           the desktop bar's because one nav cannot be two layouts at once — same
           hrefs, same anchor text, rendered from the same `routes` array above.
         */}
-        <details className="group relative md:hidden" data-testid="mobile-nav">
+        <details className="shrink-0 md:hidden" data-testid="mobile-nav">
           <summary className="btn btn-secondary cursor-pointer list-none text-sm marker:content-['']">
             Menu
           </summary>
-          <div className="absolute right-0 z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-[var(--radius-token)] border border-line bg-surface p-4 shadow-lg">
+          <div className="absolute inset-x-0 top-full z-50 border-b border-line bg-surface p-4 shadow-lg">
             <nav aria-label="Primary, mobile">
               <NavLinks routes={routes} className="flex list-none flex-col gap-1" />
             </nav>
             <a
               href={SIGN_IN.href}
-              className="mt-1 inline-flex min-h-11 items-center px-2 text-ink no-underline hover:text-primary hover:underline"
+              className="inline-flex min-h-11 items-center px-2 text-ink no-underline hover:text-primary hover:underline"
             >
               {SIGN_IN.label}
             </a>
             <SearchField id="mobile-search" className="mt-3 flex items-center gap-2" />
+            <a href="/add-listing" className="btn btn-primary mt-4 w-full text-sm">
+              Add your {e.singular}
+            </a>
           </div>
         </details>
       </Container>

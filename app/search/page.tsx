@@ -64,48 +64,55 @@ export default async function SearchPage({ searchParams }: Props) {
     <main>
       <h1>Search {e.plural}</h1>
 
-      <form method="get" action="/search" data-testid="search-form">
-        <p>
+      <form
+        method="get"
+        action="/search"
+        data-testid="search-form"
+        className="card grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-3"
+      >
+        <p className="mb-0">
           <label htmlFor="q">Keyword</label>
           <input id="q" name="q" type="search" defaultValue={params.q ?? ""}
-            placeholder={`Search ${e.plural}`} />
+            placeholder={`Search ${e.plural}`} className="max-w-none" />
         </p>
 
-        <p>
+        <p className="mb-0">
           <label htmlFor="city">Location</label>
-          <select id="city" name="city" defaultValue={params.city ?? ""}>
+          <select id="city" name="city" defaultValue={params.city ?? ""} className="max-w-none">
             <option value="">Anywhere</option>
             {cities.map((c) => <option key={c.id} value={c.slug}>{c.name}</option>)}
           </select>
         </p>
 
-        <p>
+        <p className="mb-0">
           <label htmlFor="category">Type</label>
-          <select id="category" name="category" defaultValue={params.category ?? ""}>
+          <select id="category" name="category" defaultValue={params.category ?? ""} className="max-w-none">
             <option value="">Any type</option>
             {categories.map((c) => <option key={c.id} value={c.slug}>{c.name}</option>)}
           </select>
         </p>
 
         {facets.map((f) => (
-          <p key={f.key}>
+          <p key={f.key} className="mb-0">
             <label htmlFor={f.key}>{f.label}</label>
             {f.type === "boolean" ? (
-              <select id={f.key} name={f.key} defaultValue={fields[f.key] ?? ""}>
+              <select id={f.key} name={f.key} defaultValue={fields[f.key] ?? ""} className="max-w-none">
                 <option value="">Any</option>
                 <option value="true">Yes</option>
               </select>
             ) : (
               <input id={f.key} name={f.key} type="number" min={0}
-                defaultValue={fields[f.key] ?? ""} placeholder="Minimum" />
+                defaultValue={fields[f.key] ?? ""} placeholder="Minimum" className="max-w-none" />
             )}
           </p>
         ))}
 
-        <button type="submit">Search</button>
+        <button type="submit" className="btn btn-primary sm:col-span-2 sm:w-fit lg:col-span-1">
+          Search
+        </button>
       </form>
 
-      <p data-testid="result-count">
+      <p data-testid="result-count" className="mt-8 font-medium">
         {results.total} {results.total === 1 ? e.singular : e.plural} found
       </p>
 
@@ -115,12 +122,19 @@ export default async function SearchPage({ searchParams }: Props) {
           <a href="/cities">browse by location</a>.
         </p>
       ) : (
-        <ul data-testid="search-results">
+        <ul data-testid="search-results" className="card-grid">
           {results.rows.map((r) => (
-            <li key={r.id} data-tier={r.tier}>
-              <a href={`/${r.citySlug}/${r.slug}`}>{r.name}</a>
-              <span> — {r.cityName}</span>
-              {r.shortDescription && <p>{r.shortDescription}</p>}
+            <li key={r.id} data-tier={r.tier} className="card card-hover flex flex-col gap-1">
+              <a
+                href={`/${r.citySlug}/${r.slug}`}
+                className="font-heading text-lg leading-snug font-semibold text-ink no-underline hover:text-primary hover:underline"
+              >
+                {r.name}
+              </a>
+              <span className="text-sm text-muted">{r.cityName}</span>
+              {r.shortDescription && (
+                <p className="mt-1 mb-0 text-sm text-muted">{r.shortDescription}</p>
+              )}
             </li>
           ))}
         </ul>

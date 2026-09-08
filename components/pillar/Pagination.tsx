@@ -13,8 +13,13 @@ interface Props {
   searchStyle?: boolean;
 }
 
-const LINK =
-  "inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--radius-token)] border border-line bg-surface px-3 no-underline hover:border-primary";
+/* Split so the current page can swap the background without two `bg-*`
+   utilities fighting: Tailwind orders those by its own sort, not by the order
+   they appear in the class attribute, so the loser is not the one you expect. */
+const SLOT =
+  "inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--radius-token)] border px-3 no-underline";
+const LINK = `${SLOT} border-line bg-surface hover:border-primary`;
+const CURRENT = `${SLOT} border-primary bg-primary font-semibold text-on-primary`;
 
 /**
  * Every paginated link is a real <a href> to a real, server-rendered URL.
@@ -67,7 +72,7 @@ export function Pagination({ basePath, page, totalPages, searchStyle = false }: 
               {slot === page ? (
                 <span
                   aria-current="page"
-                  className={`${LINK} border-primary bg-primary font-semibold text-on-primary`}
+                  className={CURRENT}
                 >
                   {slot}
                 </span>

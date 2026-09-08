@@ -48,7 +48,7 @@ export default async function CitiesIndex() {
           regions.map(([region, list]) => (
             <section key={region}>
               <h2>{region === "Other" ? profile.name : region}</h2>
-              <ul>
+              <ul className="link-grid">
                 {list.map((c) => (
                   <li key={c.id}>
                     <a href={`/${c.slug}`}>{c.name}</a>{" "}
