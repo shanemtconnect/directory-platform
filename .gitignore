@@ -17,3 +17,6 @@ docs/superpowers/plans/*master*.md
 # Playwright
 test-results/
 playwright-report/
+
+# Agent worktrees — never part of the repo
+.claude/worktrees/
