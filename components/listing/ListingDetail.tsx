@@ -2,6 +2,7 @@ import { siteConfig } from "@/config/site.config";
 import { countryProfile } from "@/lib/geo/countries";
 import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { listings as listingsTable } from "@/lib/db/schema";
+import { EnquiryForm } from "./EnquiryForm";
 
 type Listing = typeof listingsTable.$inferSelect;
 
@@ -91,6 +92,8 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
           </ul>
         </section>
       )}
+
+      <EnquiryForm listingId={listing.id} listingName={listing.name} />
 
       <p><small>{category?.name} in {city.name}, {city.region ?? profile.name}</small></p>
     </main>
