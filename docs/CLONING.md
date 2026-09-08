@@ -189,8 +189,12 @@ The wizard writes `staging`. Leave it there until the content is real.
    `worker`, `WORKER_ENABLED=true`, no domain, no health check on a port.
 7. **Redis** must be reachable at `REDIS_URL`. The ISR cache handler is
    Redis-backed and guards against connecting during `next build`; without the
-   guard the build hangs silently, and without Redis every deploy discards
-   thousands of regenerated pages.
+   guard the build hangs silently, and without Redis each replica keeps its own
+   in-process LRU that dies with the container.
+8. **Post-deployment command:** `REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh`.
+   Cache keys are namespaced `nextjs:<buildId>:` so a deploy starts cold rather
+   than serving the previous build's HTML; nothing expires the namespace the
+   previous build left behind, and this sweeps it.
 
 ---
 

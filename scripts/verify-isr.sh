@@ -55,17 +55,19 @@ fi
 PROBE=app/isr-probe/[id]/page.tsx
 PROBE_URL=/isr-probe/one
 GLOBALS=app/globals.css
-cleanup() { stop 2>/dev/null; rm -rf app/isr-probe .next-pristine
+# .next/types holds a generated validator that imports every route, including
+# the probe. Left behind it fails `pnpm typecheck` — tsconfig includes
+# `.next/types/**/*.ts` — with an error about a file this script deleted. Next
+# regenerates the directory on the next build or dev run.
+cleanup() { stop 2>/dev/null; rm -rf app/isr-probe .next-pristine .next/types
             [ -f /tmp/verify-isr-globals.bak ] && mv /tmp/verify-isr-globals.bak "$GLOBALS"; }
 trap cleanup EXIT
 
 boot() { corepack pnpm start -p "$PORT" >> /tmp/verify-isr.log 2>&1 & echo $! > /tmp/verify-isr.pid; disown
-         # Readiness polls `/`, never the probe. With revalidate=1 the probe is
-         # always stale, so any request to it serves the cached entry and starts
-         # a regeneration — and the FIRST request after a boot is the whole
-         # experiment: cold cache serves the on-disk prerender, warm cache
-         # serves what the previous process regenerated. Spending it here would
-         # destroy the measurement.
+         # Readiness polls `/`, never the probe. The first probe request after
+         # a boot is the whole experiment — a cold cache renders a new
+         # timestamp, a warm one replays the stored render — so it must be the
+         # script's, not a readiness check's.
          for _ in $(seq 60); do curl -sf "localhost:$PORT/" >/dev/null 2>&1 && return 0; sleep 1; done
          echo "server did not come up; see /tmp/verify-isr.log"; exit 1; }
 stop() { kill "$(cat /tmp/verify-isr.pid 2>/dev/null)" 2>/dev/null

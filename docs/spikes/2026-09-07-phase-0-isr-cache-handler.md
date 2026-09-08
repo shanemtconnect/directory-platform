@@ -159,3 +159,88 @@ prerender from it, so the "built once in CI with no site secrets" comment on the
 Dockerfile is not true of `DATABASE_URL` — the build fails with `ECONNREFUSED`
 without one. It is a build arg with a placeholder default; the placeholder is
 enough to load the module but not to prerender.
+
+---
+
+## Decision reversed 2026-09-08 — the cache is now cold on deploy
+
+The retention volume above treats the symptom. The cause is that this spike
+optimised the wrong thing: **"cache survives redeploy" was never a coherent
+goal**, and the phase gate should not have been written that way.
+
+### Why
+
+Cached HTML is not portable across builds. Two things in it are build-specific:
+
+- **Hashed asset paths.** `/_next/static/chunks/<hash>.css`. New build, new
+  hash; the old URL 404s and the page renders unstyled. That is the symptom the
+  follow-up above chased, and `STATIC_ASSETS_DIR` does genuinely fix it.
+- **Server-action ids.** A form in a cached page posts to the action id of the
+  build that rendered it. The new build has never heard of it, so **every POST
+  from that page fails** until the entry revalidates — up to an hour on listing
+  pages. No volume fixes this: the action does not exist in the new bundle.
+
+So the retention volume buys a page that looks right and does not work. Vercel
+does not have this problem because it does not serve one build's HTML from
+another build's server; each deployment is its own immutable unit.
+
+### What changed
+
+`cache-handler.mjs` derives the build id at runtime — `.next/BUILD_ID` relative
+to `process.cwd()` (the standalone server chdirs into `.next/standalone`, where
+the build output is copied), then `NEXT_BUILD_ID`, then `"dev"` — and keys every
+entry `nextjs:<buildId>:`. The derivation is in `lib/cache/build-id.mjs`, plain
+ESM with no dependencies because the standalone server loads the handler without
+a bundler, and unit-tested in `lib/cache/build-id.test.ts`.
+
+Observed on the standalone server, two builds against `redis://…/7`:
+
+```
+nextjs:kwsdX2O2_JjOKy60mMAFD:/index          <- build 1
+nextjs:kwsdX2O2_JjOKy60mMAFD:__sharedTags__
+nextjs:g3BTk_zTkf5ky9f01GsSn:/index          <- build 2, same URL, own namespace
+nextjs:g3BTk_zTkf5ky9f01GsSn:__sharedTags__
+```
+
+Build 2 served `/` fresh: its own build id in the HTML, its own stylesheet at
+200, and build 1's stylesheet 404 — untouched, because nothing asks for it.
+
+### What the cache guarantees now
+
+- **Shared across replicas.** Two web containers of the same build share one
+  warm cache. This was always the bigger win and it is unaffected.
+- **Survives a container or process restart of the same build.** A page
+  regenerated at runtime is still there after the container is replaced,
+  redeployed at the same commit, or OOM-killed.
+- **Cold on deploy, warmed on demand.** A new build starts with an empty
+  namespace and fills it as traffic arrives.
+- **No cross-build bleed.** A build can only ever read entries it wrote.
+
+### Operational consequence
+
+- **The first hit on each page after a deploy is a render**, not a cache read.
+  Sized for this app that is a database query and a React render, not a rebuild
+  of the site; the pages that matter warm within seconds of a deploy. If that
+  ever becomes a problem the answer is a warming sweep over the sitemap, not a
+  cache that outlives its build.
+- **Old namespaces need sweeping.** Nothing expires them. Run
+  `scripts/purge-cache.sh` as a Coolify post-deployment command: with no
+  arguments it keeps `.next/BUILD_ID` — the running build — and deletes every
+  other `nextjs:*` namespace, including the un-namespaced `nextjs:/path` keys
+  written before this scheme.
+- **Keep `STATIC_ASSETS_DIR`.** It is no longer load-bearing for correctness,
+  but a client that already holds an old page — an open tab, a bfcache entry, a
+  prefetch in flight — still asks for the old build's assets. Retention keeps
+  those 200 instead of 404 while the client re-validates. It does nothing for
+  server-action skew, which is why it could not be the whole answer.
+
+### The gate wording
+
+> "Cache handler survives a redeploy with a warm cache, or fallback chosen."
+
+Read as written — a redeploy does not cold-start the ISR cache — this is no
+longer the goal and the code deliberately does the opposite. The gate is met by
+the second clause and by what the cache is actually for: shared across replicas,
+warm across restarts of one build, and a working LRU fallback when Redis is
+down. `scripts/verify-isr.sh` now asserts that, and fails with the original
+symptom if the build-agnostic key prefix is restored.

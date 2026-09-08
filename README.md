@@ -43,11 +43,15 @@ one-listing city pages are how directories sink their own domain.
 (unclaimed → claimed → verified) and `tier` (free/essential/premium) are
 different columns, so a cancellation can drop a badge without touching a tier.
 
-**ISR survives redeploys.** The cache handler is Redis-backed and guards against
-connecting during `next build` — without that guard the build hangs forever and
-silently when Redis is unreachable. Surviving HTML still points at the hashed
-assets of the build that made it, so the deploy has to keep those servable; see
-`STATIC_ASSETS_DIR` under Deploy, and `docs/spikes/`.
+**The ISR cache is per build, and that is deliberate.** It is Redis-backed and
+keyed `nextjs:<buildId>:`, so it is shared across replicas and survives a
+container restart, but a deploy starts cold. Cached HTML belongs to the build
+that rendered it: it links that build's hashed assets, and its forms post to
+that build's server-action ids, which the next build does not have. Serving it
+across a deploy gives an unstyled page whose every form POST fails. The handler
+also guards against connecting during `next build` — without that guard the
+build hangs forever and silently when Redis is unreachable. See
+`docs/spikes/2026-09-07-phase-0-isr-cache-handler.md`.
 
 ## Local development
 
@@ -99,15 +103,31 @@ now fails fast with a clear message if the arg is missing, rather than dying
 partway through prerendering on `ECONNREFUSED`. It is not baked into the
 runner; that gets its own at boot.
 
-**Mount a volume at `STATIC_ASSETS_DIR`.** This is not optional tuning. The ISR
-cache is Redis-backed and deliberately outlives a deploy, but the HTML it holds
-references hashed asset paths from the build that produced it. Replace
-`.next/static` on redeploy and every cached page links dead CSS and JS. Give the
-Coolify app a persistent volume — `STATIC_ASSETS_DIR=/data/next-static` — and
-`docker-entrypoint.sh` merges each new build's assets in beside the old ones.
+**Run `scripts/purge-cache.sh` as a post-deployment command.** Each build gets
+its own `nextjs:<buildId>:` namespace in Redis and nothing expires the previous
+one. With no arguments the script keeps the build id in `.next/BUILD_ID` — the
+build that is running — and deletes every other namespace:
 
-Without that volume you must run `scripts/purge-cache.sh` after **every** deploy,
-and the site serves unstyled pages until you do.
+```bash
+REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh
+```
+
+`KEEP_BUILD_ID=none` purges everything instead, which is the way to force every
+page to re-render now. `DRY_RUN=1` lists without deleting.
+
+**Expect a cold cache after a deploy.** The first request to each page renders
+it; there is no way around that, and no way to avoid it that does not mean
+serving the previous build's HTML. Warm the pages that matter by hitting them
+if you care about the first visitor.
+
+**Mount a volume at `STATIC_ASSETS_DIR`.** No longer load-bearing for
+correctness, but still worth having: a client that already holds a page from the
+previous build — an open tab, a bfcache entry, a prefetch in flight — asks for
+that build's hashed assets, and without retention they 404 until it reloads.
+Give the Coolify app a persistent volume, `STATIC_ASSETS_DIR=/data/next-static`,
+and `docker-entrypoint.sh` merges each new build's assets in beside the old
+ones. It grows by one build's static output per deploy and is never pruned;
+sweep it by hand when it matters.
 
 ## Layout
 
