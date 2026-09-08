@@ -283,7 +283,7 @@ describe("processNotifications — submissions", () => {
   it("emails the admin and the submitter, and marks the job done", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const saved = await createSubmission(tx, {
+      const saved = await createSubmission(tx, PUBLIC_VIEWER, {
         ...submission,
         categoryId: ctx.primaryCategoryId,
         city: await cityNameFor(tx, ctx.cityId),
@@ -300,7 +300,7 @@ describe("processNotifications — submissions", () => {
   it("still tells the admin about a submission parked for an unknown town", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const saved = await createSubmission(tx, {
+      const saved = await createSubmission(tx, PUBLIC_VIEWER, {
         ...submission,
         categoryId: ctx.primaryCategoryId,
         city: "Nowhere-On-Sea",
@@ -317,7 +317,7 @@ describe("processNotifications — submissions", () => {
   it("does not send the submitter a second receipt when the admin send is retried", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const saved = await createSubmission(tx, {
+      const saved = await createSubmission(tx, PUBLIC_VIEWER, {
         ...submission,
         categoryId: ctx.primaryCategoryId,
         city: await cityNameFor(tx, ctx.cityId),
@@ -339,7 +339,7 @@ describe("processNotifications — submissions", () => {
 
   it("queues nothing at all when the category was not recognised", async () => {
     await withTestDb(async (tx) => {
-      const saved = await createSubmission(tx, {
+      const saved = await createSubmission(tx, PUBLIC_VIEWER, {
         ...submission,
         categoryId: "00000000-0000-4000-8000-0000000000ff",
       });
