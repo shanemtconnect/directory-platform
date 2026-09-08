@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import {
   verticals, cities, categories, listings, slugs,
 } from "@/lib/db/schema";
 import { allocateSlug, seedReservedSlugs, resolveSlug, ROOT_SCOPE } from "@/lib/routing/slugs";
 import { siteConfig } from "@/config/site.config";
+import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
 function parseCsv(path: string): Record<string, string>[] {
@@ -153,12 +155,12 @@ export async function runSeed(tx: TestDb, niche: string): Promise<SeedReport> {
     report.listings++;
   }
 
-  // Denormalised count the pillar pages and the indexing gate both read.
-  await tx.execute(sql`
-    update cities c set listing_count = (
-      select count(*) from listings l where l.city_id = c.id and l.status = 'published'
-    )
-  `);
+  // The denormalised count and the gate flag the pillar pages read. Goes
+  // through the one helper rather than hand-rolled SQL, so the seed cannot
+  // drift from the rule the importer and the approval flow apply.
+  for (const cityId of cityIdByName.values()) {
+    await recomputeCityIndexability(tx, PUBLIC_VIEWER, cityId);
+  }
 
   return report;
 }

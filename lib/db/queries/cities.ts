@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { cities, categories, verticals, areas } from "@/lib/db/schema";
 import type { Viewer } from "@/lib/db/viewer";
+import { scopeIndexability } from "@/lib/db/queries/indexing";
 import type { PillarScope } from "@/lib/routing/scope";
 import type { Db } from "@/lib/db/client";
 
@@ -16,16 +17,26 @@ export interface PillarHeading {
 }
 
 /**
- * Resolves a scope to the names the page needs. Takes a viewer for consistency
- * with every other query function, even though nothing here is gated: cities
- * and categories are public taxonomy.
+ * Resolves a scope to the names the page needs, and to the indexing decision.
+ *
+ * The flag and the count come from `scopeIndexability`, never from the
+ * denormalised `cities.listing_count`/`is_indexable` columns and never from a
+ * literal. Those columns are a cache the importer and the approval flow
+ * refresh; the page itself must not be able to advertise indexing that the
+ * count no longer supports.
+ *
+ * A null return means the page must 404: an unpublished city or area, an
+ * inactive vertical or category, or an id that resolves to nothing.
  */
 export async function pillarHeading(
   tx: Db,
-  _viewer: Viewer,
+  viewer: Viewer,
   scope: PillarScope,
   entityPlural: string,
 ): Promise<PillarHeading | null> {
+  const indexability = await scopeIndexability(tx, viewer, scope);
+  if (!indexability) return null;
+
   if (scope.type === "city" || scope.type === "city-category") {
     const [city] = await tx.select().from(cities).where(eq(cities.id, scope.cityId)).limit(1);
     if (!city) return null;
@@ -40,8 +51,7 @@ export async function pillarHeading(
       title: `${noun} in ${city.name}`,
       place: city.name,
       introHtml: city.introHtml,
-      isIndexable: city.isIndexable,
-      listingCount: city.listingCount,
+      ...indexability,
       faq: city.faq,
     };
   }
@@ -56,8 +66,7 @@ export async function pillarHeading(
       title: `${vertical.name} in ${area.name}`,
       place: area.name,
       introHtml: area.introHtml,
-      isIndexable: area.isIndexable,
-      listingCount: area.listingCount,
+      ...indexability,
       faq: area.faq,
     };
   }
@@ -65,8 +74,7 @@ export async function pillarHeading(
     title: vertical.name,
     place: vertical.name,
     introHtml: vertical.introHtml,
-    isIndexable: true,
-    listingCount: 0,
+    ...indexability,
     faq: null,
   };
 }
