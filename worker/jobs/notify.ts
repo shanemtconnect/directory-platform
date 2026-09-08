@@ -174,7 +174,18 @@ export async function processNotifications(db: Db): Promise<number> {
     const d: Delivery = { done: new Set(job.delivered), fresh: [] };
 
     try {
-      await run(db, d, job);
+      // A savepoint per job, not one transaction per tick.
+      //
+      // The advisory lock opened a single transaction and every completeJob in
+      // the batch lands in it. A Postgres-level error inside one handler — a
+      // malformed id, a dropped connection — aborts that transaction, so every
+      // job already completed is rolled back AFTER its email has gone out and
+      // the next tick sends all of them again. Rolling back to a savepoint
+      // undoes only the job that failed and leaves the transaction usable, so
+      // the failure can still be recorded and the batch can carry on.
+      await db.transaction(async (sp) => {
+        await run(sp as unknown as Db, d, job);
+      });
       await completeJob(db, ADMIN_VIEWER, job.id);
       done++;
     } catch (e) {

@@ -14,7 +14,8 @@ vi.mock("@/lib/email/sender", () => ({
   sendEmail: (m: Record<string, unknown>) => sendEmail(m),
 }));
 
-const { notifyEnquiry, notifySubmission } = await import("@/lib/email/notify");
+const { notifyEnquiry, notifySubmission, NOTIFY_ENQUIRY } = await import("@/lib/email/notify");
+const { enqueueJob } = await import("@/lib/db/queries/jobs");
 const { processNotifications } = await import("./notify");
 
 const ENV = { ...process.env };
@@ -221,6 +222,33 @@ describe("processNotifications — enquiries", () => {
       await processNotifications(tx);
 
       expect((await jobRow(tx)).delivered).toEqual(["owner"]);
+    });
+  });
+
+  it("keeps the job it has already finished when a later one hits a database error", async () => {
+    await withTestDb(async (tx) => {
+      await queuedEnquiry(tx);
+      // Deterministic order: the good job is due first.
+      await tx.update(jobQueue).set({ runAfter: new Date(Date.now() - 120_000) });
+      // An id Postgres itself refuses, so the failure is a driver-level error
+      // mid-batch rather than one the handler chose to raise.
+      const badId = await enqueueJob(tx, ADMIN_VIEWER, {
+        kind: NOTIFY_ENQUIRY,
+        payload: { enquiryId: "not-a-uuid" },
+        runAfter: new Date(Date.now() - 60_000),
+      });
+
+      expect(await processNotifications(tx)).toBe(1);
+
+      const rows = await tx.select().from(jobQueue);
+      const good = rows.find((r) => r.id !== badId)!;
+      const bad = rows.find((r) => r.id === badId)!;
+      // The email for the first job went out. Undoing its completion would
+      // send it again on the next tick.
+      expect(good.status).toBe("done");
+      expect(bad.status).toBe("pending");
+      expect(bad.attempts).toBe(1);
+      expect(recipients()).toEqual(["admin@example.co.uk"]);
     });
   });
 
