@@ -1,10 +1,11 @@
-import type { listings, cities, categories } from "@/lib/db/schema";
+import type { cities, categories } from "@/lib/db/schema";
+import type { PublicListing } from "@/lib/db/queries/listings";
 import { siteConfig } from "@/config/site.config";
 import { countryProfile } from "@/lib/geo/countries";
 import type { JsonLd } from "./types";
 import { prune } from "./types";
 
-type Listing = typeof listings.$inferSelect;
+type Listing = PublicListing;
 type City = typeof cities.$inferSelect;
 type Category = typeof categories.$inferSelect;
 

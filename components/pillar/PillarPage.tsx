@@ -1,4 +1,4 @@
-import type { listings as listingsTable } from "@/lib/db/schema";
+import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import type { PillarHeading } from "@/lib/db/queries/cities";
 import type { CategoryIndexRow, CityIndexRow } from "@/lib/db/queries/indexes";
 import { siteConfig } from "@/config/site.config";
@@ -6,7 +6,6 @@ import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
 import { ListingMap } from "@/components/map/ListingMap";
 
-type Listing = typeof listingsTable.$inferSelect;
 
 export interface FaqEntry { question: string; answer: string }
 

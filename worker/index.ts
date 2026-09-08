@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { db } from "@/lib/db/client";
+import { db, type Db } from "@/lib/db/client";
 import { jobRuns } from "@/lib/db/schema";
 import { withAdvisoryLock } from "./lock";
 import { now } from "@/lib/clock";
@@ -13,11 +13,11 @@ if (process.env.WORKER_ENABLED !== "true") {
  * Jobs run inside this container via node-cron, not by system cron hitting HTTP
  * endpoints: that way they get logging, retries and no public attack surface.
  */
-function schedule(name: string, expr: string, fn: () => Promise<void>): void {
+function schedule(name: string, expr: string, fn: (tx: Db) => Promise<void>): void {
   cron.schedule(expr, async () => {
     const startedAt = now();
     try {
-      const ran = await withAdvisoryLock(db as never, name, fn);
+      const ran = await withAdvisoryLock(db, name, fn);
       const ms = Date.now() - startedAt.getTime();
       console.log(`[worker] ${name} ${ran ? "ok" : "skipped (lock held elsewhere)"} in ${ms}ms`);
       if (ran) {
@@ -41,9 +41,9 @@ function schedule(name: string, expr: string, fn: () => Promise<void>): void {
 //   Phase 4 — claim-document purge (30 days after decision)
 //   Phase 5 — verification expiry and renewal reminders at 30/7/0 days
 //   Phase 6 — backlink verification
-schedule("derivatives", "*/1 * * * *", async () => {
+schedule("derivatives", "*/1 * * * *", async (tx) => {
   const { processPendingDerivatives } = await import("./jobs/derivatives");
-  await processPendingDerivatives(db as never);
+  await processPendingDerivatives(tx);
 });
 
 console.log("[worker] started");

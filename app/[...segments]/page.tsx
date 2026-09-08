@@ -142,7 +142,7 @@ export default async function CatchAllPage({ params }: Props) {
         listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
         countListings(db as never, PUBLIC_VIEWER, result.scope),
         cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
-        cityId ? nearbyCities(db as never, cityId) : Promise.resolve([]),
+        cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
       ]);
 
       const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));

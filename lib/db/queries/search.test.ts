@@ -129,4 +129,24 @@ describe("search", () => {
       expect((await search(tx, PUBLIC_VIEWER, { page: 2 })).rows).toHaveLength(6);
     });
   });
+
+  it("returns the public projection, not the whole row", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      await makeListing(tx, ctx, {
+        name: "Sensitive one",
+        submittedByEmail: "sam@example.co.uk",
+        rejectedReason: "duplicate",
+        verificationChecks: { companiesHouse: "12345678" },
+        customFields: { capacity_seated: 120, submission: { ip: "203.0.113.9" } },
+      });
+
+      const [row] = (await search(tx, PUBLIC_VIEWER, { q: "Sensitive" })).rows;
+      expect(row).not.toHaveProperty("submittedByEmail");
+      expect(row).not.toHaveProperty("verificationChecks");
+      expect(row).not.toHaveProperty("rejectedReason");
+      expect(row?.customFields).toEqual({ capacity_seated: 120 });
+    });
+  });
 });

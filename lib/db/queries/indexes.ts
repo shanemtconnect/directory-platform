@@ -1,7 +1,8 @@
 import { sql, eq, and, gt, desc, asc } from "drizzle-orm";
 import { cities, categories, listings, verticals, slugs } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import { publishedListings } from "@/lib/db/queries/listings";
+import type { Db } from "@/lib/db/client";
 
 export interface CityIndexRow {
   id: string;
@@ -20,7 +21,7 @@ export interface CityIndexRow {
  * pages we have told Google to ignore. Admin views pass false.
  */
 export async function listCities(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   opts: { onlyIndexable?: boolean; minListings?: number } = {},
 ): Promise<CityIndexRow[]> {
@@ -52,7 +53,7 @@ export interface CategoryIndexRow {
 
 /** Categories with a live count, so an empty category is never linked. */
 export async function listCategories(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
 ): Promise<CategoryIndexRow[]> {
   const rows = await tx
@@ -66,7 +67,7 @@ export async function listCategories(
       listings,
       and(
         eq(listings.primaryCategoryId, categories.id),
-        isAdmin(viewer) ? sql`true` : eq(listings.status, "published"),
+        publishedListings(viewer),
       ),
     )
     .where(eq(categories.isActive, true))
@@ -87,7 +88,7 @@ export async function listCategories(
  * in this city rather than linking a dead URL.
  */
 export async function categoriesInCity(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   cityId: string,
 ): Promise<CategoryIndexRow[]> {
@@ -103,7 +104,7 @@ export async function categoriesInCity(
       and(
         eq(listings.primaryCategoryId, categories.id),
         eq(listings.cityId, cityId),
-        isAdmin(viewer) ? sql`true` : eq(listings.status, "published"),
+        publishedListings(viewer),
       ),
     )
     .innerJoin(
@@ -121,10 +122,16 @@ export async function categoriesInCity(
 
 /**
  * The N nearest cities by great-circle distance — the internal linking engine.
- * Only indexable cities: linking to a noindexed page wastes the crawl.
+ *
+ * Takes a viewer like every other query function. For the public that means
+ * indexable cities only: linking a noindexed page wastes the crawl. An admin
+ * sees the thin neighbours too, so the admin view can show what a city would
+ * link to once the gate opens. Unpublished cities are excluded for everyone —
+ * that page is not live for anybody.
  */
 export async function nearbyCities(
-  tx: TestDb,
+  tx: Db,
+  viewer: Viewer,
   cityId: string,
   limit = 6,
 ): Promise<CityIndexRow[]> {
@@ -133,6 +140,13 @@ export async function nearbyCities(
     .from(cities).where(eq(cities.id, cityId)).limit(1);
   if (!origin?.lat || !origin.lng) return [];
 
+  const conditions = [
+    eq(cities.isPublished, true),
+    sql`${cities.id} <> ${cityId}`,
+    sql`${cities.lat} is not null and ${cities.lng} is not null`,
+  ];
+  if (!isAdmin(viewer)) conditions.push(eq(cities.isIndexable, true));
+
   return tx
     .select({
       id: cities.id, name: cities.name, slug: cities.slug,
@@ -140,12 +154,7 @@ export async function nearbyCities(
       isIndexable: cities.isIndexable,
     })
     .from(cities)
-    .where(and(
-      eq(cities.isIndexable, true),
-      eq(cities.isPublished, true),
-      sql`${cities.id} <> ${cityId}`,
-      sql`${cities.lat} is not null and ${cities.lng} is not null`,
-    ))
+    .where(and(...conditions))
     .orderBy(sql`
       6371 * acos(
         least(1, greatest(-1,
