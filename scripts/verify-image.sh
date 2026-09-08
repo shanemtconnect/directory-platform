@@ -15,6 +15,16 @@
 #    whole import graph resolves, `@/lib/db/client` included. It is not run to
 #    completion: it needs no Postgres to start, and would otherwise sit in cron
 #    forever, so it is started with a timeout and asserted on its startup line.
+# 5. The RUNNER can migrate a database. Coolify's pre-deployment command runs
+#    `node scripts/migrate.mjs` in this image, and the image carries prod deps
+#    only — so `drizzle/` or a missed dependency is a deploy that dies at the
+#    first step, or worse, a container that serves a site whose every enquiry
+#    form fails on a missing `job_queue` column.
+# 6. The WORKER can seed the database the runner just migrated. Seeding needs
+#    tsx and `seeds/`, which only this stage has. Run against the same throwaway
+#    database as (5) on purpose: it is the real first-deploy order, and it
+#    proves the two images agree about the schema rather than each being
+#    self-consistent in isolation.
 #
 # This cannot be a RUN step in the Dockerfile: importing the handler needs REDIS_URL.
 #
@@ -33,6 +43,19 @@ BUILD_DB=${BUILD_DATABASE_URL:-postgres://directory:directory@host.docker.intern
 # here may disturb it.
 RUNTIME_REDIS=${RUNTIME_REDIS_URL:-redis://host.docker.internal:6380/5}
 
+# `validateEnv`'s RUNTIME_ENV grew BETTER_AUTH_* and the worker boot guard checks
+# it, so the worker cannot start without them. Throwaway values on purpose:
+# nothing here authenticates anybody, and the check is only that the key is not
+# blank — the point is to get past the guard and observe what we came to observe.
+AUTH_SECRET=${BETTER_AUTH_SECRET:-verify-image-not-a-real-secret}
+AUTH_URL=${BETTER_AUTH_URL:-$SITE_URL}
+
+# Migrating and seeding get a database of their own, created and dropped here.
+# Never $BUILD_DB: these steps write, and the dev database is someone's work.
+ADMIN_DB=${ADMIN_DATABASE_URL:-postgres://directory:directory@host.docker.internal:5433/postgres}
+VERIFY_DB=${VERIFY_DB_NAME:-directory_imgverify}
+VERIFY_DB_URL=${ADMIN_DB%/*}/$VERIFY_DB
+
 build() {
   docker build --target "$1" \
     --add-host=host.docker.internal:host-gateway \
@@ -43,6 +66,37 @@ build() {
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# CREATE/DROP DATABASE cannot run inside a transaction and needs a connection to
+# some other database, so it goes through the admin URL. Run from inside the
+# runner image rather than a host `psql`, which the machine may not have — the
+# image already ships `postgres` for the app, and using it also proves the
+# client the migration script depends on is genuinely present.
+admin_sql() {
+  docker run --rm --add-host=host.docker.internal:host-gateway \
+    -e ADMIN_URL="$ADMIN_DB" -e STMT="$1" "$IMAGE" \
+    node --input-type=module -e '
+      import postgres from "postgres";
+      const sql = postgres(process.env.ADMIN_URL, { max: 1, onnotice: () => {} });
+      await sql.unsafe(process.env.STMT);
+      await sql.end();
+    ' > /dev/null
+}
+
+# One trap for everything, armed before anything is created: a failure halfway
+# through must not leave a stray database or volume behind for the next run.
+VOL=""
+DB_CREATED=""
+cleanup() {
+  # `if`, not `&&`: under `set -e` a false test would abort the trap and leave
+  # the rest of the cleanup undone.
+  if [ -n "$VOL" ]; then docker volume rm -f "$VOL" > /dev/null 2>&1 || true; fi
+  if [ -n "$DB_CREATED" ]; then
+    admin_sql "drop database if exists \"$VERIFY_DB\" with (force)" 2>/dev/null || true
+  fi
+  return 0
+}
+trap cleanup EXIT
+
 echo "--- building runner ---"
 build runner "$IMAGE"
 
@@ -52,7 +106,6 @@ docker run --rm "$IMAGE" \
 
 echo "--- deploy 1: assets land on an empty volume ---"
 VOL=$(docker volume create)
-trap 'docker volume rm -f "$VOL" > /dev/null 2>&1 || true' EXIT
 docker run --rm -e STATIC_ASSETS_DIR=/data/next-static -v "$VOL":/data/next-static "$IMAGE" \
   sh -c '[ -L /app/.next/static ] && [ -n "$(ls -A /data/next-static)" ] && echo ok' \
   || fail "first start did not populate the volume"
@@ -87,6 +140,42 @@ grep -q "is not writable" <<<"$RO_OUT" || fail "no clear message on a read-only 
 if grep -q "SHOULD_NOT_REACH_HERE" <<<"$RO_OUT"; then fail "the server ran despite an unusable assets dir"; fi
 echo "ok: exit $RO_CODE, and it said why"
 
+# The runner is the image Coolify's pre-deployment command runs in.
+echo "--- runner: migrates a fresh database ---"
+admin_sql "drop database if exists \"$VERIFY_DB\" with (force)"
+admin_sql "create database \"$VERIFY_DB\""
+DB_CREATED=1
+
+M_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e DATABASE_URL="$VERIFY_DB_URL" "$IMAGE" node scripts/migrate.mjs 2>&1) \
+  || fail "the runner image could not migrate: $M_OUT"
+grep -qE "^\[migrate\] applied [1-9][0-9]* migration" <<<"$M_OUT" \
+  || fail "migrate.mjs applied nothing to an empty database: $M_OUT"
+# Named, not counted: a run that reported a number but listed no tag would mean
+# the journal is unreadable in the image, which is how a half-copied drizzle/
+# would look.
+grep -qE "^\[migrate\]   [0-9]{4}_" <<<"$M_OUT" || fail "no migration was named: $M_OUT"
+echo "ok: $(grep -cE '^\[migrate\]   ' <<<"$M_OUT") migrations applied in the runner image"
+
+# Coolify runs the pre-deployment command on EVERY deploy, so the second run is
+# the common case, and it has to be a clean no-op rather than an error.
+echo "--- runner: migrating again is a no-op ---"
+M2_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e DATABASE_URL="$VERIFY_DB_URL" "$IMAGE" node scripts/migrate.mjs 2>&1) \
+  || fail "a second migrate run failed: $M2_OUT"
+grep -q "already up to date" <<<"$M2_OUT" || fail "second run was not a no-op: $M2_OUT"
+echo "ok: already up to date"
+
+# A pre-deployment step that hangs is worse than one that fails: Coolify waits.
+echo "--- runner: an unusable database fails the step instead of hanging ---"
+set +e
+BAD_OUT=$(docker run --rm "$IMAGE" node scripts/migrate.mjs 2>&1)
+BAD_CODE=$?
+set -e
+[ "$BAD_CODE" -ne 0 ] || fail "migrate.mjs exited 0 with no DATABASE_URL"
+grep -q "DATABASE_URL is not set" <<<"$BAD_OUT" || fail "no clear message: $BAD_OUT"
+echo "ok: exit $BAD_CODE, and it said why"
+
 echo "--- building worker ---"
 build worker "$IMAGE-worker"
 
@@ -101,6 +190,8 @@ W_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
   -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
   -e DATABASE_URL="$BUILD_DB" \
   -e REDIS_URL="$RUNTIME_REDIS" \
+  -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
+  -e BETTER_AUTH_URL="$AUTH_URL" \
   "$IMAGE-worker" timeout -s TERM 20 ./node_modules/.bin/tsx worker/index.ts 2>&1)
 set -e
 grep -q "\[worker\] started" <<<"$W_OUT" || fail "worker did not start: $W_OUT"
@@ -112,15 +203,46 @@ echo "ok: $(grep -c '^\[worker\]' <<<"$W_OUT") worker startup lines, no unresolv
 echo "--- worker: missing env stops the process instead of idling ---"
 # DATABASE_URL is set here so `@/lib/db/client` resolves at import time instead
 # of throwing before validateEnv gets a chance to run — REDIS_URL is the only
-# thing missing, so this exercises validateEnv's own process.exit(1) path.
+# thing missing, so this exercises validateEnv's own process.exit(1) path. Every
+# other RUNTIME_ENV key is supplied for the same reason: a run that failed on
+# three missing keys would still exit non-zero and tell us nothing.
 set +e
 docker run --rm -e WORKER_ENABLED=true -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
   -e DATABASE_URL="$BUILD_DB" \
+  -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
+  -e BETTER_AUTH_URL="$AUTH_URL" \
   "$IMAGE-worker" ./node_modules/.bin/tsx worker/index.ts > /dev/null 2>&1
 E_CODE=$?
 set -e
 [ "$E_CODE" -ne 0 ] || fail "worker booted with no REDIS_URL"
 echo "ok: exit $E_CODE"
 
+# Against the database the RUNNER migrated a moment ago — the real first-deploy
+# order, and the only way to catch the two images disagreeing about the schema.
+echo "--- worker: seeds the database the runner migrated ---"
+S_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
+  -e DATABASE_URL="$VERIFY_DB_URL" \
+  "$IMAGE-worker" ./node_modules/.bin/tsx scripts/seed-cli.ts 2>&1) \
+  || fail "the worker image could not seed: $S_OUT"
+# No niche argument: the default has to come from siteConfig, or a clone ships a
+# seed command naming the niche it was forked from.
+grep -qE '^seeded ".+": [1-9][0-9]* cities, [1-9][0-9]* categories, [1-9][0-9]* listings' <<<"$S_OUT" \
+  || fail "seed reported nothing inserted: $S_OUT"
+echo "ok: $S_OUT"
+
+# Re-seeding is what a redeploy or a nervous operator does. It must skip, not
+# duplicate — and skipping proves the first run really committed.
+echo "--- worker: re-seeding skips instead of duplicating ---"
+S2_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
+  -e DATABASE_URL="$VERIFY_DB_URL" \
+  "$IMAGE-worker" ./node_modules/.bin/tsx scripts/seed-cli.ts 2>&1) \
+  || fail "the worker image could not re-seed: $S2_OUT"
+grep -qE '^seeded ".+": 0 cities, 0 categories, 0 listings \([1-9][0-9]* skipped' <<<"$S2_OUT" \
+  || fail "re-seeding was not idempotent: $S2_OUT"
+echo "ok: $S2_OUT"
+
 echo "PASS: cache handler loads, assets survive a redeploy, a read-only volume"
-echo "      fails the boot, and the worker runs its real entrypoint."
+echo "      fails the boot, the worker runs its real entrypoint, the runner"
+echo "      migrates a fresh database and the worker seeds it."
