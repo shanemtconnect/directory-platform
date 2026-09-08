@@ -33,7 +33,8 @@ export interface SubmissionInput {
   submitterEmail: string;
   /** What they asked for, NOT what they get. See createSubmission. */
   requestedTier: TierName;
-  ip: string;
+  /** Null when no proxy header identified the submitter. Never a placeholder. */
+  ip: string | null;
 }
 
 export interface SubmissionOptions {
