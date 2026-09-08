@@ -20,7 +20,8 @@
     "check:strings": "bash scripts/check-niche-strings.sh",
     "build:flags-off": "SITE_FLAGS_OVERRIDE=off next build",
     "build:flags-on": "SITE_FLAGS_OVERRIDE=on next build",
-    "verify:isr": "bash scripts/verify-isr.sh"
+    "verify:isr": "bash scripts/verify-isr.sh",
+    "new-site": "tsx scripts/new-site.ts"
   },
   "keywords": [],
   "author": "",
