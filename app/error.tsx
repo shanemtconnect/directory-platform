@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { siteConfig } from "@/config/site.config";
+import { suppressFooterMatrix } from "@/components/layout/footer-matrix-flag";
 
 /**
  * The recoverable error boundary. Rendered inside the root layout, so a visitor
@@ -25,6 +26,11 @@ export default function Error({
   }, [error]);
 
   const e = siteConfig.entity;
+  // See footer-matrix-flag.ts. Reliable for an error thrown during the
+  // initial server render, which is the case that matters most — this file
+  // still runs as a plain function on the server for that request, same as
+  // any other component in the tree.
+  suppressFooterMatrix();
 
   return (
     <main>

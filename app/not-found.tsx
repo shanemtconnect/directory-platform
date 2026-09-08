@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
+import { suppressFooterMatrix } from "@/components/layout/footer-matrix-flag";
 
 export const metadata: Metadata = {
   title: "Page not found",
@@ -19,6 +20,9 @@ export const metadata: Metadata = {
  */
 export default function NotFound() {
   const e = siteConfig.entity;
+  // See footer-matrix-flag.ts: this is a dead end, not a page the footer's
+  // city/category matrix needs to route a crawler onward from.
+  suppressFooterMatrix();
 
   return (
     <main>

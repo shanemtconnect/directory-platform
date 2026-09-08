@@ -7,6 +7,7 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { now } from "@/lib/clock";
 import { Container } from "./Container";
 import { LEGAL_ROUTES } from "./legal-routes";
+import { isFooterMatrixSuppressed } from "./footer-matrix-flag";
 
 const LINK = "text-ink/80 no-underline hover:text-primary hover:underline";
 
@@ -35,7 +36,13 @@ async function loadMatrix(): Promise<FooterCategoryBlock[]> {
 
 export async function SiteFooter() {
   const routes = footerRoutes();
-  const matrix = await loadMatrix();
+  // Skip the query entirely on a 404/error page: it's set by app/not-found.tsx
+  // and app/error.tsx via footer-matrix-flag.ts before this renders (see that
+  // file for why), and there is no point spending a database round trip on a
+  // matrix that will not be shown — least of all on the error page, which may
+  // be rendering because the database is the thing that just failed.
+  const suppressMatrix = isFooterMatrixSuppressed();
+  const matrix = suppressMatrix ? [] : await loadMatrix();
   /*
    * The shell is ISR-cached, so this year is the year the page was last
    * rendered rather than today's. Every route that reaches here revalidates
@@ -78,15 +85,27 @@ export async function SiteFooter() {
             data-testid="footer-link-matrix"
             className="mt-10 border-t border-line pt-8"
           >
-            <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {/*
+              One <details> per category, closed by default. The matrix is
+              ~360 links across every category on every page load — worth
+              having for crawl depth, not worth ~2,800px of scroll for a
+              visitor who only wants one of them. `<summary>` stays plain text
+              (interactive content, like the category link below, is not
+              valid inside it) with the link to the category itself as the
+              first item in the list once it's open.
+            */}
+            <div className="grid gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
               {matrix.map((block) => (
-                <section key={block.id}>
-                  <h2 className="font-heading text-base font-semibold">
-                    <a href={block.href} className={LINK}>
-                      {block.name}
-                    </a>
-                  </h2>
+                <details key={block.id} className="border-b border-line py-3 first:pt-0">
+                  <summary className="cursor-pointer list-none font-heading text-base font-semibold text-ink marker:content-['']">
+                    {block.name}
+                  </summary>
                   <ul className="mt-2 list-none space-y-1">
+                    <li>
+                      <a href={block.href} className={LINK}>
+                        All {block.name}
+                      </a>
+                    </li>
                     {block.cities.map((city) => (
                       <li key={city.href}>
                         <a href={city.href} className={LINK}>
@@ -95,7 +114,7 @@ export async function SiteFooter() {
                       </li>
                     ))}
                   </ul>
-                </section>
+                </details>
               ))}
             </div>
           </nav>
