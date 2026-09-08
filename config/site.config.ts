@@ -1,4 +1,4 @@
-import type { SiteConfig } from "./types";
+import type { CustomField, SiteConfig } from "./types";
 
 /**
  * THE ONLY FILE A CLONE EDITS.
@@ -195,3 +195,23 @@ export const siteConfig = {
     footerCitiesPerCategory: 18,
   },
 } as const satisfies SiteConfig;
+
+/**
+ * Widened accessors.
+ *
+ * `as const satisfies SiteConfig` is load-bearing — it keeps the literal types
+ * the feature-flag tree-shaking depends on. The cost is that it narrows
+ * `customFields` to a union of exact object shapes, so an optional key like
+ * `searchable` or `showInCard` does not exist on members that omit it, and
+ * `.filter(f => f.showInCard)` is a compile error rather than a false.
+ *
+ * That has now caught three separate pieces of work. Read fields through here
+ * instead of reaching into the const.
+ */
+export const customFields: readonly CustomField[] = siteConfig.customFields;
+
+export const searchableFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.searchable === true);
+
+export const cardFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.showInCard === true);
