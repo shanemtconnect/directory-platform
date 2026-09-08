@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { and, eq } from "drizzle-orm";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
-import { categories, cities, listings } from "@/lib/db/schema";
+import { badgeListing } from "@/lib/db/queries/badges";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { BadgeGallery } from "@/components/advertise/BadgeGallery";
 import type { SnippetInput } from "@/lib/badge/snippets";
 
@@ -13,8 +13,6 @@ export const metadata: Metadata = {
   description: `Four free badge styles for your own website. Pick one, copy a line of HTML, done.`,
   alternates: { canonical: "/advertise/badge" },
 };
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Resolved = {
   base: Omit<SnippetInput, "style">;
@@ -46,29 +44,22 @@ async function resolve(id: string | undefined): Promise<Resolved> {
     real: false,
   };
 
-  if (!id || !UUID.test(id)) return example;
+  if (!id) return example;
 
-  const [row] = await db
-    .select({ listing: listings, city: cities, category: categories })
-    .from(listings)
-    .innerJoin(cities, eq(cities.id, listings.cityId))
-    .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))
-    .where(and(eq(listings.id, id), eq(listings.status, "published")))
-    .limit(1);
-
+  const row = await badgeListing(db as never, PUBLIC_VIEWER, id);
   if (!row) return example;
 
   return {
     base: {
-      listingId: row.listing.id,
-      listingName: row.listing.name,
-      listingPath: `/${row.city.slug}/${row.listing.slug}`,
-      cityName: row.city.name,
-      categoryName: row.category?.name ?? e.Singular,
+      listingId: row.id,
+      listingName: row.name,
+      listingPath: `/${row.citySlug}/${row.slug}`,
+      cityName: row.cityName,
+      categoryName: row.categoryName ?? e.Singular,
     },
-    verified: row.listing.claimStatus === "verified",
-    ratingAvg: row.listing.ratingAvg,
-    ratingCount: row.listing.ratingCount,
+    verified: row.claimStatus === "verified",
+    ratingAvg: row.ratingAvg,
+    ratingCount: row.ratingCount,
     real: true,
   };
 }

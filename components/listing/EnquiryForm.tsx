@@ -3,10 +3,18 @@
 import { useActionState } from "react";
 import { submitEnquiry, type EnquiryState } from "@/lib/actions/enquiry";
 import { siteConfig } from "@/config/site.config";
+import { TurnstileWidget } from "@/components/submit/TurnstileWidget";
 
 const initial: EnquiryState = { status: "idle" };
 
-export function EnquiryForm({ listingId, listingName }: { listingId: string; listingName: string }) {
+export interface EnquiryFormProps {
+  listingId: string;
+  listingName: string;
+  /** Null outside production; the server-side check skips in the same case. */
+  turnstileSiteKey: string | null;
+}
+
+export function EnquiryForm({ listingId, listingName, turnstileSiteKey }: EnquiryFormProps) {
   const [state, action, pending] = useActionState(submitEnquiry, initial);
 
   if (state.status === "sent") {
@@ -54,6 +62,10 @@ export function EnquiryForm({ listingId, listingName }: { listingId: string; lis
           aria-invalid={Boolean(state.fieldErrors?.message)} />
         {state.fieldErrors?.message && <span role="alert">{state.fieldErrors.message}</span>}
       </p>
+
+      {/* Without this the action rejects every enquiry the moment a secret is
+          configured: submitEnquiry requires a token it was never sent. */}
+      <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />
 
       {state.status === "error" && state.message && (
         <p role="alert" data-testid="enquiry-error">{state.message}</p>

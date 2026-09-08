@@ -5,7 +5,7 @@ import { findDuplicate } from "@/lib/import/guardrails";
 import { allocateSlug } from "@/lib/routing/slugs";
 import { now } from "@/lib/clock";
 import type { TierName } from "@/config/types";
-import type { Viewer } from "@/lib/db/viewer";
+import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
 /**
@@ -33,7 +33,8 @@ export interface SubmissionInput {
   submitterEmail: string;
   /** What they asked for, NOT what they get. See createSubmission. */
   requestedTier: TierName;
-  ip: string;
+  /** Null when no proxy header identified the submitter. Never a placeholder. */
+  ip: string | null;
 }
 
 export interface SubmissionOptions {
@@ -41,13 +42,25 @@ export interface SubmissionOptions {
   regions: string[];
 }
 
-export interface DuplicateMatch {
-  listingId: string;
-  name: string;
-  /** Listing slug, for the /claim/{slug} link we offer instead of a second row. */
-  slug: string;
-  reason: string;
-}
+/**
+ * What the submitter is allowed to know about a match.
+ *
+ * 'match' names the listing and points at its live page. 'pending' says only
+ * that we already hold something: an unpublished row's name and slug are not
+ * public, and a form that returned them would be a lookup tool — type a phone
+ * number, read back a listing nobody is meant to see yet.
+ */
+export type DuplicateMatch =
+  | {
+      kind: "match";
+      listingId: string;
+      name: string;
+      /** Listing slug. Per city, so it is only a URL alongside citySlug. */
+      slug: string;
+      citySlug: string;
+      reason: string;
+    }
+  | { kind: "pending" };
 
 export type SubmissionResult =
   | { outcome: "created"; listingId: string; slug: string }
@@ -126,9 +139,14 @@ export async function resolveSubmittedCity(
  * business submitted by hand is judged a duplicate on exactly the same terms
  * as one arriving in a feed: matching name and postcode, or a phone number
  * that normalises to the same digits.
+ *
+ * The match itself runs over every listing — a second row for a business that
+ * is merely pending is still a duplicate — but only an admin is told which
+ * one. Anyone else learns that a published listing exists, or nothing.
  */
 export async function findSubmissionDuplicate(
   tx: TestDb,
+  viewer: Viewer,
   input: Pick<SubmissionInput, "name" | "city" | "postcode" | "phone">,
 ): Promise<DuplicateMatch | null> {
   const hit = await findDuplicate(tx, {
@@ -143,13 +161,28 @@ export async function findSubmissionDuplicate(
   if (!hit) return null;
 
   const [row] = await tx
-    .select({ name: listings.name, slug: listings.slug })
+    .select({
+      name: listings.name,
+      slug: listings.slug,
+      status: listings.status,
+      citySlug: cities.slug,
+    })
     .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(eq(listings.id, hit.listingId))
     .limit(1);
   if (!row) return null;
 
-  return { listingId: hit.listingId, name: row.name, slug: row.slug, reason: hit.reason };
+  if (row.status !== "published" && !isAdmin(viewer)) return { kind: "pending" };
+
+  return {
+    kind: "match",
+    listingId: hit.listingId,
+    name: row.name,
+    slug: row.slug,
+    citySlug: row.citySlug,
+    reason: hit.reason,
+  };
 }
 
 /**

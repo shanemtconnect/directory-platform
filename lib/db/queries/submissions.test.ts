@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
 import { auditLog, categories, cities, listings } from "@/lib/db/schema";
-import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeScaffold, makeCategoryInCity, makeCity, makeListing } from "@/test/factories";
 import {
   PARKED_SUBMISSION_ACTION,
@@ -12,6 +12,8 @@ import {
   submissionOptions,
   type SubmissionInput,
 } from "./submissions";
+
+const ADMIN: Viewer = { role: "admin", userId: "00000000-0000-4000-8000-00000000adm1" };
 
 function input(patch: Partial<SubmissionInput> = {}): SubmissionInput {
   return {
@@ -207,7 +209,7 @@ describe("resolveSubmittedCity", () => {
 });
 
 describe("findSubmissionDuplicate", () => {
-  it("finds an existing listing by name and postcode, with a claim slug", async () => {
+  it("finds a published listing by name and postcode, with its canonical path", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const existing = await makeListing(tx, ctx, {
@@ -216,10 +218,15 @@ describe("findSubmissionDuplicate", () => {
         phone: null,
       });
 
-      const hit = await findSubmissionDuplicate(tx, input());
-      expect(hit?.listingId).toBe(existing);
-      expect(hit?.slug).toBe("the-old-mill");
-      expect(hit?.reason).toBe("matching name and postcode");
+      const hit = await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input());
+      expect(hit).toEqual({
+        kind: "match",
+        listingId: existing,
+        name: "The Old Mill",
+        slug: "the-old-mill",
+        citySlug: "leeds",
+        reason: "matching name and postcode",
+      });
     });
   });
 
@@ -237,10 +244,10 @@ describe("findSubmissionDuplicate", () => {
       // normalise, so that pair reaches admin review instead.
       const hit = await findSubmissionDuplicate(
         tx,
+        PUBLIC_VIEWER,
         input({ name: "The Old Mill", phone: "01632 960000" }),
       );
-      expect(hit?.listingId).toBe(existing);
-      expect(hit?.reason).toBe("matching phone");
+      expect(hit).toMatchObject({ kind: "match", listingId: existing, reason: "matching phone" });
     });
   });
 
@@ -249,7 +256,58 @@ describe("findSubmissionDuplicate", () => {
       const ctx = await makeScaffold(tx);
       await makeListing(tx, ctx, { name: "Somewhere Else", postcode: "LS9 9ZZ", phone: "01632 960111" });
 
-      expect(await findSubmissionDuplicate(tx, input())).toBeNull();
+      expect(await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input())).toBeNull();
+    });
+  });
+
+  it("tells the public a match is pending without naming it", async () => {
+    await withTestDb(async (tx) => {
+      // Otherwise the form is a lookup tool: type a phone number, read back
+      // the name and slug of a listing nobody is allowed to see yet.
+      const ctx = await makeScaffold(tx);
+      const existing = await makeListing(tx, ctx, {
+        name: "The Old Mill",
+        postcode: "LS1 4DY",
+        phone: null,
+      });
+      await tx.update(listings).set({ status: "pending" }).where(eq(listings.id, existing));
+
+      expect(await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input())).toEqual({
+        kind: "pending",
+      });
+    });
+  });
+
+  it("says nothing about a removed listing either", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const existing = await makeListing(tx, ctx, {
+        name: "The Old Mill",
+        postcode: "LS1 4DY",
+        phone: null,
+      });
+      await tx.update(listings).set({ status: "removed" }).where(eq(listings.id, existing));
+
+      expect(await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input())).toEqual({
+        kind: "pending",
+      });
+    });
+  });
+
+  it("gives an admin the details of an unpublished match", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const existing = await makeListing(tx, ctx, {
+        name: "The Old Mill",
+        postcode: "LS1 4DY",
+        phone: null,
+      });
+      await tx.update(listings).set({ status: "pending" }).where(eq(listings.id, existing));
+
+      expect(await findSubmissionDuplicate(tx, ADMIN, input())).toMatchObject({
+        kind: "match",
+        name: "The Old Mill",
+      });
     });
   });
 });

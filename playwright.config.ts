@@ -22,6 +22,16 @@ const SERVER_ENV = {
     process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev",
   REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6380",
   NEXT_PUBLIC_SITE_URL: BASE_URL,
+  /**
+   * Cloudflare's published testing keys: the widget always passes and
+   * siteverify always accepts. They are needed because this suite runs a
+   * production build, and in production a missing secret now fails closed
+   * rather than skipping (lib/spam/turnstile.ts). Without them the enquiry
+   * form could not be exercised at all.
+   */
+  TURNSTILE_SITE_KEY: process.env.TURNSTILE_SITE_KEY ?? "1x00000000000000000000AA",
+  TURNSTILE_SECRET_KEY:
+    process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA",
 };
 
 export default defineConfig({

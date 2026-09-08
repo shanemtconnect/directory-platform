@@ -37,6 +37,12 @@ test.describe("enquiry submission", () => {
     // which would make this test pass for the wrong reason.
     await expect(form.locator("#company_website")).toHaveValue("");
 
+    // Turnstile issues its token asynchronously. Submitting before it lands
+    // sends an empty one, which the action now rejects rather than waving
+    // through — so wait for it, exactly as a person would.
+    await expect(form.locator('input[name="cf-turnstile-response"]'))
+      .not.toHaveValue("", { timeout: 15_000 });
+
     await form.locator('button[type="submit"]').click();
 
     const sent = page.locator('[data-testid="enquiry-sent"]');

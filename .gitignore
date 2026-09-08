@@ -20,3 +20,5 @@ playwright-report/
 
 # Agent worktrees — never part of the repo
 .claude/worktrees/
+# Local SDD scratch reports — never intended for the public repo
+.superpowers/

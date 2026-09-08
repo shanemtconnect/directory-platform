@@ -25,21 +25,27 @@ export function SubmitListingForm({
   const e = siteConfig.entity;
   const err = state.fieldErrors ?? {};
 
-  // Already listed. Offering the claim is better for everyone than a second
-  // row: the business gets the page that already ranks, and we do not have to
-  // merge duplicates later.
-  if (state.status === "duplicate" && state.existing) {
+  // Already listed. Pointing at the existing page is better for everyone than
+  // a second row: the business gets the page that already ranks, and we do not
+  // have to merge duplicates later.
+  if (state.status === "duplicate") {
     return (
       <div data-testid="submit-duplicate" role="status">
         <h2>This looks like it&rsquo;s already listed</h2>
-        <p>
-          We already hold a listing for <strong>{state.existing.name}</strong>. If that is your
-          business, claim it — it is free, it keeps the page and its history, and you can edit
-          the details straight away.
-        </p>
-        <p>
-          <a href={state.existing.claimPath}>Claim this listing</a>
-        </p>
+        {state.existing ? (
+          <>
+            <p>
+              We already hold a listing for <strong>{state.existing.name}</strong>. Have a look —
+              if that is your business, get in touch and we will hand you the page it already
+              has, with its history intact.
+            </p>
+            <p>
+              <a href={state.existing.listingPath}>See the listing we hold</a>
+            </p>
+          </>
+        ) : (
+          <p>{state.message}</p>
+        )}
         <p>
           <small>
             Not the same business? Email{" "}
@@ -184,7 +190,7 @@ export function SubmitListingForm({
 
       <TierChoice error={err.tier} />
 
-      <TurnstileWidget siteKey={turnstileSiteKey} />
+      <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />
 
       {state.status === "error" && state.message && (
         <p role="alert" data-testid="submit-error">{state.message}</p>
