@@ -1,5 +1,5 @@
 import { siteConfig } from "@/config/site.config";
-import { escapeXml, truncate } from "@/lib/badge/svg";
+import { escapeXml } from "@/lib/badge/svg";
 
 /**
  * The favicon, drawn from config rather than checked in as a binary.
@@ -18,9 +18,12 @@ export const dynamic = "force-static";
 
 const SIZE = 64;
 
-/** Two characters at most: below ~28px a third is an unreadable smudge. */
+/**
+ * Two characters at most: below ~28px a third is an unreadable smudge. Cut,
+ * not elided — an ellipsis in a 16px favicon is a smudge of its own.
+ */
 function initials(): string {
-  return truncate(siteConfig.shortName, 2).toUpperCase();
+  return siteConfig.shortName.trim().slice(0, 2).toUpperCase();
 }
 
 export function GET(): Response {
