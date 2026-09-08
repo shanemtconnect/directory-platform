@@ -9,8 +9,10 @@ import type { CustomField, TierName } from "@/config/types";
  * someone choose", so the comparison table uses exactly that set rather than
  * inventing a second list that drifts from it.
  */
-export const comparisonFields: readonly CustomField[] = siteConfig.customFields.filter(
-  (f) => f.showInCard === true,
+const allFields: readonly CustomField[] = siteConfig.customFields;
+
+export const comparisonFields: readonly CustomField[] = allFields.filter(
+  (f: CustomField) => f.showInCard === true,
 );
 
 /**
