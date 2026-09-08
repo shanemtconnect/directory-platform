@@ -1,0 +1,90 @@
+import { siteConfig } from "@/config/site.config";
+import { BADGE_STYLES, type BadgeStyle } from "@/lib/badge/svg";
+import { badgeKit, type SnippetInput } from "@/lib/badge/snippets";
+import { BadgePreview } from "./BadgePreview";
+import { SnippetBlock } from "./SnippetBlock";
+
+const BLURB: Record<BadgeStyle, string> = {
+  dark: "The default. Sits well on a light page and on a photo.",
+  light: "For dark headers and footers, or anywhere the dark badge disappears.",
+  compact: "One line, 40px tall. Made for a footer strip beside other marks.",
+  rating: "Carries the star rating as well. Only worth using once ratings exist.",
+};
+
+/**
+ * The four styles, each with a live preview and the exact code to paste.
+ *
+ * Every preview is rendered from the same function the image endpoint uses, so
+ * what is shown here cannot drift from what gets served.
+ */
+export function BadgeGallery({
+  base, verified, ratingAvg, ratingCount,
+}: {
+  base: Omit<SnippetInput, "style">;
+  verified: boolean;
+  ratingAvg?: string | number | null;
+  ratingCount?: number | null;
+}) {
+  return (
+    <div>
+      {BADGE_STYLES.map((style) => {
+        const kit = badgeKit({ ...base, style });
+        return (
+          <section key={style} className="my-8 border-t border-neutral-200 pt-6">
+            <h3 className="capitalize">{style}</h3>
+            <p className="text-sm text-neutral-600">{BLURB[style]}</p>
+
+            <div
+              className={
+                style === "light"
+                  ? "my-3 inline-block rounded bg-neutral-900 p-4"
+                  : "my-3 inline-block rounded bg-neutral-100 p-4"
+              }
+            >
+              <BadgePreview
+                input={{
+                  siteName: siteConfig.name,
+                  listingName: base.listingName,
+                  style,
+                  verified,
+                  ratingAvg,
+                  ratingCount,
+                }}
+              />
+            </div>
+
+            <p className="text-sm text-neutral-600">
+              {kit.dimensions.width} × {kit.dimensions.height} px · SVG, so it stays sharp on any
+              screen.
+            </p>
+
+            <SnippetBlock
+              heading="Paste this into your page"
+              code={kit.embed}
+              copyLabel="Copy embed"
+            />
+          </section>
+        );
+      })}
+
+      <section className="my-8 border-t border-neutral-200 pt-6">
+        <h3>Text link instead</h3>
+        <p>
+          If an image does not suit the page, use a plain link. Three wordings are offered on
+          purpose: if every site that links to us uses identical anchor text, the pattern looks
+          manufactured — to readers as much as to search engines. Pick whichever reads naturally
+          in your sentence.
+        </p>
+        {badgeKit({ ...base, style: "dark" }).anchors.map((a) => (
+          <SnippetBlock
+            key={a.key}
+            heading={a.label}
+            note={`Reads as: ${a.text}`}
+            code={a.html}
+            copyLabel="Copy link"
+          />
+        ))}
+      </section>
+    </div>
+  );
+}

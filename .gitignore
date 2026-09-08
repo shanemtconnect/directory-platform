@@ -13,3 +13,7 @@ drizzle/meta/_journal.json.bak
 
 # Commercial strategy — kept out of the public repo
 docs/superpowers/plans/*master*.md
+
+# Playwright
+test-results/
+playwright-report/
