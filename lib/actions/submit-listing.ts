@@ -8,6 +8,7 @@ import {
   findSubmissionDuplicate,
 } from "@/lib/db/queries/submissions";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { notifySubmission } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
@@ -81,10 +82,9 @@ export async function submitListing(
     const duplicate = await findSubmissionDuplicate(handle, PUBLIC_VIEWER, values);
     if (duplicate) return { kind: "duplicate" as const, duplicate };
 
-    return {
-      kind: "saved" as const,
-      saved: await createSubmission(handle, { ...values, ip }),
-    };
+    const saved = await createSubmission(handle, { ...values, ip });
+    await notifySubmission(handle, PUBLIC_VIEWER, saved);
+    return { kind: "saved" as const, saved };
   });
 
   if (result.kind === "duplicate") {

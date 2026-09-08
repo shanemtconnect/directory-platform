@@ -1,0 +1,1 @@
+ALTER TABLE "job_queue" ADD COLUMN "delivered" jsonb DEFAULT '[]'::jsonb NOT NULL;
