@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { validateFeatureDependencies, validateEnv, validateCountry, ConfigError } from "./validate";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  validateFeatureDependencies,
+  validateEnv,
+  validateCountry,
+  validateProductionConfig,
+  ConfigError,
+  RUNTIME_ENV,
+  RUNTIME_ENV_PHASE5,
+} from "./validate";
 import { siteConfig } from "./site.config";
 import { FEATURE_FLAGS, type FeatureFlag, type FeatureMap } from "./types";
 
@@ -40,25 +48,17 @@ const RUNTIME = {
   NEXT_PUBLIC_SITE_URL: "https://x.test",
   DATABASE_URL: "postgres://x",
   REDIS_URL: "redis://x",
-  BETTER_AUTH_SECRET: "s",
-  BETTER_AUTH_URL: "https://x.test",
-  R2_ACCOUNT_ID: "a",
-  R2_ACCESS_KEY_ID: "b",
-  R2_SECRET_ACCESS_KEY: "c",
-  R2_BUCKET_MEDIA: "m",
-  R2_BUCKET_CLAIM_DOCS: "d",
-  NEXT_PUBLIC_MEDIA_URL: "https://m.test",
-  PAYPAL_CLIENT_ID: "p",
-  PAYPAL_CLIENT_SECRET: "q",
-  PAYPAL_WEBHOOK_ID: "w",
-  RESEND_API_KEY: "r",
-  EMAIL_FROM: "e@x.test",
-  ADMIN_NOTIFICATION_EMAIL: "a@x.test",
-  TURNSTILE_SITE_KEY: "t",
-  TURNSTILE_SECRET_KEY: "u",
-  MAPTILER_KEY: "k",
-  NEXT_PUBLIC_MAPTILER_KEY: "k",
 };
+
+const BUILD = {
+  NEXT_PUBLIC_SITE_URL: "https://x.test",
+  NEXT_PUBLIC_MAPTILER_KEY: "k",
+  NEXT_PUBLIC_MEDIA_URL: "https://m.test",
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("validateEnv", () => {
   it("passes when every required key is present at runtime", () => {
@@ -66,18 +66,18 @@ describe("validateEnv", () => {
   });
 
   it("throws naming every missing key, not just the first", () => {
-    const { DATABASE_URL: _d, RESEND_API_KEY: _r, ...rest } = RUNTIME;
-    expect(() => validateEnv(rest, { phase: "runtime" })).toThrow(/DATABASE_URL[\s\S]*RESEND_API_KEY/);
+    const { DATABASE_URL: _d, REDIS_URL: _r, ...rest } = RUNTIME;
+    expect(() => validateEnv(rest, { phase: "runtime" })).toThrow(/DATABASE_URL[\s\S]*REDIS_URL/);
   });
 
   it("treats an empty string as missing", () => {
-    expect(() => validateEnv({ ...RUNTIME, MAPTILER_KEY: "" }, { phase: "runtime" }))
-      .toThrow(/MAPTILER_KEY/);
+    expect(() => validateEnv({ ...RUNTIME, DATABASE_URL: "" }, { phase: "runtime" }))
+      .toThrow(/DATABASE_URL/);
   });
 
   it("treats whitespace as missing", () => {
-    expect(() => validateEnv({ ...RUNTIME, RESEND_API_KEY: "   " }, { phase: "runtime" }))
-      .toThrow(/RESEND_API_KEY/);
+    expect(() => validateEnv({ ...RUNTIME, REDIS_URL: "   " }, { phase: "runtime" }))
+      .toThrow(/REDIS_URL/);
   });
 
   it("does not require runtime secrets during the build", () => {
@@ -87,6 +87,138 @@ describe("validateEnv", () => {
 
   it("still requires the build keys during the build", () => {
     expect(() => validateEnv({}, { phase: "build" })).toThrow(/NEXT_PUBLIC_SITE_URL/);
+  });
+
+  // Requirement 5: only the variables whose features are wired today are
+  // enforced at boot. A site that refuses to start over a PayPal key it never
+  // reads is a self-inflicted outage.
+  it("does not yet require the later-phase keys at runtime", () => {
+    expect(() => validateEnv(RUNTIME, { phase: "runtime" })).not.toThrow();
+    expect(RUNTIME_ENV).toEqual(["NEXT_PUBLIC_SITE_URL", "DATABASE_URL", "REDIS_URL"]);
+  });
+
+  it("keeps the later-phase keys documented rather than deleted", () => {
+    for (const key of [
+      "BETTER_AUTH_SECRET",
+      "BETTER_AUTH_URL",
+      "R2_ACCOUNT_ID",
+      "R2_ACCESS_KEY_ID",
+      "R2_SECRET_ACCESS_KEY",
+      "R2_BUCKET_MEDIA",
+      "R2_BUCKET_CLAIM_DOCS",
+      "PAYPAL_CLIENT_ID",
+      "PAYPAL_CLIENT_SECRET",
+      "PAYPAL_WEBHOOK_ID",
+      "RESEND_API_KEY",
+      "EMAIL_FROM",
+      "ADMIN_NOTIFICATION_EMAIL",
+    ]) {
+      expect(RUNTIME_ENV_PHASE5).toContain(key);
+    }
+  });
+
+  it("does not enforce the later-phase list at runtime", () => {
+    for (const key of RUNTIME_ENV_PHASE5) {
+      expect(RUNTIME_ENV).not.toContain(key);
+    }
+  });
+
+  // Requirement 6: NEXT_PUBLIC_ vars are inlined at build time, so listing them
+  // as runtime keys was a lie — a value injected at boot is ignored.
+  it("does not treat the inlined NEXT_PUBLIC_ keys as runtime keys", () => {
+    expect(RUNTIME_ENV).not.toContain("NEXT_PUBLIC_MAPTILER_KEY");
+    expect(RUNTIME_ENV).not.toContain("NEXT_PUBLIC_MEDIA_URL");
+    expect(RUNTIME_ENV_PHASE5).not.toContain("NEXT_PUBLIC_MAPTILER_KEY");
+    expect(RUNTIME_ENV_PHASE5).not.toContain("NEXT_PUBLIC_MEDIA_URL");
+  });
+
+  it("warns rather than throws when an optional build key is absent", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(() => validateEnv({ NEXT_PUBLIC_SITE_URL: "https://x.test" }, { phase: "build" }))
+      .not.toThrow();
+    const said = warn.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(said).toMatch(/NEXT_PUBLIC_MAPTILER_KEY/);
+    expect(said).toMatch(/NEXT_PUBLIC_MEDIA_URL/);
+  });
+
+  it("stays quiet when the optional build keys are present", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    validateEnv(BUILD, { phase: "build" });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not warn about optional build keys at runtime", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    validateEnv(RUNTIME, { phase: "runtime" });
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+// Requirement 7: placeholders are fine in a clone that has not been filled in
+// yet, and unacceptable in something serving the public.
+describe("validateProductionConfig", () => {
+  const placeholder = { legalEntity: "TBC", supportEmail: "hello@example.co.uk" };
+  const real = { legalEntity: "Example Directories Ltd", supportEmail: "hello@realsite.co.uk" };
+  const prod = { NODE_ENV: "production", NEXT_PUBLIC_SITE_URL: "https://realsite.co.uk" };
+
+  it("throws on a production build that still says TBC", () => {
+    expect(() => validateProductionConfig(placeholder, prod)).toThrow(ConfigError);
+    expect(() => validateProductionConfig(placeholder, prod)).toThrow(/legalEntity/);
+  });
+
+  it("throws on a production build with an example.co.uk support address", () => {
+    expect(() => validateProductionConfig({ ...real, supportEmail: "a@example.co.uk" }, prod))
+      .toThrow(/supportEmail/);
+  });
+
+  it("throws on a production build with an example.com support address", () => {
+    expect(() => validateProductionConfig({ ...real, supportEmail: "a@example.com" }, prod))
+      .toThrow(/supportEmail/);
+  });
+
+  it("reports every placeholder, not just the first", () => {
+    expect(() => validateProductionConfig(placeholder, prod))
+      .toThrow(/legalEntity[\s\S]*supportEmail/);
+  });
+
+  it("passes on a production build once both are real", () => {
+    expect(() => validateProductionConfig(real, prod)).not.toThrow();
+  });
+
+  it("allows placeholders on staging, where nobody is being invoiced", () => {
+    expect(() => validateProductionConfig(placeholder, { ...prod, SITE_ENV: "staging" }))
+      .not.toThrow();
+  });
+
+  it("allows placeholders outside a production build", () => {
+    expect(() => validateProductionConfig(placeholder, { NODE_ENV: "development" })).not.toThrow();
+    expect(() => validateProductionConfig(placeholder, {})).not.toThrow();
+  });
+
+  // `next build` sets NODE_ENV=production unconditionally, so NODE_ENV alone
+  // cannot tell a release apart from `pnpm build:flags-off` or the e2e build.
+  // A site nobody can reach is not shipping placeholders to anybody.
+  it("allows placeholders on a build that cannot be a real site", () => {
+    for (const url of [
+      "http://localhost:3200",
+      "http://127.0.0.1:3000",
+      // WHATWG URL keeps the brackets on an IPv6 hostname: `new URL("http://[::1]/").hostname`
+      // is "[::1]", never "::1". A bare-"::1" comparison is a branch that can never be taken.
+      "http://[::1]:3000",
+      "https://ci.example",
+      "https://x.test",
+      "http://directory.local",
+      "https://nope.invalid",
+    ]) {
+      expect(() => validateProductionConfig(placeholder, { ...prod, NEXT_PUBLIC_SITE_URL: url }))
+        .not.toThrow();
+    }
+  });
+
+  it("still fires on a real domain that merely looks like an example", () => {
+    expect(() =>
+      validateProductionConfig(placeholder, { ...prod, NEXT_PUBLIC_SITE_URL: "https://example.io" }),
+    ).toThrow(ConfigError);
   });
 });
 

@@ -1,6 +1,10 @@
-# esbuild's postinstall script only downloads a platform binary that pnpm
-# already installs as an optional dependency, so it has nothing left to do.
-# Left as pnpm's placeholder text, `pnpm install --frozen-lockfile` exits 1 —
-# in CI, in the Dockerfile and on a fresh clone.
+# esbuild's postinstall only fetches and verifies its own native binary, and
+# nothing here executes esbuild: Next builds with Turbopack, and vitest and
+# drizzle-kit carry it as a transitive dependency they do not need built.
+#
+# This has to be an explicit verdict rather than a placeholder — pnpm 12 fails
+# the whole install with ERR_PNPM_IGNORED_BUILDS on any dependency it has no
+# answer for, which broke a clean `pnpm install --frozen-lockfile` in CI and in
+# the Docker build alike.
 allowBuilds:
   esbuild: false

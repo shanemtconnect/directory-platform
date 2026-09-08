@@ -94,3 +94,68 @@ The Quick Start block is labelled "not meant for production use" and it means it
   It also SIGTERM'd the first Redis container during its own startup — worth knowing
   before blaming code for a dead container.
 - Build of a 2-page app: **1.2 s** compile, ~4 s total.
+
+---
+
+## Follow-up, 2026-09-08 — the half of the gate the spike did not test
+
+The spike proved that a runtime-regenerated page survives a filesystem wipe.
+It did not check what the surviving page *references*, and that turns out to be
+where the design leaks.
+
+Cache keys are `nextjs:/<slug>` with no build id, so a redeploy re-serves HTML
+produced by the previous build. That HTML links hashed assets —
+`/_next/static/chunks/<hash>.css` — and `.next/static` is replaced wholesale on
+redeploy. Observed on a container built from this repo: a cached homepage asked
+for `/_next/static/chunks/3zwxupz86f3wk.css`, which the running image did not
+contain. The page returns 200 and renders unstyled.
+
+"Cache survives redeploy" is only a coherent design if old builds' static output
+stays servable. That is precisely what Vercel does, and it is not something a
+container gets for free.
+
+### The fix
+
+`docker-entrypoint.sh`: when `STATIC_ASSETS_DIR` is set, the image's
+`.next/static` is copied into it **without overwriting** (`cp -Rn`) and
+`.next/static` becomes a symlink to it. Each deploy adds its own hashes; the
+previous deploy's stay. Unset, the entrypoint does nothing.
+
+**Deploying this means mounting a volume.** The Coolify app needs a persistent
+volume at, say, `/data/next-static`, with `STATIC_ASSETS_DIR=/data/next-static`.
+Without it you must run `scripts/purge-cache.sh` after every single deploy, and
+between the deploy and the purge the site serves unstyled pages.
+
+The volume grows by one build's static output per deploy and is never pruned.
+That is deliberate for now — it is small, and pruning it correctly means knowing
+which build ids still have live cache entries. Sweep it by hand if it matters.
+
+Two BusyBox details that cost real time, both now commented in the entrypoint:
+
+- `cp -Rn src/. dst/` exits 0 and copies **nothing**. The glob form works.
+- The volume Docker creates is root-owned, so the entrypoint runs as root and
+  drops to `nextjs` with `su-exec` rather than declaring `USER nextjs`.
+
+`scripts/verify-isr.sh` now covers this: it renames the chunk directory to
+simulate a rebuild with new hashes, asserts the cached page's stylesheet 404s
+without retention, applies the retention step, and asserts it returns 200.
+
+### Two more things the image got wrong
+
+**The cache handler was not loading at all in the image.** The runner copied
+`node_modules/@fortedigital` and `node_modules/@redis` out of a pnpm layout,
+where both are symlinks into `node_modules/.pnpm`. In the image they dangled,
+the import threw, and Next fell back to a per-container LRU — silently, which is
+the same failure mode this spike was written to prevent. Every deploy discarded
+the cache the spike proved would survive. The dependency stages now install with
+`--config.node-linker=hoisted`, and the runner takes that tree whole.
+
+Verify with `scripts/verify-image.sh`, which builds the image and runs
+`docker run --rm IMAGE node -e "import('./cache-handler.mjs')…"`. It cannot be a
+`RUN` step in the Dockerfile: importing the handler wants `REDIS_URL`.
+
+**`next build` needs a reachable database.** `/cities` and the city pages
+prerender from it, so the "built once in CI with no site secrets" comment on the
+Dockerfile is not true of `DATABASE_URL` — the build fails with `ECONNREFUSED`
+without one. It is a build arg with a placeholder default; the placeholder is
+enough to load the module but not to prerender.
