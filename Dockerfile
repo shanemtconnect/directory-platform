@@ -14,6 +14,10 @@ COPY . .
 # Built once in CI with no site secrets. Everything else is injected at boot.
 ARG NEXT_PUBLIC_SITE_URL
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+# NEXT_PUBLIC_ vars are inlined at BUILD time, so this must be present here or
+# the map ships disabled however the container is later configured.
+ARG NEXT_PUBLIC_MAPTILER_KEY
+ENV NEXT_PUBLIC_MAPTILER_KEY=$NEXT_PUBLIC_MAPTILER_KEY
 RUN pnpm build
 
 FROM node:24-alpine AS runner

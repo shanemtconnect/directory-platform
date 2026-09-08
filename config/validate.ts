@@ -61,6 +61,7 @@ const RUNTIME_ENV = [
   "TURNSTILE_SITE_KEY",
   "TURNSTILE_SECRET_KEY",
   "MAPTILER_KEY",
+  "NEXT_PUBLIC_MAPTILER_KEY",
 ] as const;
 
 export function validateEnv(

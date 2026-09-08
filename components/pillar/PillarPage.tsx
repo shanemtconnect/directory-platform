@@ -4,6 +4,7 @@ import type { CategoryIndexRow, CityIndexRow } from "@/lib/db/queries/indexes";
 import { siteConfig } from "@/config/site.config";
 import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
+import { ListingMap } from "@/components/map/ListingMap";
 
 type Listing = typeof listingsTable.$inferSelect;
 
@@ -79,6 +80,15 @@ export function PillarPage({
           </ul>
         )}
       </section>
+
+      {/* Below the listings, deliberately: the map lazy-loads and must never
+          block LCP or be required to see them. If tiles fail it collapses. */}
+      <ListingMap
+        pins={listings.map((l) => ({
+          id: l.id, name: l.name, lat: l.lat, lng: l.lng,
+          href: `${cityPath}/${l.slug}`,
+        }))}
+      />
 
       <Pagination basePath={basePath} page={page} totalPages={totalPages} />
 

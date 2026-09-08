@@ -57,6 +57,7 @@ const RUNTIME = {
   TURNSTILE_SITE_KEY: "t",
   TURNSTILE_SECRET_KEY: "u",
   MAPTILER_KEY: "k",
+  NEXT_PUBLIC_MAPTILER_KEY: "k",
 };
 
 describe("validateEnv", () => {
