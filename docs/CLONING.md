@@ -143,19 +143,42 @@ values are inlined at build time, so a wrong one cannot be fixed at boot.
 | `NEXT_PUBLIC_MAPTILER_KEY`  | Omit it and the map silently renders nothing, in production too. |
 | `NEXT_PUBLIC_MEDIA_URL`     | CDN origin for images.                                    |
 
-**Runtime** — injected per site at boot. `validateEnv(env, { phase: "runtime" })`
-refuses to start without any of them, which is the point: a site that boots
-without its payment config is worse than one that refuses to.
+**Required to boot** — injected per site. `validateEnv(env, { phase: "runtime" })`
+refuses to start without any of these five (`RUNTIME_ENV` in
+`config/validate.ts`), which is the point: a site that boots half-configured is
+worse than one that refuses to.
 
-`DATABASE_URL`, `REDIS_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
+`NEXT_PUBLIC_SITE_URL`, `DATABASE_URL`, `REDIS_URL`, `BETTER_AUTH_SECRET`,
+`BETTER_AUTH_URL`.
+
+The list is deliberately short — only variables something actually reads today.
+`BETTER_AUTH_SECRET` is here because a secret that changes between boots signs
+session cookies the next boot cannot verify, and `BETTER_AUTH_URL` because the
+callbacks otherwise point at the wrong origin: both are quietly broken logins
+rather than visible failures.
+
+**Later phases** — set them when the phase that reads them lands. They are
+listed as `RUNTIME_ENV_PHASE5` in `config/validate.ts` with the phase against
+each group, and nothing fails a boot over them yet:
+
 `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_MEDIA`,
-`R2_BUCKET_CLAIM_DOCS`, `NEXT_PUBLIC_MEDIA_URL`, `PAYPAL_CLIENT_ID`,
-`PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `RESEND_API_KEY`, `EMAIL_FROM`,
-`ADMIN_NOTIFICATION_EMAIL`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`,
-`MAPTILER_KEY`, `NEXT_PUBLIC_MAPTILER_KEY`.
+`R2_BUCKET_CLAIM_DOCS` (Phase 2, media and claim documents) · `PAYPAL_CLIENT_ID`,
+`PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` (Phase 5, subscriptions) ·
+`RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_NOTIFICATION_EMAIL` (transactional email
+— wired, but a site without them still boots and still takes enquiries).
 
 `PAYPAL_WEBHOOK_ID` unset does not fail loudly at the point it matters — it
 stops renewals silently. Set it before you take a payment.
+
+**Never a boot requirement** — `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`,
+`MAPTILER_KEY`. Both features degrade rather than break. But note that
+Turnstile fails **closed** whenever `NODE_ENV=production`, which staging also
+is: a staging site with no `TURNSTILE_SECRET_KEY` rejects every enquiry. Use
+Cloudflare's published always-pass testing keys there
+(`1x00000000000000000000AA` / `1x0000000000000000000000000000000AA`).
+
+`NEXT_PUBLIC_MEDIA_URL` and `NEXT_PUBLIC_MAPTILER_KEY` are **build** args, listed
+above — setting them at boot does nothing.
 
 **Worker** — the same image, different entrypoint. Set `WORKER_ENABLED=true` on
 that container only.
@@ -198,10 +221,17 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
    container filesystem and every redeploy throws them away.
    *(`STATIC_ASSETS_DIR` is read by the media layer; add it to `.env.example`
    when that lands, and set it here in the meantime.)*
-5. **Pre-deploy command:** `corepack pnpm db:migrate`. Coolify runs it against
+5. **Pre-deploy command:** `node scripts/migrate.mjs`. Coolify runs it against
    the new image before switching traffic, so a migration failure aborts the
    deploy instead of half-applying it. Never run migrations from the app
    container's start command — every replica would race.
+
+   **Not `corepack pnpm db:migrate`.** That is `drizzle-kit migrate`, and
+   `drizzle-kit` is a devDependency the prod-only runner tree does not contain,
+   so the step would die on the first deploy. `scripts/migrate.mjs` is plain ESM
+   calling the same migrator over the same `drizzle/` folder, importing only
+   `drizzle-orm` and `postgres` — both already in the image.
+   `scripts/verify-image.sh` runs it inside the built image on every check.
 6. **Second application** from the same repo for the worker: Dockerfile target
    `worker`, `WORKER_ENABLED=true`, no domain, no health check on a port.
 7. **Redis** must be reachable at `REDIS_URL`. The ISR cache handler is
@@ -217,6 +247,17 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
    `scripts/purge-cache.sh` does the same thing by hand from a host with a
    `redis-cli`; it cannot run as a post-deployment command inside the runner
    container, which ships the standalone server and nothing else.
+
+   **Give each site its own Redis database index, or its own `CACHE_NAMESPACE`.**
+   That sweep `DEL`s every key under `<namespace>:*` outside the running build's
+   prefix, so two clones sharing both a Redis database and the default `nextjs`
+   namespace delete each other's cache on every deploy — and nothing reports it,
+   because a swept key is indistinguishable from a cold one. Either is enough:
+   point each site at a different index (`redis://host:6379/3`, `…/4`, …), or set
+   `CACHE_NAMESPACE` per site. It is optional, defaults to `nextjs`, takes
+   letters, digits, `_` and `-` up to 64 characters, and a value outside that
+   fails the boot rather than silently reverting to the shared default.
+   `scripts/purge-cache.sh` reads the same variable.
 
 ---
 
