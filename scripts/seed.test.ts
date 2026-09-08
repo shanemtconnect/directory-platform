@@ -5,6 +5,7 @@ import { cities, categories, listings, slugs } from "@/lib/db/schema";
 import { resolveSlug, ROOT_SCOPE } from "@/lib/routing/slugs";
 import { siteConfig } from "@/config/site.config";
 import { eq, and } from "drizzle-orm";
+import { decideIndexability } from "@/lib/db/queries/indexing";
 
 /**
  * The seed directory is named after the entity, not the niche, so a clone
@@ -50,10 +51,31 @@ describe("runSeed", () => {
     });
   }, 60000);
 
-  it("leaves every city non-indexable until it earns it", async () => {
+  it("sets is_indexable from the gate, never by hand", async () => {
     await withTestDb(async (tx) => {
       await runSeed(tx, NICHE);
-      expect((await tx.select().from(cities)).every((c) => c.isIndexable === false)).toBe(true);
+      const rows = await tx.select().from(cities);
+      expect(rows.length).toBeGreaterThan(0);
+
+      // The flag on every row is exactly what the rule says it should be for
+      // that row's own count and intro copy — not a constant either way. This
+      // used to pass because the seed recomputed the gate BEFORE writing the
+      // intro copy, so it judged every city on copy it had not written yet and
+      // left the whole site noindexed.
+      for (const city of rows) {
+        expect(city.isIndexable, city.slug)
+          .toBe(decideIndexability(city.listingCount, city.introHtml).isIndexable);
+      }
+    });
+  }, 60000);
+
+  it("gives a seeded city enough listings and copy to earn indexing", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      // The seed exists to produce a site worth looking at. If none of its
+      // cities clears the gate, every pillar page it built is noindexed.
+      expect(rows.some((c) => c.isIndexable)).toBe(true);
     });
   }, 60000);
 

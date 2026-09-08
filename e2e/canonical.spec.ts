@@ -9,7 +9,17 @@ import { expect, test, type Page } from "@playwright/test";
  * seen `/leeds/page/1`, `/Leeds` and `?utm_source=...`.
  */
 
-const BASE = "http://localhost:3200";
+/**
+ * From the running config, not a literal: `baseURL` is what the suite was
+ * pointed at (playwright.config.ts, overridable with E2E_PORT), and the server
+ * is given the SAME value as NEXT_PUBLIC_SITE_URL — so a hardcoded port here
+ * fails the moment the suite runs anywhere else, which says nothing about
+ * canonicals.
+ */
+function base(baseURL: string | undefined): string {
+  expect(baseURL, "playwright has no baseURL configured").toBeTruthy();
+  return new URL(baseURL!).origin;
+}
 
 async function canonicalOf(page: Page, path: string): Promise<string> {
   const response = await page.goto(path);
@@ -51,13 +61,9 @@ async function samplePaths(page: Page): Promise<Record<string, string>> {
   };
 }
 
-// FIXME(Task 4): there is no metadataBase and no canonical on home, pillar,
-// listing or category pages yet, and /pricing's is relative. Flip to
-// test.describe once the metadata task merges.
-test.fixme(true, "blocked on Task 4: metadataBase and per-page canonicals");
-
 test.describe("canonical URLs", () => {
-  test("every page type carries an absolute canonical on this origin", async ({ page }) => {
+  test("every page type carries an absolute canonical on this origin", async ({ page, baseURL }) => {
+    const BASE = base(baseURL);
     const paths = await samplePaths(page);
 
     for (const [kind, path] of Object.entries(paths)) {

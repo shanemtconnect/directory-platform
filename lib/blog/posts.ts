@@ -377,7 +377,12 @@ export function formatDate(iso: string, locale: string): string {
 /* ------------------------------------------------------------------- schema */
 
 /**
- * `Article` for a single post.
+ * `BlogPosting` for a single post.
+ *
+ * The precise type, not its `Article` supertype: these are posts on a blog, at
+ * /blog/[slug], listed on /blog. Schema.org's rule is to use the most specific
+ * type that is true, and consumers that only understand Article still read a
+ * BlogPosting as one — so the specific type costs nothing and says more.
  *
  * Built optimistically and pruned, following the convention in
  * lib/schema/builders.ts: a post with no author emits no `author` key rather
@@ -388,7 +393,7 @@ export function articleSchema(post: Post): JsonLd {
   const url = siteUrl(`/blog/${post.slug}`);
   return prune({
     "@context": "https://schema.org",
-    "@type": "Article",
+    "@type": "BlogPosting",
     "@id": `${url}#article`,
     headline: post.title,
     description: post.description,

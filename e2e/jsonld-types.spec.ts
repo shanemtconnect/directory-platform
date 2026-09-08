@@ -36,11 +36,6 @@ async function typesOn(page: Page, path: string): Promise<Set<string>> {
   return types;
 }
 
-// FIXME(Task 4): pillar/category pages emit no ItemList or CollectionPage, the
-// listing schema is not tier-gated, and a post is typed Article rather than
-// BlogPosting. Flip to test.describe once the schema task merges.
-test.fixme(true, "blocked on Task 4: per-page-type JSON-LD is not emitted yet");
-
 test.describe("JSON-LD @type per page type", () => {
   test("a city pillar is a CollectionPage with an ItemList and breadcrumbs", async ({ page }) => {
     const types = await typesOn(page, "/richmond-north-yorkshire");

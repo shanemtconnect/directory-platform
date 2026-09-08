@@ -8,7 +8,14 @@ import { defineConfig, devices } from "@playwright/test";
  * JSON-LD that ships in the HTML — only behave like production in a production
  * build. `next dev` would give false confidence.
  */
-const PORT = 3200;
+/**
+ * 3200 by default. `E2E_PORT` exists because this repo is worked on by several
+ * agents at once and `reuseExistingServer` will happily hand the suite whatever
+ * is already listening on the port — which is another worktree's build, quietly
+ * testing somebody else's code. Overriding the port is how you get a run that
+ * is definitely yours.
+ */
+const PORT = Number(process.env.E2E_PORT ?? 3200);
 const BASE_URL = `http://localhost:${PORT}`;
 
 /**
@@ -57,6 +64,14 @@ const SERVER_ENV: Record<string, string> = {
     process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA",
   // Keeps the blog fixtures loadable; production clones ship without them.
   NEXT_PUBLIC_DEMO_MODE: "true",
+  /**
+   * Required at boot now that auth is wired (RUNTIME_ENV in config/validate.ts),
+   * so the standalone server exits 1 without them. Throwaway values: this suite
+   * signs nobody in, and a secret that is obviously not a secret is safer in a
+   * config file than one that looks like it might be real.
+   */
+  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? "e2e-not-a-real-secret",
+  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? BASE_URL,
   PORT: String(PORT),
   HOSTNAME: "127.0.0.1",
   ...(process.env.SITE_FLAGS_OVERRIDE
