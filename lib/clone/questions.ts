@@ -257,6 +257,8 @@ function nonEmpty(label: string) {
 
 const LOWER_NOUN = /^[a-z][a-z0-9 '-]*$/;
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** Custom field and review criterion keys become column keys and query params. */
+const FIELD_KEY = /^[a-z][a-z0-9_]*$/;
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -319,7 +321,7 @@ function validateCustomFields(fields: readonly CustomFieldAnswer[]): string | nu
   const seen = new Set<string>();
   for (const f of fields) {
     const where = f.key || "(blank key)";
-    if (!SLUG.test(f.key)) problems.push(`"${where}" is not a snake/kebab-safe key`);
+    if (!FIELD_KEY.test(f.key)) problems.push(`"${where}" is not a valid field key (lower case, digits, underscores)`);
     if (seen.has(f.key)) problems.push(`"${where}" is listed twice`);
     seen.add(f.key);
     if (f.label.trim().length === 0) problems.push(`"${where}" has no label`);
@@ -344,7 +346,7 @@ function parseReviewCriterion(line: string): ReviewCriterionAnswer {
 function validateReviewCriteria(criteria: readonly ReviewCriterionAnswer[]): string | null {
   const problems: string[] = [];
   for (const c of criteria) {
-    if (!SLUG.test(c.key)) problems.push(`"${c.key || "(blank)"}" is not a valid key`);
+    if (!FIELD_KEY.test(c.key)) problems.push(`"${c.key || "(blank)"}" is not a valid key`);
     if (c.label.trim().length === 0) problems.push(`"${c.key}" has no label`);
   }
   return problems.length > 0 ? problems.join("; ") : null;

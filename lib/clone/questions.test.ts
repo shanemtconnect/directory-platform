@@ -170,6 +170,18 @@ describe("runValidate", () => {
     expect(runValidate(question("entitySingular"), "studio", {})).toBeNull();
   });
 
+  it("accepts a snake_case custom field key and rejects one with a space", () => {
+    const ok = [{ key: "room_count", label: "Rooms", type: "number" }];
+    const bad = [{ key: "room count", label: "Rooms", type: "number" }];
+    expect(runValidate(question("customFields"), ok, {})).toBeNull();
+    expect(runValidate(question("customFields"), bad, {})).toMatch(/field key/);
+  });
+
+  it("rejects a select custom field with no options", () => {
+    const bad = [{ key: "size", label: "Size", type: "select" }];
+    expect(runValidate(question("customFields"), bad, {})).toMatch(/no options/);
+  });
+
   it("rejects a seed directory name that is not a slug", () => {
     expect(runValidate(question("niche"), "Recording Studios", {})).toBeTruthy();
     expect(runValidate(question("niche"), "recording-studios", {})).toBeNull();
