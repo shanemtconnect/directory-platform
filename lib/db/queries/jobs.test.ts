@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
 import { jobQueue } from "@/lib/db/schema";
-import { ADMIN_VIEWER, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
 import { setClock, resetClock, now } from "@/lib/clock";
 import {
   enqueueJob,

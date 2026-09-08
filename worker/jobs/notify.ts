@@ -12,7 +12,7 @@ import {
   submissionNotification,
   type SubmissionNotification,
 } from "@/lib/db/queries/notifications";
-import { ADMIN_VIEWER } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
 import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
