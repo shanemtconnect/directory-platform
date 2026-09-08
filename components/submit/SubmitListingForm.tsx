@@ -190,7 +190,7 @@ export function SubmitListingForm({
 
       <TierChoice error={err.tier} />
 
-      <TurnstileWidget siteKey={turnstileSiteKey} />
+      <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />
 
       {state.status === "error" && state.message && (
         <p role="alert" data-testid="submit-error">{state.message}</p>

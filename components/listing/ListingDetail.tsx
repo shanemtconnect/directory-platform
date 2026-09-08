@@ -93,7 +93,11 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
         </section>
       )}
 
-      <EnquiryForm listingId={listing.id} listingName={listing.name} />
+      <EnquiryForm
+        listingId={listing.id}
+        listingName={listing.name}
+        turnstileSiteKey={process.env.TURNSTILE_SITE_KEY?.trim() || null}
+      />
 
       <p><small>{category?.name} in {city.name}, {city.region ?? profile.name}</small></p>
     </main>
