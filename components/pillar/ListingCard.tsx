@@ -1,5 +1,7 @@
 import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { siteConfig } from "@/config/site.config";
+import { features } from "@/lib/features/flags";
+import { SaveButton } from "@/components/shortlist/SaveButton";
 
 /**
  * Opening hours are rendered as data attributes and the open/closed state is
@@ -49,6 +51,7 @@ export function ListingCard({
       )}
 
       {summary && <p className="mb-0 text-sm text-muted">{summary}</p>}
+      {features.shortlist && <SaveButton listingId={listing.id} listingName={listing.name} />}
 
       {listing.openingHours != null && (
         <span

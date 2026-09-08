@@ -4,6 +4,8 @@ import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { displayedDescription } from "@/lib/listing/display";
 import { EnquiryForm } from "./EnquiryForm";
+import { features } from "@/lib/features/flags";
+import { SaveButton } from "@/components/shortlist/SaveButton";
 
 interface Props {
   detail: Detail;
@@ -114,6 +116,11 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
         </div>
 
         <aside className="lg:sticky lg:top-24">
+          {features.shortlist && (
+            <div className="mb-4">
+              <SaveButton listingId={listing.id} listingName={listing.name} />
+            </div>
+          )}
           <EnquiryForm
             listingId={listing.id}
             listingName={listing.name}
