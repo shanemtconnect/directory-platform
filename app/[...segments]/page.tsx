@@ -11,6 +11,7 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-detail";
 import { listingSchema, pillarSchema, breadcrumbSchema, faqSchema } from "@/lib/schema/builders";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
+import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
 
 export const revalidate = 3600;
@@ -108,6 +109,10 @@ export default async function CatchAllPage({ params }: Props) {
               city: detail.city,
               category: detail.category,
               path,
+              // Exactly what ListingDetail renders, from the same helper: the
+              // excerpt on a free tier, the socials only where they are shown.
+              description: displayedDescription(detail.listing, siteConfig.tiers[detail.listing.tier]),
+              sameAs: displayedSocials(detail.listing.socials, siteConfig.tiers[detail.listing.tier]),
               imageUrls: detail.images
                 .map((i) => absoluteMediaUrl(i.storagePath))
                 .filter((u): u is string => u !== null),

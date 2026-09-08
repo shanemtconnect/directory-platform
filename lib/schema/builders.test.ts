@@ -43,11 +43,40 @@ describe("listingSchema", () => {
     });
   });
 
-  it("omits telephone, email and priceRange entirely when absent", () => {
+  it("omits telephone when there is none", () => {
     const out = listingSchema({ ...base, listing: { ...listing, phone: null } as Listing });
     expect(out).not.toHaveProperty("telephone");
+  });
+
+  it("NEVER emits email or priceRange — the page renders neither", () => {
+    // Markup must match visible content. Both fields were being read straight
+    // off the row and published on every tier while nothing on the page showed
+    // them, which is the exact mismatch constraint 11 exists to prevent.
+    const withBoth = {
+      ...listing, email: "hi@barn.test", priceRange: "££££",
+    } as unknown as Listing;
+    const out = listingSchema({ ...base, listing: withBoth });
     expect(out).not.toHaveProperty("email");
     expect(out).not.toHaveProperty("priceRange");
+  });
+
+  it("publishes the description the page displayed, not the row's", () => {
+    // A free listing renders an excerpt; handing Google the full text would
+    // publish copy no visitor can see.
+    const out = listingSchema({ ...base, description: "A restored barn…" });
+    expect(out.description).toBe("A restored barn…");
+  });
+
+  it("omits description entirely when the page rendered none", () => {
+    expect(listingSchema(base)).not.toHaveProperty("description");
+  });
+
+  it("emits sameAs only from the socials it is handed", () => {
+    const withSocials = { ...listing, socials: ["https://x.test/a"] } as unknown as Listing;
+    // Tier hides them: the caller passes nothing, so nothing is published.
+    expect(listingSchema({ ...base, listing: withSocials })).not.toHaveProperty("sameAs");
+    expect(listingSchema({ ...base, listing: withSocials, sameAs: ["https://x.test/a"] }).sameAs)
+      .toEqual(["https://x.test/a"]);
   });
 
   it("omits geo rather than emitting a half-empty node", () => {
@@ -101,6 +130,17 @@ describe("pillarSchema", () => {
 
   it("omits mainEntity entirely when the page has no listings", () => {
     expect(pillarSchema({ title: "x", path: "/leeds", items: [] })).not.toHaveProperty("mainEntity");
+  });
+
+  it("identifies page N by the page-N URL, never page 1's", () => {
+    // /leeds/page/2 asserting /leeds's @id makes two pages claim one identity,
+    // and tells Google the second page's listings are on the first.
+    const out = pillarSchema({
+      title: "Venues in Leeds", path: "/leeds/page/2",
+      items: [{ name: "A", path: "/leeds/a" }],
+    });
+    expect(out.url).toBe("https://example.test/leeds/page/2");
+    expect(out["@id"]).toBe("https://example.test/leeds/page/2#collection");
   });
 });
 

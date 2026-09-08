@@ -62,6 +62,13 @@ export interface ListingSchemaInput {
   city: City;
   category: Category | null;
   path: string;
+  /**
+   * The description text the page DISPLAYED — an excerpt on a free tier, the
+   * full text on a paid one. Never read off the row here; see below.
+   */
+  description?: string | null;
+  /** Social profile URLs, and only on a tier that renders them. */
+  sameAs?: string[];
   imageUrls?: string[];
   /** Only pass these when the rating is genuinely on the page. */
   rating?: { value: number; count: number };
@@ -70,12 +77,16 @@ export interface ListingSchemaInput {
 /**
  * A listing's LocalBusiness node.
  *
- * Two rules carry all the risk:
+ * Three rules carry all the risk:
  *  - `aggregateRating` is emitted ONLY when a real rating with a non-zero count
  *    is passed in. Fabricating it is the single most common way directories get
  *    a manual action.
- *  - Markup must match visible content, so the caller passes the rating it
- *    actually rendered rather than this builder reading it from the row.
+ *  - Markup must match visible content, so every tier-gated field — the
+ *    description, the social links — is PASSED IN as rendered rather than read
+ *    off the row. A builder that reaches into `listing.description` publishes
+ *    2,500 characters for a listing showing 300.
+ *  - `email` and `priceRange` are not emitted at all, because the page renders
+ *    neither. When either becomes visible it gets a parameter, like the rest.
  */
 export function listingSchema(input: ListingSchemaInput): JsonLd {
   const { listing, city, category, path } = input;
@@ -87,12 +98,10 @@ export function listingSchema(input: ListingSchemaInput): JsonLd {
     "@type": category?.schemaTypeOverride ?? siteConfig.schema.listingType,
     "@id": `${url}#business`,
     name: listing.name,
-    description: listing.description ?? listing.shortDescription ?? undefined,
+    description: input.description ?? undefined,
     url,
     image: input.imageUrls ?? [],
     telephone: listing.phone ?? undefined,
-    email: listing.email ?? undefined,
-    priceRange: siteConfig.schema.priceRangeEnabled ? (listing.priceRange ?? undefined) : undefined,
     address: {
       "@type": "PostalAddress",
       streetAddress: listing.addressLine1 ?? undefined,
@@ -106,7 +115,7 @@ export function listingSchema(input: ListingSchemaInput): JsonLd {
       latitude: listing.lat ?? undefined,
       longitude: listing.lng ?? undefined,
     },
-    sameAs: Array.isArray(listing.socials) ? (listing.socials as string[]) : [],
+    sameAs: input.sameAs ?? [],
     aggregateRating:
       input.rating && input.rating.count > 0
         ? {
