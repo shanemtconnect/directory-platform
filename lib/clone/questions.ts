@@ -808,6 +808,39 @@ function setAnswer(answers: PartialAnswers, key: keyof Answers, value: unknown):
   (answers as Record<string, unknown>)[key] = value;
 }
 
+/**
+ * Structural guard for the kinds whose coerced (or JSON-supplied) value can
+ * silently take on the wrong shape and still serialise into `site.config.ts`
+ * without error — an unrecognised boolean answer falls through `coerceRaw` as
+ * its own raw text, a non-numeric string becomes `NaN`, and a value supplied
+ * straight from a JSON answers file skips `coerceRaw` entirely. `choice` has
+ * its own inline guard in `buildAnswers`; `text` questions are satisfied by
+ * whatever `coerceRaw`'s default branch or a JSON string produces, so there
+ * is no shape to police there.
+ */
+export function answerTypeError(question: Question, value: unknown): string | null {
+  switch (question.type) {
+    case "boolean":
+      return typeof value === "boolean"
+        ? null
+        : `must be a yes/no answer (y, n, true, false, 1, 0) — got ${JSON.stringify(value)}`;
+    case "number": {
+      if (question.nullable === true && value === null) return null;
+      return typeof value === "number" && Number.isFinite(value)
+        ? null
+        : `must be a number — got ${JSON.stringify(value)}`;
+    }
+    case "colour":
+      return typeof value === "string"
+        ? null
+        : `must be a colour string — got ${JSON.stringify(value)}`;
+    case "list":
+      return Array.isArray(value) ? null : `must be a list — got ${JSON.stringify(value)}`;
+    default:
+      return null;
+  }
+}
+
 export type BuildResult = { readonly answers: Answers } | { readonly errors: readonly string[] };
 
 /**
@@ -845,6 +878,12 @@ export function buildAnswers(supplied: Readonly<Record<string, unknown>>): Build
         errors.push(`${key}: must be one of ${question.choices.join(", ")}`);
         continue;
       }
+    }
+
+    const typeProblem = answerTypeError(question, value);
+    if (typeProblem !== null) {
+      errors.push(`${key}: ${typeProblem}`);
+      continue;
     }
 
     const problem = runValidate(question, value, acc);

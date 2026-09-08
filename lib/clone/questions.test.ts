@@ -244,4 +244,44 @@ describe("buildAnswers", () => {
     if (!("errors" in result)) throw new Error("expected errors");
     expect(result.errors.join("\n")).toMatch(/country/);
   });
+
+  it("refuses an unrecognised boolean answer instead of writing it verbatim", () => {
+    const result = buildAnswers({ ...supplied, feature_reviews: "maybe" });
+    if (!("errors" in result)) throw new Error("expected errors");
+    expect(result.errors.join("\n")).toMatch(/feature_reviews/);
+    expect(result.errors.join("\n")).toMatch(/boolean|yes\/no/i);
+  });
+
+  it("refuses a number given where a boolean question expects one", () => {
+    const result = buildAnswers({ ...supplied, schemaPriceRangeEnabled: 42 });
+    if (!("errors" in result)) throw new Error("expected errors");
+    expect(result.errors.join("\n")).toMatch(/schemaPriceRangeEnabled/);
+  });
+
+  it("refuses a non-numeric string on a number question", () => {
+    const result = buildAnswers({ ...supplied, trialDays: "abc" });
+    if (!("errors" in result)) throw new Error("expected errors");
+    expect(result.errors.join("\n")).toMatch(/trialDays/);
+  });
+
+  it("refuses a boolean given where a number question expects a number", () => {
+    const result = buildAnswers({ ...supplied, trialDays: true });
+    if (!("errors" in result)) throw new Error("expected errors");
+    expect(result.errors.join("\n")).toMatch(/trialDays/);
+  });
+
+  it("refuses a non-string value on a colour question", () => {
+    const result = buildAnswers({ ...supplied, themePrimary: 42 });
+    if (!("errors" in result)) throw new Error("expected errors");
+    expect(result.errors.join("\n")).toMatch(/themePrimary/);
+  });
+
+  it("refuses a non-array value on a list question", () => {
+    // A bare string is a valid one-line answer for a list question (coerceRaw
+    // parses it as a single item) — the broken shape is anything that isn't a
+    // string or an array, e.g. a JSON object or number.
+    const result = buildAnswers({ ...supplied, customFields: 42 });
+    if (!("errors" in result)) throw new Error("expected errors");
+    expect(result.errors.join("\n")).toMatch(/customFields/);
+  });
 });

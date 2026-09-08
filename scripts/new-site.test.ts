@@ -202,6 +202,23 @@ describe("the wizard, asking questions", () => {
     expect(readFileSync(join(target, "config", "site.config.ts"), "utf8"))
       .toContain('domain: "studiofinder.co.uk"');
   });
+
+  it("re-asks a boolean question that gets an answer it does not recognise", async () => {
+    const io = scriptedIo([
+      [/^Site name$/, "Studio Finder"],
+      [/^Domain$/, "studiofinder.co.uk"],
+      [/^Legal entity$/, "Studio Finder Ltd"],
+      [/^One listed thing is a/, "studio"],
+      [/^Enable reviews\?$/, "maybe"],
+      [/^ {2}✗ /, "yes"],
+      [/^Seed directory name$/, "studios"],
+    ]);
+
+    expect(await run(["--target", target], io)).toBe(0);
+    expect(io.printed.join("\n")).toMatch(/✗ .*(boolean|yes\/no)/i);
+    expect(readFileSync(join(target, "config", "site.config.ts"), "utf8"))
+      .toContain("reviews: true");
+  });
 });
 
 describe("the wizard, run non-interactively", () => {

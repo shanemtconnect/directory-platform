@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   QUESTIONS,
+  answerTypeError,
   buildAnswers,
   coerceRaw,
   isAsked,
@@ -190,6 +191,11 @@ async function askEverything(io: Io): Promise<Record<string, unknown>> {
             })();
 
       const value = answered === undefined ? fallback : answered;
+      const typeProblem = answerTypeError(question, value);
+      if (typeProblem !== null) {
+        io.out(`  ✗ ${typeProblem}`);
+        continue;
+      }
       const problem = runValidate(question, value, acc);
       if (problem !== null) {
         io.out(`  ✗ ${problem}`);
