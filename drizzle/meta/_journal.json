@@ -43,6 +43,13 @@
       "when": 1788870500000,
       "tag": "0005_reconcile_parallel_migrations",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788871629782,
+      "tag": "0006_sturdy_psynapse",
+      "breakpoints": true
     }
   ]
 }
