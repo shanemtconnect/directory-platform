@@ -13,10 +13,10 @@ import type { TestDb } from "@/test/db";
 /**
  * The seed set is named after the entity, not the niche.
  *
- * `seeds/venues/` on a venue directory, `seeds/plumbers/` on a plumber one — so
- * a clone renames one folder and `pnpm seed` keeps working with no argument.
- * Hard-coding the niche here was how "wedding-venues" ended up in a file that
- * is supposed to be niche-agnostic.
+ * The folder is named after `siteConfig.entity.plural`, so a clone renames one
+ * directory and `pnpm seed` keeps working with no argument. A literal niche
+ * name written down here is exactly how the previous default ended up naming
+ * one niche inside a script that is supposed to serve all of them.
  */
 export const DEFAULT_NICHE = slugify(siteConfig.entity.plural);
 
@@ -227,8 +227,8 @@ export async function runSeed(tx: TestDb, niche: string = DEFAULT_NICHE): Promis
     });
     // Generated from structured fields only — never an imported string — and
     // from THIS row's city and category. The singular comes from the category
-    // sheet rather than a `replace(/s$/, "")` guess, which turned "Pub & Inn
-    // Venues" into "pub & inn venue" by luck and would mangle anything irregular.
+    // sheet rather than a `replace(/s$/, "")` guess, which happened to work on
+    // the seeded labels and would mangle any irregular plural.
     const singular = categorySingularByName.get(categoryName) ?? categoryName;
     await tx.insert(listings).values({
       id, name, slug, cityId, verticalId, primaryCategoryId: categoryId,

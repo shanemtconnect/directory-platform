@@ -6,7 +6,7 @@ import { runSeed, DEFAULT_NICHE } from "./seed";
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is not set");
 // Derived from siteConfig.entity, not written down: a clone that hard-codes a
-// niche here ships a plumber directory whose seed command still says "wedding".
+// niche here ships a directory whose seed command still names the old one.
 const niche = process.argv[2] ?? DEFAULT_NICHE;
 
 const client = postgres(url, { max: 1 });
