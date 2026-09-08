@@ -9,7 +9,9 @@ import type { SnippetInput } from "@/lib/badge/snippets";
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
-  title: `Get your ${siteConfig.name} badge`,
+  // No site name: the root layout's title template appends it, and hardcoding
+  // it here doubled up as "Get your X badge | X".
+  title: "Get your badge",
   description: `Four free badge styles for your own website. Pick one, copy a line of HTML, done.`,
   alternates: { canonical: "/advertise/badge" },
 };
