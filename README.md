@@ -53,6 +53,13 @@ also guards against connecting during `next build` — without that guard the
 build hangs forever and silently when Redis is unreachable. See
 `docs/spikes/2026-09-07-phase-0-isr-cache-handler.md`.
 
+**A failed Redis connect at boot falls back to an in-process LRU cache for the
+rest of that process's life** — no retry, no later hot-swap back to Redis —
+and past the one log line at boot, `cache-handler.mjs` re-logs
+`[cache] STILL FALLING BACK TO LRU` every five minutes for as long as it stays
+in fallback, so restart the container once Redis is reachable again rather
+than waiting for it to notice on its own.
+
 ## Local development
 
 ```bash

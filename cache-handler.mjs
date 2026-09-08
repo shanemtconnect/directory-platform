@@ -5,6 +5,19 @@ import createLruHandler from "@fortedigital/nextjs-cache-handler/local-lru";
 import createRedisHandler from "@fortedigital/nextjs-cache-handler/redis-strings";
 import { resolveCacheKeyPrefix } from "./lib/cache/build-id.mjs";
 import { sweepStaleNamespaces, sweepDelayMs } from "./lib/cache/sweep.mjs";
+import { startFallbackReminder } from "./lib/cache/fallback.mjs";
+
+/**
+ * If the boot-time Redis connect below fails, this process falls back to an
+ * in-process LRU cache handler for the rest of its life — there is no retry
+ * and no later hot-swap back to Redis; see lib/cache/fallback.mjs for why.
+ * That degrades every replica (no cross-replica cache, nothing survives a
+ * restart) with only a single boot-time log line to show for it, so
+ * `startFallbackReminder` re-logs the fact every five minutes for as long as
+ * the fallback is in effect, as a signal that will not scroll out of a log
+ * tail. The fix is always the same: get Redis reachable, then restart the
+ * container.
+ */
 
 CacheHandler.onCreation(() => {
   if (global.cacheHandlerConfig) return global.cacheHandlerConfig;
@@ -45,6 +58,7 @@ CacheHandler.onCreation(() => {
 
     if (!redisClient?.isReady) {
       console.error("[cache] FALLING BACK TO LRU (no redis)");
+      startFallbackReminder();
       global.cacheHandlerConfigPromise = null;
       global.cacheHandlerConfig = { handlers: [lruCache] };
       return global.cacheHandlerConfig;
