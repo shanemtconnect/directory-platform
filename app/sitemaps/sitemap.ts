@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { db } from "@/lib/db/client";
+import { prerenderingWithoutDatabase } from "@/lib/db/build-phase";
 import { siteUrl } from "@/lib/schema/builders";
 import { isStaging } from "@/lib/site-env";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
@@ -38,7 +39,15 @@ export const dynamic = "force-dynamic";
 export async function generateSitemaps(): Promise<{ id: string }[]> {
   // A staging site advertises nothing at all: no ids means every shard 404s.
   if (isStaging()) return [];
-  const total = await countSitemapListings(db as never, PUBLIC_VIEWER);
+  // Next calls this while collecting page data during `next build`, even though
+  // the route is force-dynamic. A build with no database answers with the
+  // minimum shard set rather than failing the build: the route renders on
+  // demand anyway, and the INDEX at /sitemap.xml is a plain route handler that
+  // counts the real listings on every request, so what a crawler is told is
+  // computed at runtime and not here. See lib/db/build-phase.ts.
+  const total = prerenderingWithoutDatabase()
+    ? 0
+    : await countSitemapListings(db as never, PUBLIC_VIEWER);
   return sitemapShardIds(total).map((id) => ({ id }));
 }
 

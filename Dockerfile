@@ -35,28 +35,18 @@ ARG NEXT_PUBLIC_MAPTILER_KEY
 ENV NEXT_PUBLIC_MAPTILER_KEY=$NEXT_PUBLIC_MAPTILER_KEY
 ARG NEXT_PUBLIC_MEDIA_URL
 ENV NEXT_PUBLIC_MEDIA_URL=$NEXT_PUBLIC_MEDIA_URL
-# The build really does need a reachable database, because `next build`
-# prerenders ISR pages that query it. Per .next/prerender-manifest.json those
-# are `app/cities/page.tsx`, `app/page.tsx` and `app/categories/page.tsx` —
-# each imports `@/lib/db/client` and exports `revalidate` without opting out of
-# static generation. (The review brief names only app/cities/page.tsx; the
-# manifest says otherwise, and all three have to be decoupled before this ARG
-# can go away. Decoupling them belongs to another task.)
+# No DATABASE_URL. The build does not need one.
 #
-# The two catch-all routes are already clear: their `generateStaticParams`
-# return [] precisely so the image can be built without a database.
+# `/`, `/cities` and `/categories` are still ISR pages that read Postgres, but
+# they ask `prerenderingWithoutDatabase()` first (lib/db/build-phase.ts) and
+# prerender their empty-state shell when there is nothing to read; ISR fills in
+# the real page on the first request, where a database is guaranteed because
+# instrumentation.ts refuses to boot a server without one. `lib/db/client.ts`
+# and `lib/auth/server.ts` open their connection on first use rather than on
+# import, so merely collecting page data no longer needs a database either.
 #
-# No default value on purpose. A placeholder URL here would let the build get
-# all the way to prerendering before dying on ECONNREFUSED against an address
-# nobody chose; the explicit check below names the missing build arg instead.
-ARG DATABASE_URL
-RUN test -n "$DATABASE_URL" || ( \
-      echo "DATABASE_URL build arg is required." >&2; \
-      echo "/, /cities and /categories prerender from the database, so 'next build'" >&2; \
-      echo "needs one that is reachable from this build container." >&2; \
-      echo "e.g. --build-arg DATABASE_URL=postgres://user:pw@host.docker.internal:5433/db" >&2; \
-      exit 1 )
-ENV DATABASE_URL=$DATABASE_URL
+# The two catch-all routes were already clear: their `generateStaticParams`
+# return [] precisely so the image can be built without one.
 RUN pnpm build
 
 FROM node:24-alpine AS runner

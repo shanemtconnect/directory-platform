@@ -167,16 +167,9 @@ jobs:
   # The image IS the deliverable, and nothing else in CI builds it, so a
   # Dockerfile that no longer builds is only discovered at deploy time.
   #
-  # This job is RED on arrival, and deliberately so — it is reporting two real
-  # faults in the shipped Dockerfile that no check could see before:
-  #   1. the deps stage copies package.json and pnpm-lock.yaml but not
-  #      pnpm-workspace.yaml, so `pnpm install --frozen-lockfile` exits 1 on
-  #      ERR_PNPM_IGNORED_BUILDS;
-  #   2. `pnpm build` collects page data for /categories, which needs a
-  #      database, and the builder stage has no DATABASE_URL (nor an ARG for
-  #      one) — so the image has never been buildable.
-  # Both live in Dockerfile, which belongs to another task. See the task-8
-  # report.
+  # It builds with no database on purpose: nothing here passes a DATABASE_URL
+  # build arg, and the Dockerfile no longer declares one. That is the check —
+  # if a page starts querying Postgres at build time again, this job goes red.
   docker-build:
     runs-on: ubuntu-latest
     steps:
