@@ -62,4 +62,11 @@ schedule("derivatives", "*/1 * * * *", async (tx) => {
   await processPendingDerivatives(tx);
 });
 
+// Every 30 seconds (six fields — the first is seconds). An enquiry notification
+// is the lead a paying listing bought; a minute of latency on it is noticed.
+schedule("notify", "*/30 * * * * *", async (tx) => {
+  const { processNotifications } = await import("./jobs/notify");
+  await processNotifications(tx);
+});
+
 console.log("[worker] started");

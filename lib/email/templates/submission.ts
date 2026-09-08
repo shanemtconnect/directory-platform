@@ -8,11 +8,15 @@ import { layout, type Block, type EmailContent } from "./layout";
 
 export interface SubmissionEmailData {
   listingName: string;
-  /** Null when the submitted town matched nothing we hold and was parked. */
+  /**
+   * Null when the submitted town matched nothing we hold, which is also what
+   * tells the reader the submission is sitting in the parked queue rather than
+   * as a pending listing.
+   */
   cityName: string | null;
   submitter: { name: string; email: string };
-  /** Null for a parked submission — there is no page to link to yet. */
-  reviewUrl: string | null;
+  /** Where an admin goes to act on it. */
+  reviewUrl: string;
 }
 
 export function submissionToAdmin(data: SubmissionEmailData): EmailContent {
@@ -20,17 +24,18 @@ export function submissionToAdmin(data: SubmissionEmailData): EmailContent {
   const blocks: Block[] = [
     { label: siteConfig.entity.Singular, value: data.listingName },
   ];
-  if (data.cityName !== null) blocks.push({ label: "Town", value: data.cityName });
+  if (data.cityName === null) {
+    // No matching town means no listing row was created; the payload is parked
+    // and needs a decision about the town before it can become anything.
+    blocks.push({ value: "The town given is not one we hold, so this is waiting in the parked queue." });
+  } else {
+    blocks.push({ label: "Town", value: data.cityName });
+  }
   blocks.push(
     { label: "Submitted by", value: data.submitter.name },
     { label: "Email", value: data.submitter.email, href: `mailto:${data.submitter.email}` },
+    { label: "Review", value: "Open the admin dashboard", href: data.reviewUrl },
   );
-  if (data.reviewUrl !== null) {
-    blocks.push({ label: "Review", value: "Open the submission", href: data.reviewUrl });
-  } else {
-    // Parked submissions have no listing row, so there is nothing to link.
-    blocks.push({ value: "The town was not one we hold, so this is waiting in the parked queue." });
-  }
 
   return { subject, replyTo: data.submitter.email, ...layout({ subject, heading: subject, blocks }) };
 }

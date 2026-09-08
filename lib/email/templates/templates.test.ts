@@ -109,8 +109,9 @@ describe("submissionToAdmin", () => {
     expect(content.text).toContain("Bath");
   });
 
-  it("still reads cleanly when the town is unknown and there is no page to link", () => {
-    const content = submissionToAdmin({ ...submission, cityName: null, reviewUrl: null });
+  it("says the submission is parked when the town is not one we hold", () => {
+    const content = submissionToAdmin({ ...submission, cityName: null });
+    expect(content.text).toContain("parked queue");
     expect(`${content.subject}${content.html}${content.text}`).not.toMatch(
       /undefined|\bnull\b/,
     );
