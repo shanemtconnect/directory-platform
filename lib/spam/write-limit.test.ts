@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { limitPublicWrite, retryMessage, SHORTLIST_RATE_LIMIT } from "./write-limit";
+import {
+  AUTH_RATE_LIMIT,
+  ENQUIRY_RATE_LIMIT,
+  limitPublicWrite,
+  retryMessage,
+  SHORTLIST_RATE_LIMIT,
+  SUBMIT_LISTING_RATE_LIMIT,
+} from "./write-limit";
 
 const GOOD_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
 
@@ -88,5 +95,35 @@ describe("the shortlist budget", () => {
   it("tells a blocked visitor when to come back, in minutes", () => {
     expect(retryMessage({ allowed: false, remaining: 0, retryAfterSeconds: 601 }))
       .toContain("11 minutes");
+  });
+});
+
+describe("the public write budgets", () => {
+  // They live together so the whole picture is comparable in one read: a
+  // budget is only sensible relative to the others, and when one of them was
+  // an inline literal at its call site, nobody could see that the enquiry form
+  // was stricter than a sign-in attempt.
+  it("are all defined in this module", () => {
+    for (const budget of [
+      ENQUIRY_RATE_LIMIT,
+      SUBMIT_LISTING_RATE_LIMIT,
+      SHORTLIST_RATE_LIMIT,
+      AUTH_RATE_LIMIT,
+    ]) {
+      expect(budget.limit).toBeGreaterThan(0);
+      expect(budget.windowSeconds).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps the one-off forms tighter than the repeated actions", () => {
+    // Submitting a listing is something a person does once; saving to a
+    // shortlist is something they do all afternoon. If this ever inverts,
+    // somebody has copied a number without reading what it guards.
+    expect(SUBMIT_LISTING_RATE_LIMIT.limit).toBeLessThan(ENQUIRY_RATE_LIMIT.limit);
+    expect(ENQUIRY_RATE_LIMIT.limit).toBeLessThan(SHORTLIST_RATE_LIMIT.limit);
+  });
+
+  it("gives auth a short window, because credential stuffing is bursty", () => {
+    expect(AUTH_RATE_LIMIT.windowSeconds).toBeLessThan(ENQUIRY_RATE_LIMIT.windowSeconds);
   });
 });

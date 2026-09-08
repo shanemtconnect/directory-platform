@@ -12,6 +12,7 @@ import { notifySubmission } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
+import { SUBMIT_LISTING_RATE_LIMIT } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/test/db";
 import { validateSubmission } from "./validation";
 
@@ -53,12 +54,7 @@ export async function submitListing(
   const ip = clientIp(await headers());
   const subject = rateLimitSubject(ip);
 
-  // Three an hour. A person listing their own business does it once; three is
-  // room for a genuine retry and nothing like enough for a spam run.
-  const limit = await rateLimit(subject && `submit-listing:${subject}`, {
-    limit: 3,
-    windowSeconds: 3600,
-  });
+  const limit = await rateLimit(subject && `submit-listing:${subject}`, SUBMIT_LISTING_RATE_LIMIT);
   if (!limit.allowed) {
     return {
       status: "error",

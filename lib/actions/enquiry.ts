@@ -8,6 +8,7 @@ import { notifyEnquiry } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
+import { ENQUIRY_RATE_LIMIT } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/test/db";
 import { validateEnquiry } from "./validation";
 
@@ -43,10 +44,7 @@ export async function submitEnquiry(
 
   const ip = clientIp(await headers());
   const subject = rateLimitSubject(ip);
-  const limit = await rateLimit(subject && `enquiry:${subject}`, {
-    limit: 5,
-    windowSeconds: 3600,
-  });
+  const limit = await rateLimit(subject && `enquiry:${subject}`, ENQUIRY_RATE_LIMIT);
   if (!limit.allowed) {
     return {
       status: "error",

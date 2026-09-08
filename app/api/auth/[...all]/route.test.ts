@@ -39,7 +39,8 @@ describe("POST /api/auth/[...all]", () => {
 
   it("counts against one shared bucket, from the request's own headers", async () => {
     limitPublicWrite.mockResolvedValue(allowed);
-    const { POST, AUTH_RATE_LIMIT } = await import("./route");
+    const { POST } = await import("./route");
+    const { AUTH_RATE_LIMIT } = await import("@/lib/spam/write-limit");
     const request = signIn({ "x-forwarded-for": "198.51.100.7" });
 
     await POST(request);
@@ -79,7 +80,7 @@ describe("POST /api/auth/[...all]", () => {
   });
 
   it("is 20 attempts per 10 minutes", async () => {
-    const { AUTH_RATE_LIMIT } = await import("./route");
+    const { AUTH_RATE_LIMIT } = await import("@/lib/spam/write-limit");
     expect(AUTH_RATE_LIMIT).toEqual({ limit: 20, windowSeconds: 600 });
   });
 });
