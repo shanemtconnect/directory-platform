@@ -17,3 +17,6 @@ docs/superpowers/plans/*master*.md
 # Playwright
 test-results/
 playwright-report/
+
+# Local SDD scratch reports — never intended for the public repo
+.superpowers/
