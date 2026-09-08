@@ -1,10 +1,15 @@
 /**
  * Cloudflare Turnstile verification.
  *
- * When no secret is configured — local development and staging — verification
- * is SKIPPED and says so. It never silently passes in production: `required`
- * is true whenever a secret exists, so a misconfigured production deploy fails
- * closed rather than accepting every bot.
+ * Two rules, and the second is the one that used to be wrong.
+ *
+ *  - No secret configured: verification is SKIPPED, but only outside
+ *    production. Local and staging run without a key; a production deploy that
+ *    lost its secret must not quietly accept every bot, so there it fails
+ *    closed and says why.
+ *  - Cloudflare unreachable, or slow: fails CLOSED. An outage that leaves the
+ *    form open is an open door with a queue of bots already outside it, and the
+ *    person who came to send an enquiry can try again in a minute.
  */
 export interface TurnstileResult {
   ok: boolean;
@@ -12,30 +17,48 @@ export interface TurnstileResult {
   reason?: string;
 }
 
+/** Long enough for a round trip to Cloudflare, short enough to not hang a form post. */
+export const TURNSTILE_TIMEOUT_MS = 5000;
+
+const ENDPOINT = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+/** One line in the log, not one per request: a misconfigured deploy fails every submit. */
+let warnedNotConfigured = false;
+
 export async function verifyTurnstile(
   token: string | null,
   remoteIp?: string,
 ): Promise<TurnstileResult> {
   const secret = process.env.TURNSTILE_SECRET_KEY;
   if (!secret || secret.trim() === "") {
-    return { ok: true, skipped: true, reason: "no TURNSTILE_SECRET_KEY configured" };
+    if (process.env.NODE_ENV !== "production") {
+      return { ok: true, skipped: true, reason: "no TURNSTILE_SECRET_KEY configured" };
+    }
+    if (!warnedNotConfigured) {
+      warnedNotConfigured = true;
+      console.error(
+        "[turnstile] TURNSTILE_SECRET_KEY is not set in production. " +
+          "Every form submission will be rejected until it is.",
+      );
+    }
+    return { ok: false, skipped: false, reason: "not-configured" };
   }
   if (!token) return { ok: false, skipped: false, reason: "missing token" };
 
   try {
     const body = new URLSearchParams({ secret, response: token });
     if (remoteIp) body.set("remoteip", remoteIp);
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    const res = await fetch(ENDPOINT, {
       method: "POST",
       body,
+      signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS),
     });
     const json = (await res.json()) as { success?: boolean; "error-codes"?: string[] };
     return json.success === true
       ? { ok: true, skipped: false }
       : { ok: false, skipped: false, reason: (json["error-codes"] ?? []).join(",") || "rejected" };
-  } catch (e) {
-    // A Cloudflare outage must not take the contact form down with it.
-    return { ok: true, skipped: true, reason: `verification unreachable: ${String(e)}` };
+  } catch {
+    return { ok: false, skipped: false, reason: "unreachable" };
   }
 }
 
