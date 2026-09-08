@@ -2,9 +2,18 @@ node_modules
 .next
 .next-pristine
 .git
-.env
-.env.local
+.github
+
+# `.env` and `.env.local` alone let `.env.production` be baked into the image.
+# Only the placeholder template belongs in there.
+.env*
+!.env.example
+
+.superpowers
 docs
+e2e
+test-results
+playwright-report
 seeds/**/*.md
 *.log
 coverage
