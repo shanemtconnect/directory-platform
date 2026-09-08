@@ -61,7 +61,14 @@ GLOBALS=app/globals.css
 # regenerates the directory on the next build or dev run.
 cleanup() { stop 2>/dev/null; rm -rf app/isr-probe .next-pristine .next/types
             [ -f /tmp/verify-isr-globals.bak ] && mv /tmp/verify-isr-globals.bak "$GLOBALS"; }
+# Ctrl-C or a TERM mid-build would otherwise leave the probe route and an extra
+# rule in app/globals.css in the working tree. The signal handlers `exit` rather
+# than calling cleanup themselves: that runs the EXIT trap, so cleanup happens
+# exactly once and the script actually stops instead of resuming at the next
+# command with its server killed underneath it.
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 boot() { corepack pnpm start -p "$PORT" >> /tmp/verify-isr.log 2>&1 & echo $! > /tmp/verify-isr.pid; disown
          # Readiness polls `/`, never the probe. The first probe request after
@@ -76,8 +83,12 @@ probe() { curl -s "localhost:$PORT$PROBE_URL" | grep -o 'probe:[0-9]\+' | head -
 css()   { curl -s "localhost:$PORT/" | grep -o '/_next/static/[^"]*\.css' | head -1; }
 home()  { curl -s "localhost:$PORT/"; }
 code()  { curl -s -o /dev/null -w "%{http_code}" "localhost:$PORT$1"; }
-build() { corepack pnpm build > /tmp/verify-isr-build.log 2>&1 || { echo "build failed, see /tmp/verify-isr-build.log"; exit 1; }
+# `exit` here would only leave the $(build) subshell, and the message would
+# become the build id every later comparison is made against. Fail through the
+# status instead; every caller is `B=$(build) || die`.
+build() { corepack pnpm build > /tmp/verify-isr-build.log 2>&1 || return 1
           tr -d '[:space:]' < .next/BUILD_ID; }
+die_build() { echo "build failed, see /tmp/verify-isr-build.log"; exit 1; }
 
 : > /tmp/verify-isr.log
 mkdir -p "$(dirname "$PROBE")"
@@ -106,7 +117,7 @@ export default async function IsrProbe({ params }: { params: Promise<{ id: strin
 TSX
 
 echo "=== build 1 ==="
-B1=$(build); echo "build id: $B1"
+B1=$(build) || die_build; echo "build id: $B1"
 rm -rf .next-pristine && cp -R .next .next-pristine
 redis FLUSHDB > /dev/null   # this index only; :6380/0 belongs to other work
 
@@ -135,7 +146,7 @@ echo "=== B: rebuild (new build id, new asset hashes) ==="
 # stylesheet URL genuinely stops existing.
 cp "$GLOBALS" /tmp/verify-isr-globals.bak
 printf '\n/* verify-isr.sh: forces a new asset hash */\n.verify-isr{outline:0}\n' >> "$GLOBALS"
-B2=$(build); echo "build id: $B2"
+B2=$(build) || die_build; echo "build id: $B2"
 mv /tmp/verify-isr-globals.bak "$GLOBALS"
 
 boot
@@ -144,23 +155,31 @@ CSS2=$(css);        echo "stylesheet, build 2:        $CSS2"
 C2=$(code "$CSS2"); echo "  status:                   $C2"
 C1=$(code "$CSS1"); echo "build 1's stylesheet:       $C1 (gone, as after any deploy)"
 T_REBUILD=$(probe); echo "probe after rebuild:        $T_REBUILD"
-HAS_B2=$(printf '%s' "$HTML" | grep -c "$B2"); echo "new build id in HTML:       $HAS_B2"
-HAS_B1=$(printf '%s' "$HTML" | grep -c "$B1"); echo "old build id in HTML:       $HAS_B1"
+# -e: nanoid build ids may begin with `-`, which grep would read as an option.
+HAS_B2=$(printf '%s' "$HTML" | grep -c -e "$B2"); echo "new build id in HTML:       $HAS_B2"
+HAS_B1=$(printf '%s' "$HTML" | grep -c -e "$B1"); echo "old build id in HTML:       $HAS_B1"
 stop
 
-echo "=== C: purge-cache.sh sweeps the orphaned namespace ==="
-NS_BEFORE=$(redis --scan --pattern "nextjs:$B1:*" | grep -c . )
-echo "build 1 keys before purge:  $NS_BEFORE"
+# purge-cache.sh hard-requires a redis-cli of its own; this script's redis()
+# helper can fall back to the dev container, but the script under test cannot.
+# So section C either runs or is announced as skipped — it must never print its
+# banner over invented NS_AFTER/NS_KEPT values that satisfy the assertions
+# below without anything having been purged.
 if command -v redis-cli > /dev/null; then
+  PURGE_RAN=1
+  echo "=== C: purge-cache.sh sweeps the orphaned namespace ==="
+  NS_BEFORE=$(redis --scan --pattern "nextjs:$B1:*" | grep -c . )
+  echo "build 1 keys before purge:  $NS_BEFORE"
   KEEP_BUILD_ID="$B2" ./scripts/purge-cache.sh
   NS_AFTER=$(redis --scan --pattern "nextjs:$B1:*" | grep -c . )
   NS_KEPT=$(redis --scan --pattern "nextjs:$B2:*" | grep -c . )
+  echo "build 1 keys after purge:   $NS_AFTER"
+  echo "build 2 keys after purge:   $NS_KEPT"
 else
-  echo "redis-cli not on PATH — skipping the purge assertions"
-  NS_AFTER=0; NS_KEPT=1
+  PURGE_RAN=0
+  echo "=== C: SKIPPED — scripts/purge-cache.sh needs a redis-cli on PATH ==="
+  echo "    (A and B above still ran; nothing below asserts anything about the purge.)"
 fi
-echo "build 1 keys after purge:   $NS_AFTER"
-echo "build 2 keys after purge:   $NS_KEPT"
 
 fail=""
 [ -n "$T_RUNTIME" ]                || fail="$fail probe-never-rendered"
@@ -174,15 +193,21 @@ fail=""
 [ "$T_REBUILD" != "$T_RUNTIME" ]   || fail="$fail served-previous-builds-html"
 [ "$HAS_B2" != "0" ]               || fail="$fail new-build-id-absent-from-html"
 [ "$HAS_B1" = "0" ]                || fail="$fail old-build-id-still-in-html"
-[ "$NS_BEFORE" != "0" ]            || fail="$fail nothing-cached-under-build-1"
-[ "$NS_AFTER" = "0" ]              || fail="$fail purge-left-the-old-namespace($NS_AFTER)"
-[ "$NS_KEPT" != "0" ]              || fail="$fail purge-ate-the-running-builds-namespace"
+if [ "$PURGE_RAN" = "1" ]; then
+  [ "$NS_BEFORE" != "0" ]          || fail="$fail nothing-cached-under-build-1"
+  [ "$NS_AFTER" = "0" ]            || fail="$fail purge-left-the-old-namespace($NS_AFTER)"
+  [ "$NS_KEPT" != "0" ]            || fail="$fail purge-ate-the-running-builds-namespace"
+fi
 
 if [ -z "$fail" ]; then
   echo
   echo "PASS: a runtime-regenerated page survived a restart of the same build,"
-  echo "      a rebuild served it fresh with a live stylesheet, and purge-cache.sh"
-  echo "      swept the old namespace without touching the running one"
+  echo "      and a rebuild served it fresh with a live stylesheet"
+  if [ "$PURGE_RAN" = "1" ]; then
+    echo "      — and purge-cache.sh swept the old namespace without touching the running one"
+  else
+    echo "      (purge-cache.sh unverified: no redis-cli on this host)"
+  fi
 else
   echo; echo "FAIL:$fail"; exit 1
 fi

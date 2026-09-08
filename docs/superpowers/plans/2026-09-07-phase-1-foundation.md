@@ -2531,6 +2531,13 @@ prefetches indefinitely (Phase 0 finding). Change the log prefix from `[spike]` 
 the `keyPrefix` from `spike:` to `nextjs:`. Change nothing else — this file was proven working and
 every line of the build-phase guard and the LRU fallback is load-bearing (constraint 4).
 
+> **Corrected 2026-09-08.** A flat `nextjs:` prefix is the bug this phase's ISR work was reopened
+> to fix: cached HTML is not portable across builds, so a deploy re-served the previous build's
+> markup with dead asset hashes and unknown server-action ids. The prefix is
+> `nextjs:<buildId>:` — `resolveCacheKeyPrefix()` from `lib/cache/build-id.mjs` — and the handler
+> sweeps the previous build's namespace itself a minute after boot
+> (`lib/cache/sweep.mjs`, `CACHE_SWEEP_DELAY_MS`).
+
 - [ ] **Step 2: Copy and adapt the verification script**
 
 ```bash
