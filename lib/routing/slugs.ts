@@ -201,7 +201,12 @@ export async function reallocateSlug(
     entityId: input.entityId,
     disambiguator: input.disambiguator,
   });
-  await writeEntitySlug(tx, kind, input.entityId, allocated);
+  // A category has two kinds of registry row: the root one that names its
+  // national page at /categories/<slug> — its identity — and a per-city alias
+  // that makes /<city>/<slug> resolve. Renaming an alias must not move the
+  // national page out from under everything linking to it.
+  const isCategoryAlias = kind === "category" && input.parentScope !== ROOT_SCOPE;
+  if (!isCategoryAlias) await writeEntitySlug(tx, kind, input.entityId, allocated);
 
   const newPath = input.newPathFor(allocated);
 

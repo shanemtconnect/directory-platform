@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { withTestDb, type TestDb } from "@/test/db";
-import { makeCity, makeListing, makeScaffold } from "@/test/factories";
+import {
+  makeCategory, makeCategoryInCity, makeCity, makeListing, makeScaffold, makeVertical,
+} from "@/test/factories";
 import { allocateSlug, reallocateSlug, resolveSlug, seedReservedSlugs, ROOT_SCOPE, SlugError } from "./slugs";
-import { cities, listings, redirects, slugs } from "@/lib/db/schema";
+import { categories, cities, listings, redirects, slugs } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -234,6 +236,43 @@ describe("reallocateSlug", () => {
       const [row] = await tx
         .select({ slug: listings.slug }).from(listings).where(eq(listings.id, listingId));
       expect(row?.slug).toBe("the-new-barn");
+    });
+  });
+
+  it("renaming a category's per-city alias leaves the national page's slug alone", async () => {
+    await withTestDb(async (tx) => {
+      const verticalId = await makeVertical(tx);
+      const cityId = await makeCity(tx);
+      const categoryId = await makeCategoryInCity(tx, verticalId, cityId, "Barn Venues");
+
+      // /leeds/barn-venues is an alias. /categories/barn-venues is the identity.
+      await reallocateSlug(tx, {
+        parentScope: cityId, entityId: categoryId, kind: "category",
+        newDesired: "Barns", oldPath: "/leeds/barn-venues",
+        newPathFor: (s) => `/leeds/${s}`,
+      });
+
+      const [row] = await tx
+        .select({ slug: categories.slug }).from(categories).where(eq(categories.id, categoryId));
+      expect(row?.slug).toBe("barn-venues");
+      expect((await resolveSlug(tx, cityId, "barns"))?.entityId).toBe(categoryId);
+    });
+  });
+
+  it("renaming a category at the root does move the national page's slug", async () => {
+    await withTestDb(async (tx) => {
+      const verticalId = await makeVertical(tx);
+      const categoryId = await makeCategory(tx, verticalId, "Barn Venues");
+
+      await reallocateSlug(tx, {
+        parentScope: ROOT_SCOPE, entityId: categoryId, kind: "category",
+        newDesired: "Barns", oldPath: "/categories/barn-venues",
+        newPathFor: (s) => `/categories/${s}`,
+      });
+
+      const [row] = await tx
+        .select({ slug: categories.slug }).from(categories).where(eq(categories.id, categoryId));
+      expect(row?.slug).toBe("barns");
     });
   });
 
