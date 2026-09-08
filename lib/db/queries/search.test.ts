@@ -1,0 +1,132 @@
+import { describe, it, expect } from "vitest";
+import { withTestDb, type TestDb } from "@/test/db";
+import { search } from "./search";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { makeVertical, makeCity, makeCategoryInCity, makeListing } from "@/test/factories";
+
+async function scaffold(tx: TestDb) {
+  const verticalId = await makeVertical(tx);
+  const leeds = await makeCity(tx, "Leeds", "West Yorkshire");
+  const bristol = await makeCity(tx, "Bristol", "Bristol");
+  const barns = await makeCategoryInCity(tx, verticalId, leeds, "Barn Venues");
+  const halls = await makeCategoryInCity(tx, verticalId, leeds, "Historic Halls");
+  return { verticalId, leeds, bristol, barns, halls };
+}
+
+describe("search", () => {
+  it("matches on name, case-insensitively", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns }, { name: "The Old Barn" });
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns }, { name: "Riverside Hall" });
+      expect((await search(tx, PUBLIC_VIEWER, { q: "old barn" })).rows.map((r) => r.name))
+        .toEqual(["The Old Barn"]);
+    });
+  });
+
+  it("matches on description as well as name", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns },
+        { name: "Somewhere", description: "A restored granary with beams." });
+      expect((await search(tx, PUBLIC_VIEWER, { q: "granary" })).total).toBe(1);
+    });
+  });
+
+  it("does NOT match on address — that would return everything in a big city", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns },
+        { name: "Somewhere", addressLine1: "12 Granary Wharf" });
+      expect((await search(tx, PUBLIC_VIEWER, { q: "granary" })).total).toBe(0);
+    });
+  });
+
+  it("treats % and _ as literals, not wildcards", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns }, { name: "Alpha" });
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns }, { name: "Beta" });
+      // A bare % must not match every row.
+      expect((await search(tx, PUBLIC_VIEWER, { q: "%" })).total).toBe(0);
+      expect((await search(tx, PUBLIC_VIEWER, { q: "_" })).total).toBe(0);
+    });
+  });
+
+  it("filters by city slug", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const bristolCat = await makeCategoryInCity(tx, s.verticalId, s.bristol, "Barn Venues 2");
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns }, { name: "In Leeds" });
+      await makeListing(tx, { cityId: s.bristol, verticalId: s.verticalId, primaryCategoryId: bristolCat }, { name: "In Bristol" });
+      expect((await search(tx, PUBLIC_VIEWER, { city: "leeds" })).rows.map((r) => r.name)).toEqual(["In Leeds"]);
+    });
+  });
+
+  it("filters by category slug", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns }, { name: "A Barn" });
+      await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.halls }, { name: "A Hall" });
+      expect((await search(tx, PUBLIC_VIEWER, { category: "historic-halls" })).rows.map((r) => r.name))
+        .toEqual(["A Hall"]);
+    });
+  });
+
+  it("never returns an unpublished listing", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      for (const status of ["draft", "pending", "rejected", "archived", "removed"] as const) {
+        await makeListing(tx, { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns },
+          { status, name: `Hidden ${status}` });
+      }
+      expect((await search(tx, PUBLIC_VIEWER, { q: "Hidden" })).total).toBe(0);
+    });
+  });
+
+  it("filters on a searchable boolean custom field", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      await makeListing(tx, ctx, { name: "With rooms", customFields: { has_accommodation: true } });
+      await makeListing(tx, ctx, { name: "No rooms", customFields: { has_accommodation: false } });
+      const r = await search(tx, PUBLIC_VIEWER, { fields: { has_accommodation: "true" } });
+      expect(r.rows.map((x) => x.name)).toEqual(["With rooms"]);
+    });
+  });
+
+  it("filters numerically with >= on a searchable number field", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      await makeListing(tx, ctx, { name: "Small", customFields: { capacity_seated: 40 } });
+      await makeListing(tx, ctx, { name: "Large", customFields: { capacity_seated: 250 } });
+      const r = await search(tx, PUBLIC_VIEWER, { fields: { capacity_seated: "100" } });
+      expect(r.rows.map((x) => x.name)).toEqual(["Large"]);
+    });
+  });
+
+  it("IGNORES a field key that is not declared searchable — no arbitrary key reaches SQL", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      await makeListing(tx, ctx, { name: "Anything", customFields: { secret_flag: "x" } });
+      // An undeclared key must be dropped, not applied — so all rows come back.
+      expect((await search(tx, PUBLIC_VIEWER, { fields: { secret_flag: "x" } })).total).toBe(1);
+      expect((await search(tx, PUBLIC_VIEWER, { fields: { "'; drop table listings; --": "x" } })).total).toBe(1);
+    });
+  });
+
+  it("paginates and reports totals", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      for (let i = 0; i < 30; i++) await makeListing(tx, ctx, { name: `Venue ${i}` });
+      const p1 = await search(tx, PUBLIC_VIEWER, {});
+      expect(p1.rows).toHaveLength(24);
+      expect(p1.total).toBe(30);
+      expect(p1.totalPages).toBe(2);
+      expect((await search(tx, PUBLIC_VIEWER, { page: 2 })).rows).toHaveLength(6);
+    });
+  });
+});

@@ -2,6 +2,13 @@ interface Props {
   basePath: string;
   page: number;
   totalPages: number;
+  /**
+   * Search keeps its filters in the query string, so its pagination must too.
+   * Pillar pages use path pagination (/city/page/2) because reading
+   * searchParams would force the route dynamic and kill their ISR cache —
+   * search is already dynamic and noindexed, so the trade-off does not apply.
+   */
+  searchStyle?: boolean;
 }
 
 /**
@@ -9,10 +16,15 @@ interface Props {
  * GeoDirectory's demo uses javascript:void(0) and pages 2+ of every category
  * are effectively invisible to crawlers. There is a CI test asserting this.
  */
-export function Pagination({ basePath, page, totalPages }: Props) {
+export function Pagination({ basePath, page, totalPages, searchStyle = false }: Props) {
   if (totalPages <= 1) return null;
-  // Path pagination, not ?page= — see the note in app/[...segments]/page.tsx.
-  const href = (n: number) => (n === 1 ? basePath : `${basePath}/page/${n}`);
+  const href = (n: number) => {
+    if (n === 1) return basePath;
+    if (searchStyle) {
+      return basePath.includes("?") ? `${basePath}&page=${n}` : `${basePath}?page=${n}`;
+    }
+    return `${basePath}/page/${n}`;
+  };
 
   return (
     <nav aria-label="Pagination" data-testid="pagination">
