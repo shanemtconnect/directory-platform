@@ -1,0 +1,10 @@
+node_modules
+.next
+.next-pristine
+.git
+.env
+.env.local
+docs
+seeds/**/*.md
+*.log
+coverage

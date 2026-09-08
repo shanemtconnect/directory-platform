@@ -14,7 +14,12 @@
     "db:down": "docker compose -f docker-compose.dev.yml down",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "seed": "tsx scripts/seed-cli.ts",
+    "check:strings": "bash scripts/check-niche-strings.sh",
+    "build:flags-off": "SITE_FLAGS_OVERRIDE=off next build",
+    "build:flags-on": "SITE_FLAGS_OVERRIDE=on next build",
+    "verify:isr": "bash scripts/verify-isr.sh"
   },
   "keywords": [],
   "author": "",
@@ -29,21 +34,27 @@
   "packageManager": "pnpm@12.3.4",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/s3-request-presigner": "^3.1127.0",
     "@fortedigital/nextjs-cache-handler": "^3.3.0",
     "@redis/client": "^6.2.1",
     "@tailwindcss/postcss": "^4.3.3",
     "drizzle-orm": "0.45.2",
     "next": "16.3.4",
+    "node-cron": "^4.6.0",
     "postcss": "^8.5.28",
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sharp": "^0.35.4",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^19.2.18",
     "drizzle-kit": "^0.31.10",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   },

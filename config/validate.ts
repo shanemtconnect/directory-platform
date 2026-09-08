@@ -1,5 +1,5 @@
 import type { FeatureFlag, FeatureMap } from "./types";
-import { isSupportedCountry, COUNTRY_PROFILES, SUPPORTED_COUNTRIES } from "@/lib/geo/countries";
+import { isSupportedCountry, COUNTRY_PROFILES, SUPPORTED_COUNTRIES } from "../lib/geo/countries";
 
 export class ConfigError extends Error {
   constructor(message: string) {

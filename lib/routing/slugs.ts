@@ -61,7 +61,7 @@ export async function allocateSlug(
     );
   }
   // Reserved words only shadow a static route at the root. Inside a city,
-  // /leeds/pricing is not a route we own, so a venue may be called Pricing.
+  // /leeds/pricing is not a route we own, so a business may be called Pricing.
   if (input.parentScope === ROOT_SCOPE && isReserved(bare)) {
     throw new SlugError(`"${bare}" is a reserved slug and cannot be used for a ${input.kind}`);
   }

@@ -6,7 +6,7 @@ import { resolveSlug, ROOT_SCOPE } from "./slugs";
 import type { PillarScope } from "./scope";
 
 export type RouteResolution =
-  | { kind: "pillar"; scope: PillarScope }
+  | { kind: "pillar"; scope: PillarScope; page: number }
   | { kind: "listing"; listingId: string; parentId: string }
   | { kind: "redirect"; to: string; status: number }
   | { kind: "not-found" };
@@ -20,15 +20,34 @@ async function redirectFor(tx: TestDb, path: string): Promise<RouteResolution | 
  * One lookup per segment against the slug registry.
  *
  * No ordered fallback and no mode-specific branching: the `kind` column already
- * says what a slug is, which is exactly why /leeds/barn-venues is unambiguous
+ * says what a slug is, which is exactly why /leeds/big-category is unambiguous
  * and why both site modes share this function.
  */
+/**
+ * Pagination lives in the PATH, not a query string.
+ *
+ * Reading searchParams forces a route dynamic in Next 16, which would mean the
+ * city pillar pages — the pages the whole business rests on — are re-rendered
+ * on every request and never enter the ISR cache. A path segment keeps them
+ * cacheable, and "page" is a reserved slug so nothing can collide with it.
+ */
+function splitPagination(segments: string[]): { rest: string[]; page: number } {
+  if (segments.length >= 2 && segments[segments.length - 2] === "page") {
+    const n = Number(segments[segments.length - 1]);
+    if (Number.isInteger(n) && n >= 1) {
+      return { rest: segments.slice(0, -2), page: n };
+    }
+  }
+  return { rest: segments, page: 1 };
+}
+
 export async function resolveRoute(
   tx: TestDb,
-  segments: string[],
+  rawSegments: string[],
   mode: SiteMode,
 ): Promise<RouteResolution> {
-  const path = `/${segments.join("/")}`;
+  const { rest: segments, page } = splitPagination(rawSegments);
+  const path = `/${rawSegments.join("/")}`;
   const first = segments[0];
   if (first === undefined) return { kind: "not-found" };
 
@@ -47,6 +66,7 @@ export async function resolveRoute(
   if (segments.length === 1) {
     return {
       kind: "pillar",
+      page,
       scope:
         mode === "niche-national"
           ? { type: "city", cityId: parentId }
@@ -68,11 +88,13 @@ export async function resolveRoute(
     case "category":
       return {
         kind: "pillar",
+        page,
         scope: { type: "city-category", cityId: parentId, categoryId: child.entityId },
       };
     case "area":
       return {
         kind: "pillar",
+        page,
         scope: { type: "vertical-area", verticalId: parentId, areaId: child.entityId },
       };
     case "listing":

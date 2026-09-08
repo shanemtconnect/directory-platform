@@ -11,7 +11,7 @@ describe("resolveRoute — niche-national", () => {
       const cityId = randomUUID();
       await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
       expect(await resolveRoute(tx, ["leeds"], "niche-national"))
-        .toEqual({ kind: "pillar", scope: { type: "city", cityId } });
+        .toEqual({ kind: "pillar", page: 1, scope: { type: "city", cityId } });
     });
   });
 
@@ -21,7 +21,7 @@ describe("resolveRoute — niche-national", () => {
       await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
       await allocateSlug(tx, { parentScope: cityId, desired: "Barn Venues", kind: "category", entityId: categoryId });
       expect(await resolveRoute(tx, ["leeds", "barn-venues"], "niche-national"))
-        .toEqual({ kind: "pillar", scope: { type: "city-category", cityId, categoryId } });
+        .toEqual({ kind: "pillar", page: 1, scope: { type: "city-category", cityId, categoryId } });
     });
   });
 
@@ -94,7 +94,7 @@ describe("resolveRoute — local-multi-vertical", () => {
       const verticalId = randomUUID();
       await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Plumbers", kind: "vertical", entityId: verticalId });
       expect(await resolveRoute(tx, ["plumbers"], "local-multi-vertical"))
-        .toEqual({ kind: "pillar", scope: { type: "vertical", verticalId } });
+        .toEqual({ kind: "pillar", page: 1, scope: { type: "vertical", verticalId } });
     });
   });
 
@@ -106,7 +106,7 @@ describe("resolveRoute — local-multi-vertical", () => {
       await allocateSlug(tx, { parentScope: verticalId, desired: "Bob's Plumbing", kind: "listing", entityId: listingId });
 
       expect(await resolveRoute(tx, ["plumbers", "st-helier"], "local-multi-vertical"))
-        .toEqual({ kind: "pillar", scope: { type: "vertical-area", verticalId, areaId } });
+        .toEqual({ kind: "pillar", page: 1, scope: { type: "vertical-area", verticalId, areaId } });
       expect(await resolveRoute(tx, ["plumbers", "bobs-plumbing"], "local-multi-vertical"))
         .toEqual({ kind: "listing", listingId, parentId: verticalId });
     });
@@ -116,6 +116,53 @@ describe("resolveRoute — local-multi-vertical", () => {
     await withTestDb(async (tx) => {
       await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: randomUUID() });
       expect(await resolveRoute(tx, ["leeds"], "local-multi-vertical")).toEqual({ kind: "not-found" });
+    });
+  });
+});
+
+describe("path pagination", () => {
+  it("reads /[city]/page/2 as page 2 of the city pillar", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      expect(await resolveRoute(tx, ["leeds", "page", "2"], "niche-national"))
+        .toEqual({ kind: "pillar", page: 2, scope: { type: "city", cityId } });
+    });
+  });
+
+  it("reads /[city]/[category]/page/3", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), categoryId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "Barn Venues", kind: "category", entityId: categoryId });
+      expect(await resolveRoute(tx, ["leeds", "barn-venues", "page", "3"], "niche-national"))
+        .toEqual({ kind: "pillar", page: 3, scope: { type: "city-category", cityId, categoryId } });
+    });
+  });
+
+  it("defaults to page 1 with no page segment", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      const r = await resolveRoute(tx, ["leeds"], "niche-national");
+      expect(r.kind === "pillar" && r.page).toBe(1);
+    });
+  });
+
+  it("treats a non-numeric or zero page as not-found rather than page 1", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      expect(await resolveRoute(tx, ["leeds", "page", "abc"], "niche-national")).toEqual({ kind: "not-found" });
+      expect(await resolveRoute(tx, ["leeds", "page", "0"], "niche-national")).toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("cannot be shadowed by a listing called Page", async () => {
+    await withTestDb(async (tx) => {
+      await expect(allocateSlug(tx, {
+        parentScope: ROOT_SCOPE, desired: "Page", kind: "city", entityId: randomUUID(),
+      })).rejects.toThrow(/reserved/i);
     });
   });
 });

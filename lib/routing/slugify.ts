@@ -21,7 +21,7 @@ export const RESERVED_SLUGS = [
   "about", "account", "add-listing", "admin", "advertise", "api", "areas",
   "awards", "badge", "blog", "categories", "cities", "claim", "contact",
   "cost", "data-sources", "faq", "get-quotes", "guides", "images", "jobs",
-  "leave-review", "post-a-job", "pricing", "privacy", "robots", "safety",
+  "leave-review", "page", "post-a-job", "pricing", "privacy", "robots", "safety",
   "search", "select-listing-type", "shortlist", "sitemap", "terms", "tools",
   "trust", "_next",
 ] as const;

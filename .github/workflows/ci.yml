@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: directory
+          POSTGRES_PASSWORD: directory
+          POSTGRES_DB: directory_test
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U directory"
+          --health-interval 2s --health-timeout 5s --health-retries 15
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+
+    env:
+      NEXT_PUBLIC_SITE_URL: https://ci.example
+      DATABASE_URL: postgres://directory:directory@localhost:5433/directory_test
+      TEST_DATABASE_URL: postgres://directory:directory@localhost:5433/directory_test
+      REDIS_URL: redis://localhost:6380
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Migrate
+        run: pnpm db:migrate
+
+      - name: Test
+        run: pnpm test
+
+      - name: No hardcoded niche strings
+        run: pnpm check:strings
+
+      # Both must pass. This is the only thing that stops feature flags rotting.
+      - name: Build with all optional flags OFF
+        run: pnpm build:flags-off
+
+      - name: Build with all optional flags ON
+        run: pnpm build:flags-on

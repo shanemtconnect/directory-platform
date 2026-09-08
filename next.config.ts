@@ -2,9 +2,10 @@ import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 import { validateFeatureDependencies, validateEnv, validateCountry } from "./config/validate";
 import { siteConfig } from "./config/site.config";
+import { resolveFeatures } from "./config/flag-variants";
 
 // Throws -> the build fails. That is the point.
-validateFeatureDependencies(siteConfig.features);
+validateFeatureDependencies(resolveFeatures(siteConfig.features));
 validateEnv(process.env, { phase: "build" });
 validateCountry(siteConfig);
 
