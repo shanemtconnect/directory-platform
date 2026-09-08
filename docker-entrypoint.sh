@@ -1,18 +1,22 @@
 #!/bin/sh
 # Keep old build assets servable across a redeploy.
 #
-# The ISR cache is Redis-backed and deliberately survives a deploy, but the HTML
-# it holds references hashed asset paths — /_next/static/chunks/<hash>.css — from
-# the build that produced it. A redeploy replaces .next/static with new hashes,
-# so every cached page then loads with dead CSS and JS. That is what a cached
-# homepage linking a 404ing stylesheet looked like in practice.
+# Since 2026-09-08 the ISR cache is keyed by build id, so a deploy no longer
+# serves the previous build's HTML from the server — see
+# docs/spikes/2026-09-07-phase-0-isr-cache-handler.md. That removes the reason
+# this file was mandatory, but not the reason it is useful.
+#
+# Clients still hold pages from the previous build: an open tab, a bfcache
+# entry, a prefetch in flight. Each references hashed asset paths —
+# /_next/static/chunks/<hash>.css — and a redeploy replaces .next/static with
+# new hashes, so those requests 404 until the client reloads.
 #
 # Vercel solves this by keeping old builds' static output around. Here that is a
 # persistent volume: set STATIC_ASSETS_DIR to its mount path and each deploy adds
 # its own hashes to it without clobbering the previous ones.
 #
-# Unset, this does nothing at all — in which case run scripts/purge-cache.sh
-# after every deploy, or serve cached HTML that points at files you deleted.
+# Unset, this does nothing at all, and already-loaded pages lose their assets
+# until they reload. It grows by one build per deploy and is never pruned.
 set -eu
 
 # The worker stage inherits this ENTRYPOINT but has no .next/static and serves

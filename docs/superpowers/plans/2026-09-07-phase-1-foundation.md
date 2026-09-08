@@ -5,7 +5,10 @@
 
 **Goal:** A deployable Next.js 16 directory app whose every niche-specific value lives in one config
 file or the database, with a complete schema, a collision-proof slug registry, a mode-agnostic
-pillar-page abstraction, and Redis-backed ISR that survives a redeploy.
+pillar-page abstraction, and Redis-backed ISR that is shared across replicas and survives a
+container restart. (Revised 2026-09-08: *not* a redeploy — cached HTML carries the asset hashes and
+server-action ids of the build that rendered it, so entries are namespaced by build id and a deploy
+starts cold. See docs/spikes/2026-09-07-phase-0-isr-cache-handler.md.)
 
 **Architecture:** One stack per site sharing a Postgres server and Redis. `config/site.config.ts` is
 the only file a clone edits. Feature flags are build-time constants so disabled code is tree-shaken
@@ -2512,7 +2515,9 @@ git add -A && git commit -m "feat(db): viewer gate, published base query, single
 - Test: `scripts/verify-isr.sh` (port of `reference/isr-redeploy-test.sh`)
 
 **Interfaces:**
-- Produces: nothing importable. Produces the guarantee that a redeploy does not cold-start the cache.
+- Produces: nothing importable. Produces the guarantee that the cache is shared across replicas and
+  survives a container restart of one build — and, since 2026-09-08, that a *deploy* starts cold
+  rather than serving the previous build's HTML.
 
 - [ ] **Step 1: Copy the proven handler**
 
@@ -2525,6 +2530,13 @@ The `^3.3.0` floor is mandatory, not cautious: below it, Next >= 16.3.0 clients 
 prefetches indefinitely (Phase 0 finding). Change the log prefix from `[spike]` to `[cache]` and
 the `keyPrefix` from `spike:` to `nextjs:`. Change nothing else — this file was proven working and
 every line of the build-phase guard and the LRU fallback is load-bearing (constraint 4).
+
+> **Corrected 2026-09-08.** A flat `nextjs:` prefix is the bug this phase's ISR work was reopened
+> to fix: cached HTML is not portable across builds, so a deploy re-served the previous build's
+> markup with dead asset hashes and unknown server-action ids. The prefix is
+> `nextjs:<buildId>:` — `resolveCacheKeyPrefix()` from `lib/cache/build-id.mjs` — and the handler
+> sweeps the previous build's namespace itself a minute after boot
+> (`lib/cache/sweep.mjs`, `CACHE_SWEEP_DELAY_MS`).
 
 - [ ] **Step 2: Copy and adapt the verification script**
 
@@ -3489,11 +3501,12 @@ curl -s https://<domain>/manchester | grep -o '<h1>[^<]*</h1>'
 ```
 Expected: `HTTP/2 200`, valid TLS, and the seeded listings rendering.
 
-- [ ] **Step 5: Prove the redeploy does not cold-start the cache — the last gate**
+- [ ] **Step 5: Prove the cache is warm across a restart and cold across a deploy — the last gate**
 
-Redeploy, then immediately request a page that was regenerated before the deploy and confirm it is
-served from cache rather than rebuilt. This is the same assertion `verify:isr` makes locally, run
-against production.
+Revised 2026-09-08. Restart the container without rebuilding, then immediately request a page that
+was regenerated before the restart, and confirm it is served from cache. Then redeploy and confirm
+the same URL comes back from the *new* build: its stylesheet 200s and its build id is in the HTML.
+Both are what `verify:isr` asserts locally, run against production.
 
 - [ ] **Step 6: Write `docs/DEPLOY.md` and commit**
 
@@ -3508,7 +3521,10 @@ git add -A && git commit -m "feat: dockerfile, worker entrypoint, coolify deploy
 - [ ] `pnpm seed` loads **50 cities, 20 categories, 200 listings** — with no ratings, no verified
       listings, and every city `is_indexable = false`.
 - [ ] `/[city]` renders those listings **over HTTPS on a real domain**.
-- [ ] `pnpm verify:isr` passes **in production**: a redeploy does not cold-start the ISR cache.
+- [ ] `pnpm verify:isr` passes **in production**: a runtime-regenerated page survives a container
+      restart of the same build, and a redeploy serves that URL fresh from the new build with a live
+      stylesheet. (Revised 2026-09-08 — "a redeploy does not cold-start the ISR cache" was the
+      original wording and is no longer the goal.)
 - [ ] `pnpm build:flags-off` and `pnpm build:flags-on` both pass with zero dead links.
 - [ ] `pnpm check:strings` finds no hardcoded niche strings.
 - [ ] `pnpm typecheck` and `pnpm test` are green in CI.
