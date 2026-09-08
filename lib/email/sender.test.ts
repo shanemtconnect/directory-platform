@@ -121,6 +121,38 @@ describe("sendEmail", () => {
     });
   });
 
+  it("never throws when the client cannot even be constructed", async () => {
+    construct.mockImplementation(() => {
+      throw new Error("bad api key");
+    });
+    resetEmailClient();
+
+    expect(await sendEmail(message)).toEqual({
+      sent: false,
+      reason: "rejected",
+      error: "bad api key",
+    });
+  });
+
+  it("gives up on a provider that never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      // The worker calls this while holding an advisory lock and a pooled
+      // connection. A send that never settles holds both for ever.
+      send.mockReturnValue(new Promise(() => {}));
+      const pending = sendEmail(message);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(await pending).toEqual({
+        sent: false,
+        reason: "rejected",
+        error: expect.stringContaining("10000ms"),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never throws when the transport itself fails", async () => {
     send.mockRejectedValue(new Error("ECONNRESET"));
 
