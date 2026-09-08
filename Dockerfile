@@ -35,13 +35,27 @@ ARG NEXT_PUBLIC_MAPTILER_KEY
 ENV NEXT_PUBLIC_MAPTILER_KEY=$NEXT_PUBLIC_MAPTILER_KEY
 ARG NEXT_PUBLIC_MEDIA_URL
 ENV NEXT_PUBLIC_MEDIA_URL=$NEXT_PUBLIC_MEDIA_URL
-# The build really does need a database: /cities and the city pages prerender
-# from it, so this has to point at a reachable read-only replica or the build
-# fails with ECONNREFUSED. The default below is only enough to let
-# lib/db/client load — it throws outright on an absent DATABASE_URL — which
-# gets you a clearer error than a missing variable would. Does not reach the
-# runner; that gets its own at boot.
-ARG DATABASE_URL=postgres://build:build@127.0.0.1:5432/build
+# The build really does need a reachable database, because `next build`
+# prerenders ISR pages that query it. Per .next/prerender-manifest.json those
+# are `app/cities/page.tsx`, `app/page.tsx` and `app/categories/page.tsx` —
+# each imports `@/lib/db/client` and exports `revalidate` without opting out of
+# static generation. (The review brief names only app/cities/page.tsx; the
+# manifest says otherwise, and all three have to be decoupled before this ARG
+# can go away. Decoupling them belongs to another task.)
+#
+# The two catch-all routes are already clear: their `generateStaticParams`
+# return [] precisely so the image can be built without a database.
+#
+# No default value on purpose. A placeholder URL here would let the build get
+# all the way to prerendering before dying on ECONNREFUSED against an address
+# nobody chose; the explicit check below names the missing build arg instead.
+ARG DATABASE_URL
+RUN test -n "$DATABASE_URL" || ( \
+      echo "DATABASE_URL build arg is required." >&2; \
+      echo "/, /cities and /categories prerender from the database, so 'next build'" >&2; \
+      echo "needs one that is reachable from this build container." >&2; \
+      echo "e.g. --build-arg DATABASE_URL=postgres://user:pw@host.docker.internal:5433/db" >&2; \
+      exit 1 )
 ENV DATABASE_URL=$DATABASE_URL
 RUN pnpm build
 
