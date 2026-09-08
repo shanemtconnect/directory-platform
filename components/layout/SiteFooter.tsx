@@ -4,6 +4,11 @@ import { features } from "@/lib/features/flags";
 import { footerRoutes } from "@/lib/features/navigation";
 import { getFooterMatrix, type FooterCategoryBlock } from "@/lib/db/queries/footer";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { now } from "@/lib/clock";
+import { Container } from "./Container";
+import { LEGAL_ROUTES } from "./legal-routes";
+
+const LINK = "text-ink/80 no-underline hover:text-primary hover:underline";
 
 /**
  * The matrix is what gives a directory crawl depth: a link on every page to the
@@ -31,43 +36,86 @@ async function loadMatrix(): Promise<FooterCategoryBlock[]> {
 export async function SiteFooter() {
   const routes = footerRoutes();
   const matrix = await loadMatrix();
+  /*
+   * The shell is ISR-cached, so this year is the year the page was last
+   * rendered rather than today's. Every route that reaches here revalidates
+   * within the hour, so the worst case is a stale copyright line for the first
+   * hour of the first of January — which is a better trade than shipping no
+   * date, and much better than forcing every page dynamic to render one.
+   */
+  const year = now().getFullYear();
 
   return (
-    <footer>
-      <nav aria-label="Footer">
-        <ul>
-          {routes.map((route) => (
-            <li key={route.href}>
-              <a href={route.href}>{route.label}</a>
-            </li>
-          ))}
-        </ul>
-      </nav>
+    <footer className="mt-auto border-t border-line bg-raised text-sm text-ink/80">
+      <Container className="py-10">
+        <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
+          <div className="max-w-sm">
+            <p className="font-heading text-base font-semibold text-ink">{siteConfig.name}</p>
+            <p className="mt-1">{siteConfig.tagline}</p>
+            <p className="mt-3">
+              <a href={`mailto:${siteConfig.supportEmail}`} className={LINK}>
+                {siteConfig.supportEmail}
+              </a>
+            </p>
+          </div>
 
-      {matrix.length > 0 && (
-        <nav aria-label={`${siteConfig.entity.Plural} by location`} data-testid="footer-link-matrix">
-          {matrix.map((block) => (
-            <section key={block.id}>
-              <h2>
-                <a href={block.href}>{block.name}</a>
-              </h2>
-              <ul>
-                {block.cities.map((city) => (
-                  <li key={city.href}>
-                    <a href={city.href}>
-                      {block.name} in {city.name}
+          <nav aria-label="Footer">
+            <ul className="grid list-none grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-1 md:grid-cols-2">
+              {routes.map((route) => (
+                <li key={route.href}>
+                  <a href={route.href} className={LINK}>
+                    {route.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </div>
+
+        {matrix.length > 0 && (
+          <nav
+            aria-label={`${siteConfig.entity.Plural} by location`}
+            data-testid="footer-link-matrix"
+            className="mt-10 border-t border-line pt-8"
+          >
+            <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+              {matrix.map((block) => (
+                <section key={block.id}>
+                  <h2 className="font-heading text-base font-semibold">
+                    <a href={block.href} className={LINK}>
+                      {block.name}
                     </a>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </nav>
-      )}
+                  </h2>
+                  <ul className="mt-2 list-none space-y-1">
+                    {block.cities.map((city) => (
+                      <li key={city.href}>
+                        <a href={city.href} className={LINK}>
+                          {block.name} in {city.name}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </nav>
+        )}
 
-      {/* No year: the shell is ISR-cached, so a rendered year would freeze at
-          whenever the page was last built and be wrong every January. */}
-      <p>&copy; {siteConfig.name}</p>
+        <div className="mt-10 flex flex-col gap-3 border-t border-line pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            &copy; {year} {siteConfig.legalEntity}. All rights reserved.
+          </p>
+          <ul className="flex list-none flex-wrap gap-x-6 gap-y-2">
+            {LEGAL_ROUTES.map((route) => (
+              <li key={route.href}>
+                <a href={route.href} className={LINK}>
+                  {route.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Container>
     </footer>
   );
 }

@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
 import { siteOrigin } from "@/lib/site-env";
 import { themeStyleVars } from "@/lib/theme";
+import { fontStyleVars } from "@/lib/fonts";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { organisationSchema, websiteSchema } from "@/lib/schema/builders";
 import { SiteHeader } from "@/components/layout/SiteHeader";
@@ -39,13 +40,28 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang={siteConfig.locale} style={themeStyleVars(siteConfig.theme)}>
+    /*
+     * The font vars go on last so the loaded families win.
+     * `themeStyleVars` writes the configured NAME, which is the right answer
+     * for a self-hosted family; `fontStyleVars` overwrites it with next/font's
+     * generated family plus its size-adjusted fallback whenever the config
+     * names one of the families lib/fonts.ts actually loads.
+     */
+    <html
+      lang={siteConfig.locale}
+      style={{ ...themeStyleVars(siteConfig.theme), ...fontStyleVars(siteConfig.theme) }}
+    >
       <body>
         {/* Global identity nodes, emitted once. Page-level nodes reference these by @id. */}
         <JsonLd data={organisationSchema()} />
         <JsonLd data={websiteSchema()} />
+        <a href="#main-content" className="skip-link">Skip to content</a>
         <SiteHeader />
-        {children}
+        {/* Every route renders its own <main>; this is the skip link's target
+            and what pushes the footer to the bottom of a short page. */}
+        <div id="main-content" tabIndex={-1} className="flex flex-1 flex-col">
+          {children}
+        </div>
         <SiteFooter />
       </body>
     </html>
