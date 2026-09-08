@@ -36,6 +36,13 @@
       "when": 1788869476307,
       "tag": "0004_small_purple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788870500000,
+      "tag": "0005_reconcile_parallel_migrations",
+      "breakpoints": true
     }
   ]
 }

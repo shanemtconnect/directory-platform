@@ -1,6 +1,6 @@
 {
-  "id": "11baeb36-6c4e-44fe-86e9-59016ab00603",
-  "prevId": "41f3aa97-e59e-423c-827c-e5dccd099134",
+  "id": "2c608cab-1728-4728-84d8-4a79c368c1d4",
+  "prevId": "11baeb36-6c4e-44fe-86e9-59016ab00603",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3748,7 +3748,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "redirects_status_code_check": {
+          "name": "redirects_status_code_check",
+          "value": "\"redirects\".\"status_code\" in (301, 302, 307, 308, 410)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.affiliates": {
