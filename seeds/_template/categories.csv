@@ -1,0 +1,4 @@
+name,singular,plural,sort_order
+Featured {{Plural}},featured {{singular}},featured {{plural}},0
+Independent {{Plural}},independent {{singular}},independent {{plural}},1
+Budget {{Plural}},budget {{singular}},budget {{plural}},2
