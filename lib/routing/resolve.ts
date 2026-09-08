@@ -76,6 +76,28 @@ async function rootPrefixRedirect(
  */
 const PAGE_NUMBER = /^[1-9]\d*$/;
 
+/**
+ * The largest page number that is a URL at all.
+ *
+ * `PAGE_NUMBER` alone is unbounded, and the pillar route queries BEFORE it can
+ * know whether the page exists: `listListings`/`countListings` run with
+ * `OFFSET (page - 1) * perPage`, and only the returned total tells the route to
+ * 404. So `/leeds/page/1000000` makes Postgres walk twenty million rows of
+ * index and throw them away — a deep-offset scan anyone can trigger by typing a
+ * URL, repeatedly, at whatever rate they like.
+ *
+ * Absurd values are worse than slow. Past 2^53 `Number()` rounds, so the OFFSET
+ * is not even the number that was asked for, and past 2^63 it overflows the
+ * bigint Postgres binds it to and the query errors — a 500 where a 404 belongs.
+ *
+ * 10,000 pages is `10_000 * perPage` listings in one city or category, which no
+ * directory this codebase builds will ever have; the real page-past-the-end
+ * 404 handles everything below it. Bounded on LENGTH first so the check never
+ * depends on a `Number()` that has already lost precision.
+ */
+export const MAX_PAGE_NUMBER = 10_000;
+const MAX_PAGE_DIGITS = String(MAX_PAGE_NUMBER).length;
+
 interface Pagination {
   rest: string[];
   page: number;
@@ -89,7 +111,13 @@ export function splitPagination(segments: string[]): Pagination | null {
   }
   const raw = segments[segments.length - 1] ?? "";
   if (!PAGE_NUMBER.test(raw)) return null;
-  return { rest: segments.slice(0, -2), page: Number(raw), explicit: true };
+  // Length before value: `Number("99999999999999999999")` is already wrong by
+  // the time it could be compared. PAGE_NUMBER has ruled out a leading zero, so
+  // digit count and magnitude agree.
+  if (raw.length > MAX_PAGE_DIGITS) return null;
+  const page = Number(raw);
+  if (page > MAX_PAGE_NUMBER) return null;
+  return { rest: segments.slice(0, -2), page, explicit: true };
 }
 
 /**

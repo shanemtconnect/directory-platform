@@ -110,6 +110,19 @@ test.describe("routing canonicalisation", () => {
     }
   });
 
+  test("an absurd page number 404s without querying for it", async ({ request }) => {
+    // /page/999 above is past the end but still plausible; these are the ones
+    // that reach Postgres as a deep OFFSET before anything can 404 them.
+    // 1000000 is 20 million rows of index walked and discarded per request, and
+    // the 20-digit form both overflows the bigint the OFFSET binds to and is
+    // already rounded by the time JavaScript sees it — a 500 where a 404
+    // belongs. Both are rejected in splitPagination, before a query runs.
+    for (const n of ["1000000", "99999999999999999999"]) {
+      const res = await request.get(`${CITY}/page/${n}`, { maxRedirects: 0 });
+      expect(res.status(), `${CITY}/page/${n}`).toBe(404);
+    }
+  });
+
   test("a listing detail page cannot be paginated", async ({ request }) => {
     // The unpaginated URL is the real page, so the 404 is about /page/3 alone.
     expect((await request.get(LISTING)).status()).toBe(200);

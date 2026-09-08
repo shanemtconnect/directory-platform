@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { withTestDb } from "@/test/db";
 import { allocateSlug, seedReservedSlugs, ROOT_SCOPE } from "./slugs";
-import { resolveRoute } from "./resolve";
+import { resolveRoute, splitPagination, normalisePathSegments, MAX_PAGE_NUMBER } from "./resolve";
 import { redirects } from "@/lib/db/schema";
 
 describe("resolveRoute — niche-national", () => {
@@ -209,6 +209,36 @@ describe("pagination canonicalisation", () => {
     });
   });
 
+  it("returns not-found for a page number no directory could have", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      // Bounded BEFORE the query, not after. The pillar page runs listListings
+      // and countListings with OFFSET (page - 1) * perPage and only then checks
+      // the page against the real total, so an unbounded number here is a deep
+      // offset scan Postgres performs in full before anything 404s — free for
+      // anyone who can type a URL. 20 digits also overflows a bigint and
+      // Number() rounds it, so the OFFSET Postgres receives is not even the
+      // number that was asked for.
+      for (const n of ["10001", "1000000", "99999999999999999999"]) {
+        expect(await resolveRoute(tx, ["leeds", "page", n], "niche-national"), n)
+          .toEqual({ kind: "not-found" });
+      }
+    });
+  });
+
+  it("still serves the last page number a real directory could reach", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      // The bound must not become the thing that 404s a genuine page. 10,000
+      // pages is far past any real city, and the page-past-the-end check in the
+      // route is what handles everything below it.
+      const r = await resolveRoute(tx, ["leeds", "page", "10000"], "niche-national");
+      expect(r).toEqual({ kind: "pillar", page: 10000, scope: { type: "city", cityId } });
+    });
+  });
+
   it("returns not-found for a bare /page/N", async () => {
     await withTestDb(async (tx) => {
       expect(await resolveRoute(tx, ["page", "1"], "niche-national")).toEqual({ kind: "not-found" });
@@ -324,5 +354,48 @@ describe("root-scope prefix redirects", () => {
       expect(await resolveRoute(tx, ["leeds", "no-such-listing"], "niche-national"))
         .toEqual({ kind: "not-found" });
     });
+  });
+});
+
+/**
+ * `splitPagination` is shared by the city catch-all and app/categories/[...category],
+ * so the bound has to live here rather than in either route.
+ */
+describe("splitPagination bounds", () => {
+  it("bounds at a number no real directory reaches", () => {
+    expect(MAX_PAGE_NUMBER).toBe(10_000);
+  });
+
+  it("accepts page numbers a directory can actually reach", () => {
+    expect(splitPagination(["leeds", "page", "2"]))
+      .toEqual({ rest: ["leeds"], page: 2, explicit: true });
+    expect(splitPagination(["leeds", "page", "10000"]))
+      .toEqual({ rest: ["leeds"], page: 10000, explicit: true });
+  });
+
+  it("returns null past MAX_PAGE_NUMBER", () => {
+    expect(splitPagination(["leeds", "page", "10001"])).toBeNull();
+    expect(splitPagination(["leeds", "page", "1000000"])).toBeNull();
+  });
+
+  it("rejects on digit count before Number() is ever called", () => {
+    // 2^53 and beyond: Number() rounds these silently, so a value-only check
+    // would be comparing a number nobody asked for. Longer still and the OFFSET
+    // overflows a bigint in Postgres.
+    for (const n of ["9007199254740993", "99999999999999999999", "1".repeat(400)]) {
+      expect(splitPagination(["leeds", "page", n]), n).toBeNull();
+    }
+  });
+
+  it("is what the category route inherits the bound from", () => {
+    expect(normalisePathSegments("/categories", ["barn-venues", "page", "1000000"]))
+      .toEqual({ kind: "not-found" });
+    expect(normalisePathSegments("/categories", ["barn-venues", "page", "2"]))
+      .toEqual({
+        kind: "ok",
+        segments: ["barn-venues"],
+        lowered: ["barn-venues", "page", "2"],
+        page: 2,
+      });
   });
 });
