@@ -34,12 +34,12 @@ export default function Error({
 
   return (
     <main>
-      <div className="prose py-6">
-        <p className="font-heading text-sm font-semibold tracking-widest text-muted uppercase">
+      <div className="py-6">
+        <p className="prose font-heading text-sm font-semibold tracking-widest text-muted uppercase">
           Something went wrong
         </p>
         <h1 className="mt-2">This page didn&rsquo;t load</h1>
-        <p className="text-lg text-muted">
+        <p className="prose text-lg text-muted">
           The fault is at our end, not yours. Trying again often works — the {e.plural}{" "}
           themselves are fine.
         </p>
@@ -66,7 +66,7 @@ export default function Error({
           </li>
         </ul>
 
-        <p className="mt-8 text-sm text-muted">
+        <p className="prose mt-8 text-sm text-muted">
           If it keeps happening, email{" "}
           <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a>
           {error.digest ? (

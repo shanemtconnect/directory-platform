@@ -187,7 +187,7 @@ function isUnreachableOrigin(siteUrl: string | undefined): boolean {
 }
 
 export function validateProductionConfig(
-  config: { legalEntity: string; supportEmail: string },
+  config: { legalEntity: string; supportEmail: string; dataController: string },
   env: Record<string, string | undefined>,
 ): void {
   if (env.NODE_ENV !== "production" || env.SITE_ENV === "staging") return;
@@ -196,6 +196,15 @@ export function validateProductionConfig(
   const problems: string[] = [];
   if (config.legalEntity.trim() === "" || config.legalEntity.trim().toUpperCase() === "TBC") {
     problems.push(`legalEntity is still "${config.legalEntity}"`);
+  }
+  // Defaults to legalEntity in config/site.config.ts (`legal.dataController`)
+  // and reaches the privacy policy as who is responsible for visitor data —
+  // same placeholder, same failure.
+  if (
+    config.dataController.trim() === "" ||
+    config.dataController.trim().toUpperCase() === "TBC"
+  ) {
+    problems.push(`dataController is still "${config.dataController}"`);
   }
   const email = config.supportEmail.trim().toLowerCase();
   if (PLACEHOLDER_EMAIL_DOMAINS.some((d) => email.endsWith(`@${d}`) || email.endsWith(`.${d}`))) {

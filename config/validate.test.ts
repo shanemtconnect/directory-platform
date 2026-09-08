@@ -157,8 +157,16 @@ describe("validateEnv", () => {
 // Requirement 7: placeholders are fine in a clone that has not been filled in
 // yet, and unacceptable in something serving the public.
 describe("validateProductionConfig", () => {
-  const placeholder = { legalEntity: "TBC", supportEmail: "hello@example.co.uk" };
-  const real = { legalEntity: "Example Directories Ltd", supportEmail: "hello@realsite.co.uk" };
+  const placeholder = {
+    legalEntity: "TBC",
+    supportEmail: "hello@example.co.uk",
+    dataController: "TBC",
+  };
+  const real = {
+    legalEntity: "Example Directories Ltd",
+    supportEmail: "hello@realsite.co.uk",
+    dataController: "Example Directories Ltd",
+  };
   const prod = { NODE_ENV: "production", NEXT_PUBLIC_SITE_URL: "https://realsite.co.uk" };
 
   it("throws on a production build that still says TBC", () => {
@@ -176,9 +184,19 @@ describe("validateProductionConfig", () => {
       .toThrow(/supportEmail/);
   });
 
+  // dataController defaults to the same "TBC" placeholder as legalEntity
+  // (config/site.config.ts's `legal.dataController`), and reaches the privacy
+  // policy naming who is legally responsible for visitor data — a wrong
+  // answer there is worse than a missing one, so it fails the build the same
+  // way legalEntity does.
+  it("throws on a production build with dataController still TBC", () => {
+    expect(() => validateProductionConfig({ ...real, dataController: "TBC" }, prod))
+      .toThrow(/dataController/);
+  });
+
   it("reports every placeholder, not just the first", () => {
     expect(() => validateProductionConfig(placeholder, prod))
-      .toThrow(/legalEntity[\s\S]*supportEmail/);
+      .toThrow(/legalEntity[\s\S]*dataController[\s\S]*supportEmail/);
   });
 
   it("passes on a production build once both are real", () => {

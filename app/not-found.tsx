@@ -26,12 +26,12 @@ export default function NotFound() {
 
   return (
     <main>
-      <div className="prose py-6">
-        <p className="font-heading text-sm font-semibold tracking-widest text-muted uppercase">
+      <div className="py-6">
+        <p className="prose font-heading text-sm font-semibold tracking-widest text-muted uppercase">
           404
         </p>
         <h1 className="mt-2">We can&rsquo;t find that page</h1>
-        <p className="text-lg text-muted">
+        <p className="prose text-lg text-muted">
           The address may be mistyped, or the {e.singular} that used to be here may have been
           removed. Nothing else is broken — start again from one of these.
         </p>
@@ -63,7 +63,7 @@ export default function NotFound() {
           </li>
         </ul>
 
-        <p className="mt-8 text-sm text-muted">
+        <p className="prose mt-8 text-sm text-muted">
           Followed a link from another site and think it should work?{" "}
           <a href={`mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent("Broken link")}`}>
             Tell us where it came from

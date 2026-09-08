@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
 import { countryProfile } from "@/lib/geo/countries";
+import { Confirm, Draft, formatDate } from "@/components/layout/legal-blocks";
 
 export const revalidate = 86400;
 
@@ -148,34 +148,4 @@ export default function PrivacyPage() {
       </div>
     </main>
   );
-}
-
-/** A clone-specific decision this repo must not make on anyone's behalf. */
-function Confirm({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-[var(--radius-token)] border border-dashed border-line bg-raised p-4 text-sm">
-      <strong>[Confirm with counsel]</strong> {children}
-    </p>
-  );
-}
-
-function Draft({ children }: { children: ReactNode }) {
-  return (
-    <p
-      role="note"
-      className="rounded-[var(--radius-token)] border-l-4 border-accent bg-raised p-4 text-sm"
-    >
-      <strong>Draft.</strong> {children}
-    </p>
-  );
-}
-
-/** Long form, in the site's own locale — this is a date a reader may rely on. */
-function formatDate(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString(siteConfig.locale, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }

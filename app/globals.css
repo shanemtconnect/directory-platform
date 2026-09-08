@@ -26,7 +26,6 @@
   --color-muted: #57534e;
   --color-line: #e5ded5;
   --color-danger: #b42318;
-  --color-success: #15803d;
 
   /* One type scale. Headings are fluid so a 3rem h1 does not overflow a 360px
      phone; body sizes are fixed because 16px is the floor on every device. */
