@@ -68,7 +68,10 @@ export const RUNTIME_ENV = ["NEXT_PUBLIC_SITE_URL", "DATABASE_URL", "REDIS_URL"]
  *   PAYPAL_*        — Phase 5, subscriptions. PAYPAL_WEBHOOK_ID left unset
  *                     silently stops renewals, so it belongs in the same gate.
  *   RESEND_API_KEY / EMAIL_FROM / ADMIN_NOTIFICATION_EMAIL
- *                   — Phase 5, transactional email.
+ *                   — transactional email. Wired, but deliberately staying
+ *                     here: lib/email/sender.ts logs and sends nothing when
+ *                     they are unset, so a preview environment without mail
+ *                     credentials still boots and still takes enquiries.
  *
  * Deliberately absent: TURNSTILE_* and MAPTILER_KEY. Both stay optional after
  * their phases ship — the form falls back to server-side rate limiting and the

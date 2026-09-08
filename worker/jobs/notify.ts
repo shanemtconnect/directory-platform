@@ -10,13 +10,7 @@ import { ADMIN_VIEWER } from "@/lib/db/viewer";
 import { sendEmail, type EmailMessage, type SendResult } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
-import {
-  NOTIFY_ENQUIRY,
-  NOTIFY_KINDS,
-  NOTIFY_SUBMISSION,
-  type EnquiryJobPayload,
-  type SubmissionJobPayload,
-} from "@/lib/email/notify";
+import { NOTIFY_ENQUIRY, NOTIFY_KINDS, NOTIFY_SUBMISSION } from "@/lib/email/notify";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -37,8 +31,27 @@ const BATCH = 25;
 /** Thrown to mark a job for retry. The message becomes `last_error`. */
 class Retryable extends Error {}
 
+let warnedNoAdmin = false;
+
 function adminAddress(): string {
-  return process.env.ADMIN_NOTIFICATION_EMAIL?.trim() ?? "";
+  const address = process.env.ADMIN_NOTIFICATION_EMAIL?.trim() ?? "";
+  if (address === "" && !warnedNoAdmin) {
+    // Otherwise every admin notification is dropped by sendEmail's
+    // no-recipient path and the queue looks perfectly healthy.
+    warnedNoAdmin = true;
+    console.warn("[worker] ADMIN_NOTIFICATION_EMAIL is unset — no admin notifications");
+  }
+  return address;
+}
+
+/**
+ * Payloads come back out of a jsonb column, so they are read rather than cast.
+ * A shape the handler cannot use is a bug worth seeing in `last_error`, not a
+ * TypeError that takes the whole tick down.
+ */
+function readId(payload: Record<string, unknown>, key: string): string | null {
+  const value = payload[key];
+  return typeof value === "string" && value !== "" ? value : null;
 }
 
 /**
@@ -54,9 +67,12 @@ async function deliver(message: EmailMessage): Promise<SendResult> {
   return result;
 }
 
-async function runEnquiry(db: Db, payload: EnquiryJobPayload): Promise<void> {
-  const data = await enquiryNotification(db, ADMIN_VIEWER, payload.enquiryId);
-  if (!data) throw new Retryable(`No enquiry ${payload.enquiryId}`);
+async function runEnquiry(db: Db, payload: Record<string, unknown>): Promise<void> {
+  const enquiryId = readId(payload, "enquiryId");
+  if (enquiryId === null) throw new Retryable("The job carries no enquiryId");
+
+  const data = await enquiryNotification(db, ADMIN_VIEWER, enquiryId);
+  if (!data) throw new Retryable(`No notifiable enquiry ${enquiryId}`);
 
   const content = {
     listingName: data.listing.name,
@@ -77,12 +93,17 @@ async function runEnquiry(db: Db, payload: EnquiryJobPayload): Promise<void> {
   await deliver({ to: adminAddress(), ...enquiryToAdmin(content) });
 }
 
-async function runSubmission(db: Db, payload: SubmissionJobPayload): Promise<void> {
+async function runSubmission(db: Db, payload: Record<string, unknown>): Promise<void> {
+  const listingId = readId(payload, "listingId");
+  const parkedId = readId(payload, "parkedId");
+
   let data: SubmissionNotification | null = null;
-  if (payload.listingId !== undefined) {
-    data = await submissionNotification(db, ADMIN_VIEWER, payload.listingId);
-  } else if (payload.parkedId !== undefined) {
-    data = await parkedSubmissionNotification(db, ADMIN_VIEWER, payload.parkedId);
+  if (listingId !== null) {
+    data = await submissionNotification(db, ADMIN_VIEWER, listingId);
+  } else if (parkedId !== null) {
+    data = await parkedSubmissionNotification(db, ADMIN_VIEWER, parkedId);
+  } else {
+    throw new Retryable("The job names neither a listing nor a parked submission");
   }
   if (!data) throw new Retryable("The submission this job names is not there");
 
@@ -97,9 +118,9 @@ async function runSubmission(db: Db, payload: SubmissionJobPayload): Promise<voi
 async function run(db: Db, job: QueuedJob): Promise<void> {
   switch (job.kind) {
     case NOTIFY_ENQUIRY:
-      return runEnquiry(db, job.payload as unknown as EnquiryJobPayload);
+      return runEnquiry(db, job.payload);
     case NOTIFY_SUBMISSION:
-      return runSubmission(db, job.payload as unknown as SubmissionJobPayload);
+      return runSubmission(db, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.

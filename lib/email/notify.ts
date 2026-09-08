@@ -24,16 +24,18 @@ export const NOTIFY_SUBMISSION = "notify.submission";
 /** The kinds worker/jobs/notify.ts claims. */
 export const NOTIFY_KINDS: string[] = [NOTIFY_ENQUIRY, NOTIFY_SUBMISSION];
 
-export interface EnquiryJobPayload {
-  enquiryId: string;
-}
+/**
+ * Job payloads are ids, never copies of the record. The worker re-reads the
+ * row when it runs, so a payload cannot go stale and personal data is not
+ * duplicated into a queue that outlives the thing it describes.
+ */
+export type EnquiryJobPayload = { enquiryId: string };
 
-export interface SubmissionJobPayload {
-  /** Set when the submission became a pending listing. */
-  listingId?: string;
-  /** Set instead when the town was unknown and the payload was parked. */
-  parkedId?: string;
-}
+export type SubmissionJobPayload =
+  /** The submission became a pending listing. */
+  | { listingId: string }
+  /** The town was not one we hold, so the payload was parked instead. */
+  | { parkedId: string };
 
 export async function notifyEnquiry(
   tx: TestDb,
@@ -42,7 +44,7 @@ export async function notifyEnquiry(
 ): Promise<void> {
   if (result.outcome !== "created") return;
   const payload: EnquiryJobPayload = { enquiryId: result.enquiryId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_ENQUIRY, payload: { ...payload } });
+  await enqueueJob(tx, viewer, { kind: NOTIFY_ENQUIRY, payload });
 }
 
 export async function notifySubmission(
@@ -54,5 +56,5 @@ export async function notifySubmission(
   if (result.outcome === "unknown-category") return;
   const payload: SubmissionJobPayload =
     result.outcome === "created" ? { listingId: result.listingId } : { parkedId: result.parkedId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_SUBMISSION, payload: { ...payload } });
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SUBMISSION, payload });
 }
