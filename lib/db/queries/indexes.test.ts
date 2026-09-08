@@ -130,3 +130,65 @@ describe("nearbyCities", () => {
     });
   });
 });
+
+describe("categoriesInCity — per-city slug", () => {
+  it("returns the city-scoped slug, not the national one", async () => {
+    await withTestDb(async (tx) => {
+      const { allocateSlug, ROOT_SCOPE } = await import("@/lib/routing/slugs");
+      const { randomUUID } = await import("node:crypto");
+      const { categories: cats, listings: ls } = await import("@/lib/db/schema");
+
+      const v = await makeVertical(tx);
+      const city = await makeCity(tx, "Leeds", "West Yorkshire");
+
+      // Occupy "barn-venues" in this city with something else, forcing the
+      // category's per-city slug to be disambiguated.
+      await allocateSlug(tx, {
+        parentScope: city, desired: "Barn Venues", kind: "listing", entityId: randomUUID(),
+      });
+
+      const catId = randomUUID();
+      const nationalSlug = await allocateSlug(tx, {
+        parentScope: ROOT_SCOPE, desired: "Barn Venues", kind: "category", entityId: catId,
+      });
+      await tx.insert(cats).values({
+        id: catId, verticalId: v, name: "Barn Venues", slug: nationalSlug,
+        singular: "barn venue", plural: "barn venues",
+      });
+      const cityScoped = await allocateSlug(tx, {
+        parentScope: city, desired: "Barn Venues", kind: "category", entityId: catId,
+      });
+      await makeListing(tx, { cityId: city, verticalId: v, primaryCategoryId: catId });
+
+      expect(nationalSlug).toBe("barn-venues");
+      expect(cityScoped).not.toBe("barn-venues");
+
+      const rows = await categoriesInCity(tx, PUBLIC_VIEWER, city);
+      // Linking the national slug here would be a hard 404.
+      expect(rows[0]?.slug).toBe(cityScoped);
+    });
+  });
+
+  it("drops a category that has listings but was never routed in this city", async () => {
+    await withTestDb(async (tx) => {
+      const { allocateSlug, ROOT_SCOPE } = await import("@/lib/routing/slugs");
+      const { randomUUID } = await import("node:crypto");
+      const { categories: cats } = await import("@/lib/db/schema");
+
+      const v = await makeVertical(tx);
+      const city = await makeCity(tx, "Leeds", "West Yorkshire");
+      const catId = randomUUID();
+      const nationalSlug = await allocateSlug(tx, {
+        parentScope: ROOT_SCOPE, desired: "Orphan Type", kind: "category", entityId: catId,
+      });
+      await tx.insert(cats).values({
+        id: catId, verticalId: v, name: "Orphan Type", slug: nationalSlug,
+        singular: "orphan", plural: "orphans",
+      });
+      await makeListing(tx, { cityId: city, verticalId: v, primaryCategoryId: catId });
+
+      // No per-city slug allocated, so no route exists — must not be linked.
+      expect(await categoriesInCity(tx, PUBLIC_VIEWER, city)).toHaveLength(0);
+    });
+  });
+});

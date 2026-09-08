@@ -23,7 +23,18 @@ export async function sitemapCities(tx: TestDb): Promise<SitemapEntry[]> {
   return rows.map((r) => ({ path: `/${r.slug}`, lastModified: r.updatedAt }));
 }
 
-/** Listings, but only those in a city that has earned indexing. */
+/**
+ * Every published listing, regardless of whether its city has earned indexing.
+ *
+ * This reverses an earlier, over-broad call. The indexing gate exists to keep
+ * THIN CITY PAGES out of the index — a city page with one listing is thin. A
+ * listing page is not: it carries a unique name, address, contact details and
+ * description. Excluding it also denied a paying owner organic visibility for a
+ * reason entirely outside their control, which is the wrong way round.
+ *
+ * One rule each: cities earn indexing on volume, listings are indexable on
+ * their own content.
+ */
 export async function sitemapListings(tx: TestDb): Promise<SitemapEntry[]> {
   const rows = await tx
     .select({
@@ -35,7 +46,6 @@ export async function sitemapListings(tx: TestDb): Promise<SitemapEntry[]> {
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(and(
       eq(listings.status, "published"),
-      eq(cities.isIndexable, true),
       eq(cities.isPublished, true),
     ))
     .orderBy(asc(cities.slug), asc(listings.slug));

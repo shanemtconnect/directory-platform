@@ -15,12 +15,26 @@ describe("sitemap queries", () => {
     });
   });
 
-  it("excludes listings in a noindexed city — no orphan URLs in the sitemap", async () => {
+  it("INCLUDES listings in a city that has not earned indexing", async () => {
+    // The gate keeps thin CITY pages out of the index. A listing page has its
+    // own unique content, and excluding it would deny a paying owner organic
+    // visibility for a reason outside their control.
     await withTestDb(async (tx) => {
       const v = await makeVertical(tx);
       const thin = await makeCity(tx, "Thintown", "Nowhere");
       const cat = await makeCategoryInCity(tx, v, thin, "Barn Venues");
-      await makeListing(tx, { cityId: thin, verticalId: v, primaryCategoryId: cat }, { name: "Hidden" });
+      await makeListing(tx, { cityId: thin, verticalId: v, primaryCategoryId: cat }, { name: "Solo" });
+      expect((await sitemapListings(tx)).map((e) => e.path)).toEqual(["/thintown/solo"]);
+    });
+  });
+
+  it("still excludes listings in an UNPUBLISHED city", async () => {
+    await withTestDb(async (tx) => {
+      const v = await makeVertical(tx);
+      const hidden = await makeCity(tx, "Hiddentown", "Nowhere");
+      const cat = await makeCategoryInCity(tx, v, hidden, "Barn Venues");
+      await makeListing(tx, { cityId: hidden, verticalId: v, primaryCategoryId: cat }, { name: "Nope" });
+      await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, hidden));
       expect(await sitemapListings(tx)).toHaveLength(0);
     });
   });

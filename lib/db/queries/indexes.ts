@@ -1,5 +1,5 @@
 import { sql, eq, and, gt, desc, asc } from "drizzle-orm";
-import { cities, categories, listings, verticals } from "@/lib/db/schema";
+import { cities, categories, listings, verticals, slugs } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -76,7 +76,16 @@ export async function listCategories(
   return isAdmin(viewer) ? rows : rows.filter((r) => r.listingCount > 0);
 }
 
-/** Categories present in one city — the pillar page's internal-linking block. */
+/**
+ * Categories present in one city — the pillar page's internal-linking block.
+ *
+ * `slug` comes from the SLUG REGISTRY scoped to this city, not from
+ * `categories.slug`. A category's per-city route is allocated in the city's
+ * namespace and can be disambiguated on collision (`big-category-2`), so
+ * building `/{city}/{national slug}` produces a 404 exactly when a collision
+ * happened. Joining the registry also drops any category that was never routed
+ * in this city rather than linking a dead URL.
+ */
 export async function categoriesInCity(
   tx: TestDb,
   viewer: Viewer,
@@ -84,7 +93,7 @@ export async function categoriesInCity(
 ): Promise<CategoryIndexRow[]> {
   const rows = await tx
     .select({
-      id: categories.id, name: categories.name, slug: categories.slug,
+      id: categories.id, name: categories.name, slug: slugs.slug,
       plural: categories.plural,
       listingCount: sql<number>`count(${listings.id})::int`,
     })
@@ -97,7 +106,15 @@ export async function categoriesInCity(
         isAdmin(viewer) ? sql`true` : eq(listings.status, "published"),
       ),
     )
-    .groupBy(categories.id, categories.name, categories.slug, categories.plural)
+    .innerJoin(
+      slugs,
+      and(
+        eq(slugs.parentScope, cityId),
+        eq(slugs.entityId, categories.id),
+        eq(slugs.kind, "category"),
+      ),
+    )
+    .groupBy(categories.id, categories.name, slugs.slug, categories.plural)
     .orderBy(desc(sql`count(${listings.id})`), asc(categories.name));
   return rows;
 }
