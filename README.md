@@ -110,6 +110,45 @@ now fails fast with a clear message if the arg is missing, rather than dying
 partway through prerendering on `ECONNREFUSED`. It is not baked into the
 runner; that gets its own at boot.
 
+### Migrating: the Coolify pre-deployment command
+
+```
+node scripts/migrate.mjs
+```
+
+Set that as the app's **pre-deployment command**. Coolify runs it in the newly
+built `runner` image with the service's environment, so it picks up
+`DATABASE_URL` on its own, and a non-zero exit aborts the deploy before the new
+container takes traffic — which is the whole point. A container that starts
+ahead of its own migration does not merely break the worker: `createSubmission`
+inserts into `job_queue` inside the same transaction as the enquiry, so a
+missing column takes down every enquiry form on the site.
+
+Not `pnpm db:migrate`. That is `drizzle-kit migrate`, and `drizzle-kit` is a
+devDependency the prod-only runner tree does not contain. `scripts/migrate.mjs`
+is plain ESM calling the same `migrate()` from
+`drizzle-orm/postgres-js/migrator` over the same `drizzle/` folder, importing
+only `drizzle-orm` and `postgres` — both runtime dependencies the image already
+carries for the app. The two write identical `drizzle.__drizzle_migrations`
+rows; `scripts/verify-image.sh` runs the script inside the built image against a
+throwaway database on every check.
+
+Re-running it is a no-op (`already up to date`), and it exits 1 with a message
+rather than hanging if `DATABASE_URL` is unset or the database is unreachable.
+
+### Seeding: from the worker container
+
+```bash
+docker exec <worker> ./node_modules/.bin/tsx scripts/seed-cli.ts
+```
+
+Once, against a freshly migrated database. It runs in the **worker**, not the
+runner: `scripts/seed-cli.ts` is TypeScript and needs tsx, which only the
+worker's dev-inclusive dependency tree has. With no argument the niche defaults
+to `slugify(siteConfig.entity.plural)`, which is also the directory name under
+`seeds/` — so a clone renames one folder and the command is unchanged. The seed
+is idempotent: rows already present are reported as skipped.
+
 **The app sweeps stale namespaces itself — there is nothing to configure.**
 Each build gets its own `nextjs:<buildId>:` namespace in Redis and nothing
 expires the previous one, so a minute after a new container connects to Redis
@@ -123,10 +162,10 @@ immediately would pull the cache out from under it. `CACHE_SWEEP_DELAY_MS`
 overrides it (default `60000`); raise it if your deploys take longer to drain.
 
 Do **not** wire `scripts/purge-cache.sh` in as a post-deployment command. The
-runner image is `node:24-alpine` carrying the standalone server and nothing
-else — no `scripts/`, no bash, no `redis-cli` — so it cannot run there. The
-script is for a host that has a `redis-cli` and a checkout, when you want to
-purge by hand:
+runner image is `node:24-alpine` carrying the standalone server, the migrations
+and `scripts/migrate.mjs` — and nothing else. No bash, no `redis-cli`, none of
+the rest of `scripts/`, so the purge script cannot run there. It is for a host
+that has a `redis-cli` and a checkout, when you want to purge by hand:
 
 ```bash
 REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh
