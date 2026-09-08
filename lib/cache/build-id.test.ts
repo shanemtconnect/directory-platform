@@ -8,7 +8,6 @@ import {
   normalizeBuildId,
   selectBuildId,
   cacheKeyPrefix,
-  buildIdFromKey,
   resolveCacheKeyPrefix,
 } from "@/lib/cache/build-id.mjs";
 
@@ -77,18 +76,6 @@ describe("cacheKeyPrefix", () => {
   it("namespaces by build id with a trailing separator", () => {
     expect(cacheKeyPrefix("abc")).toBe("nextjs:abc:");
     expect(CACHE_NAMESPACE).toBe("nextjs");
-  });
-
-  it("round-trips through buildIdFromKey", () => {
-    const key = `${cacheKeyPrefix("abc")}/manchester`;
-    expect(buildIdFromKey(key)).toBe("abc");
-  });
-
-  it("reads no build id out of a pre-namespacing key", () => {
-    // What every key looked like before this change: `nextjs:/manchester`.
-    expect(buildIdFromKey("nextjs:/manchester")).toBeNull();
-    expect(buildIdFromKey("nextjs:__sharedTags__")).toBeNull();
-    expect(buildIdFromKey("other:abc:/x")).toBeNull();
   });
 
   it("refuses to build a prefix from an invalid id", () => {
