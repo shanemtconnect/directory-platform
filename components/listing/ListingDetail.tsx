@@ -3,6 +3,8 @@ import { countryProfile } from "@/lib/geo/countries";
 import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { listings as listingsTable } from "@/lib/db/schema";
 import { EnquiryForm } from "./EnquiryForm";
+import { features } from "@/lib/features/flags";
+import { SaveButton } from "@/components/shortlist/SaveButton";
 
 type Listing = typeof listingsTable.$inferSelect;
 
@@ -91,6 +93,10 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
             ))}
           </ul>
         </section>
+      )}
+
+      {features.shortlist && (
+        <SaveButton listingId={listing.id} listingName={listing.name} />
       )}
 
       <EnquiryForm listingId={listing.id} listingName={listing.name} />

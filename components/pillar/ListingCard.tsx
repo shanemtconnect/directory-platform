@@ -1,5 +1,7 @@
 import type { listings as listingsTable } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
+import { features } from "@/lib/features/flags";
+import { SaveButton } from "@/components/shortlist/SaveButton";
 
 type Listing = typeof listingsTable.$inferSelect;
 
@@ -23,6 +25,7 @@ export function ListingCard({
       {listing.claimStatus === "verified" && <span data-testid="verified-badge"> · Verified</span>}
       {listing.claimStatus === "unclaimed" && <span> · Unverified</span>}
       {summary && <p>{summary}</p>}
+      {features.shortlist && <SaveButton listingId={listing.id} listingName={listing.name} />}
       {listing.openingHours != null && (
         <span
           data-testid="hours"
