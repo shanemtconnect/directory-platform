@@ -13,6 +13,7 @@ import {
 import { Pagination } from "@/components/pillar/Pagination";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { pillarSchema, breadcrumbSchema } from "@/lib/schema/builders";
+import { categoryEarnsIndexing } from "@/lib/db/queries/sitemap";
 
 export const revalidate = 3600;
 
@@ -204,6 +205,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     description: onPageOne ? base : `${base} — page ${parsed.page}`,
     alternates: { canonical: path },
     openGraph: { title, url: path },
-    robots: total === 0 ? { index: false, follow: true } : undefined,
+    // The SAME rule the sitemap applies, so a category cannot be advertised
+    // in one place and noindexed in the other.
+    robots: categoryEarnsIndexing(total) ? undefined : { index: false, follow: true },
   };
 }

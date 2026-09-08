@@ -24,10 +24,15 @@ export interface PillarHeading {
   listingCount: number;
 }
 
-/** Just the nouns, so a clone's entity words arrive from config, not from here. */
+/**
+ * Just the nouns, so a clone's entity words arrive from config, not from here.
+ * `Plural` is the title-cased form the H1 uses; `plural` is the sentence-cased
+ * one that follows a number.
+ */
 export interface EntityNouns {
   readonly singular: string;
   readonly plural: string;
+  readonly Plural: string;
 }
 
 /**
@@ -47,8 +52,8 @@ export async function pillarHeading(
 
     // The H1 uses the category's display NAME, title-cased; the counted
     // sub-heading uses its sentence-case nouns ("12 {plural} in Leeds").
-    let heading = entity.plural;
-    let nouns: EntityNouns = entity;
+    let heading = entity.Plural;
+    let nouns: { singular: string; plural: string } = entity;
     if (scope.type === "city-category") {
       const [cat] = await tx.select().from(categories).where(eq(categories.id, scope.categoryId)).limit(1);
       if (!cat) return null;
