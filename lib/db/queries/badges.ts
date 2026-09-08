@@ -1,6 +1,7 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { categories, cities, listings } from "@/lib/db/schema";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import { publishedListings } from "@/lib/db/queries/listings";
+import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
 /**
@@ -28,11 +29,6 @@ export interface BadgeListing {
   categoryName: string | null;
 }
 
-function visibilityFilter(viewer: Viewer): SQL {
-  if (isAdmin(viewer)) return sql`true`;
-  return eq(listings.status, "published");
-}
-
 export async function badgeListing(
   tx: TestDb,
   viewer: Viewer,
@@ -57,7 +53,7 @@ export async function badgeListing(
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))
-    .where(and(eq(listings.id, id), visibilityFilter(viewer)))
+    .where(and(eq(listings.id, id), publishedListings(viewer)))
     .limit(1);
 
   return row ?? null;

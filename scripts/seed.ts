@@ -243,14 +243,20 @@ export async function runSeed(tx: TestDb, niche: string = DEFAULT_NICHE): Promis
     report.listings++;
   }
 
+  // Intro copy FIRST. The gate needs both halves — listing count AND intro
+  // copy (global constraint 9) — and this ran the other way round, so the
+  // recompute judged every city on the copy it was about to be given and
+  // found none. The result was a fully seeded site where not one city was
+  // indexable: no nearby-city links, no sitemap city entries, every pillar
+  // page noindexed, and nothing to trigger a retry.
+  await writeIntroCopy(tx);
+
   // The denormalised count and the gate flag the pillar pages read. Goes
   // through the one helper rather than hand-rolled SQL, so the seed cannot
   // drift from the rule the importer and the approval flow apply.
   for (const cityId of cityIdByKey.values()) {
     await recomputeCityIndexability(tx, PUBLIC_VIEWER, cityId);
   }
-
-  await writeIntroCopy(tx);
 
   return report;
 }

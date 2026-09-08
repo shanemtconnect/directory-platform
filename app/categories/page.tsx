@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
+import { prerenderingWithoutDatabase } from "@/lib/db/build-phase";
 import { siteConfig } from "@/config/site.config";
 import { listCategories } from "@/lib/db/queries/indexes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
@@ -15,8 +16,18 @@ export const metadata: Metadata = {
   alternates: { canonical: "/categories" },
 };
 
+/**
+ * ISR, not force-dynamic and not force-static: `revalidate = 3600` above stays
+ * exactly as it was. `prerenderingWithoutDatabase()` covers the one case that
+ * used to make `next build` require a live database — the production build of
+ * a container image, where no DATABASE_URL is available — by prerendering the
+ * empty-state shell and letting ISR fill in the real page on the first request.
+ * See lib/db/build-phase.ts.
+ */
 export default async function CategoriesIndex() {
-  const categories = await listCategories(db as never, PUBLIC_VIEWER);
+  const categories = prerenderingWithoutDatabase()
+    ? []
+    : await listCategories(db as never, PUBLIC_VIEWER);
   const e = siteConfig.entity;
 
   return (

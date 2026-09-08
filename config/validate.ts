@@ -57,13 +57,23 @@ export const BUILD_ENV_OPTIONAL = ["NEXT_PUBLIC_MAPTILER_KEY", "NEXT_PUBLIC_MEDI
  * actually wired today. Refusing to start over a key nothing reads yet is an
  * outage the code chose to have.
  */
-export const RUNTIME_ENV = ["NEXT_PUBLIC_SITE_URL", "DATABASE_URL", "REDIS_URL"] as const;
+export const RUNTIME_ENV = [
+  "NEXT_PUBLIC_SITE_URL",
+  "DATABASE_URL",
+  "REDIS_URL",
+  // Better Auth is wired (lib/auth/*, /login, /account, /admin). Without a
+  // secret every session cookie is signed with a key the next boot does not
+  // have, and without the URL the callbacks point at the wrong origin. A site
+  // that starts in either state serves a quietly broken login, which is worse
+  // than one that refuses to start.
+  "BETTER_AUTH_SECRET",
+  "BETTER_AUTH_URL",
+] as const;
 
 /**
  * Not enforced yet. Each group moves into RUNTIME_ENV when the phase that reads
  * it lands, so the list stays a checklist rather than folklore:
  *
- *   BETTER_AUTH_*   — Phase 2, accounts and the claim flow.
  *   R2_*            — Phase 2, media upload and claim-document storage.
  *   PAYPAL_*        — Phase 5, subscriptions. PAYPAL_WEBHOOK_ID left unset
  *                     silently stops renewals, so it belongs in the same gate.
@@ -78,8 +88,6 @@ export const RUNTIME_ENV = ["NEXT_PUBLIC_SITE_URL", "DATABASE_URL", "REDIS_URL"]
  * map is never required to see the listings — so neither should ever fail a boot.
  */
 export const RUNTIME_ENV_PHASE5 = [
-  "BETTER_AUTH_SECRET",
-  "BETTER_AUTH_URL",
   "R2_ACCOUNT_ID",
   "R2_ACCESS_KEY_ID",
   "R2_SECRET_ACCESS_KEY",

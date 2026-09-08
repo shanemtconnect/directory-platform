@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { and, asc, eq, sql, count, type SQL } from "drizzle-orm";
+import { and, asc, eq, sql, count } from "drizzle-orm";
 import {
   categories, cities, listings, shortlistItems, shortlists,
 } from "@/lib/db/schema";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import { publicListingColumns, publishedListings } from "@/lib/db/queries/listings";
+import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
 /**
@@ -62,12 +63,6 @@ function token(): string {
 
 export const newShareId = token;
 export const newCookieId = token;
-
-/** The published gate. Admins see everything; everyone else sees published. */
-function visibilityFilter(viewer: Viewer): SQL {
-  if (isAdmin(viewer)) return sql`true`;
-  return eq(listings.status, "published");
-}
 
 export interface ShortlistRow {
   id: string;
@@ -181,7 +176,10 @@ export async function listShortlistEntries(
       categoryName: categories.name,
       tier: listings.tier,
       shortDescription: listings.shortDescription,
-      customFields: listings.customFields,
+      // The stripped projection, not the raw column: `custom_fields` carries a
+      // `submission` blob (the submitter's email and IP) that no reader of a
+      // shortlist may see.
+      customFields: publicListingColumns.customFields,
       note: shortlistItems.note,
       sortOrder: shortlistItems.sortOrder,
     })
@@ -189,7 +187,7 @@ export async function listShortlistEntries(
     .innerJoin(listings, eq(listings.id, shortlistItems.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .innerJoin(categories, eq(categories.id, listings.primaryCategoryId))
-    .where(and(eq(shortlistItems.shortlistId, shortlistId), visibilityFilter(viewer)))
+    .where(and(eq(shortlistItems.shortlistId, shortlistId), publishedListings(viewer)))
     .orderBy(asc(shortlistItems.sortOrder), asc(shortlistItems.createdAt));
 
   return rows.map((r) => ({
@@ -231,21 +229,20 @@ export async function addListingToShortlist(
   listingId: string,
 ): Promise<AddResult> {
   if (!isUuid(shortlistId) || !isUuid(listingId)) return { ok: false, reason: "not-found" };
-  const anyStatus = isAdmin(viewer);
 
   const inserted = (await tx.execute(sql`
     insert into shortlist_items (shortlist_id, listing_id, sort_order)
     select
       ${shortlistId}::uuid,
-      l.id,
+      listings.id,
       coalesce(
         (select max(si.sort_order) + 1 from shortlist_items si
           where si.shortlist_id = ${shortlistId}::uuid),
         0
       )
-    from listings l
-    where l.id = ${listingId}::uuid
-      and (${anyStatus}::boolean or l.status = 'published')
+    from listings
+    where listings.id = ${listingId}::uuid
+      and ${publishedListings(viewer)}
       and (
         select count(*) from shortlist_items si2
          where si2.shortlist_id = ${shortlistId}::uuid

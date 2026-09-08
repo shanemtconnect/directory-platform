@@ -9,6 +9,7 @@ import {
   createSubmission,
   findSubmissionDuplicate,
   resolveSubmittedCity,
+  setListingStatus,
   submissionOptions,
   type SubmissionInput,
 } from "./submissions";
@@ -43,7 +44,7 @@ describe("createSubmission", () => {
   it("files a pending, public, unclaimed listing that is not live", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
 
       expect(result.outcome).toBe("created");
       if (result.outcome !== "created") return;
@@ -62,7 +63,7 @@ describe("createSubmission", () => {
   it("never sets a rating or a verified state from a form", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
       if (result.outcome !== "created") throw new Error("expected a created listing");
 
       const row = await readListing(tx, result.listingId);
@@ -78,6 +79,7 @@ describe("createSubmission", () => {
       const ctx = await makeScaffold(tx);
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: ctx.primaryCategoryId, requestedTier: "premium" }),
       );
       if (result.outcome !== "created") throw new Error("expected a created listing");
@@ -92,7 +94,7 @@ describe("createSubmission", () => {
   it("keeps the submitter's email off the published contact details", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
       if (result.outcome !== "created") throw new Error("expected a created listing");
 
       const row = await readListing(tx, result.listingId);
@@ -108,6 +110,7 @@ describe("createSubmission", () => {
 
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
       );
 
@@ -123,6 +126,7 @@ describe("createSubmission", () => {
       const ctx = await makeScaffold(tx);
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: ctx.primaryCategoryId, city: "Otley" }),
       );
       if (result.outcome !== "parked") throw new Error("expected a parked submission");
@@ -146,6 +150,7 @@ describe("createSubmission", () => {
       await makeScaffold(tx);
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: "00000000-0000-0000-0000-000000000000" }),
       );
       expect(result.outcome).toBe("unknown-category");
@@ -160,7 +165,7 @@ describe("createSubmission", () => {
         .set({ isActive: false })
         .where(eq(categories.id, ctx.primaryCategoryId));
 
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
       expect(result.outcome).toBe("unknown-category");
     });
   });
@@ -174,6 +179,7 @@ describe("createSubmission", () => {
 
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: ctx.primaryCategoryId, city: "newport", region: "Isle of Wight" }),
       );
       if (result.outcome !== "created") throw new Error("expected a created listing");
@@ -335,6 +341,120 @@ describe("submissionOptions", () => {
       const options = await submissionOptions(tx, PUBLIC_VIEWER);
       expect(options.regions).not.toContain("Rutland");
       expect(options.regions).toContain("West Yorkshire");
+    });
+  });
+});
+
+
+/**
+ * Global constraint 9. The gate is the difference between a directory Google
+ * indexes and one it ignores, and nothing outside the seed and the importer
+ * used to move it — a listing could go live and leave its city noindexed with
+ * nothing to trigger a retry.
+ */
+describe("setListingStatus and the indexing gate", () => {
+  const INTRO = "<p>Leeds has a good spread of places.</p>";
+
+  async function cityRow(tx: TestDb, cityId: string) {
+    const [row] = await tx
+      .select({ isIndexable: cities.isIndexable, listingCount: cities.listingCount })
+      .from(cities)
+      .where(eq(cities.id, cityId))
+      .limit(1);
+    return row;
+  }
+
+  it("flips is_indexable when the third listing in a city is published", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await tx.update(cities).set({ introHtml: INTRO }).where(eq(cities.id, ctx.cityId));
+
+      await makeListing(tx, ctx, { status: "published" });
+      await makeListing(tx, ctx, { status: "published" });
+      const third = await makeListing(tx, ctx, { status: "pending" });
+
+      // Two published listings is one short of siteConfig.seo.minListingsToIndex.
+      await setListingStatus(tx, ADMIN, third, "archived");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 2 });
+
+      const result = await setListingStatus(tx, ADMIN, third, "published");
+      expect(result).toMatchObject({ outcome: "changed", from: "archived", to: "published" });
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: true, listingCount: 3 });
+    });
+  });
+
+  it("keeps the gate shut when the city has no intro copy", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { status: "published" });
+      await makeListing(tx, ctx, { status: "published" });
+      const third = await makeListing(tx, ctx, { status: "pending" });
+
+      await setListingStatus(tx, ADMIN, third, "published");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 3 });
+    });
+  });
+
+  it("closes the gate again when a listing is taken down", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await tx.update(cities).set({ introHtml: INTRO }).where(eq(cities.id, ctx.cityId));
+      await makeListing(tx, ctx, { status: "published" });
+      await makeListing(tx, ctx, { status: "published" });
+      const third = await makeListing(tx, ctx, { status: "published" });
+      await setListingStatus(tx, ADMIN, third, "published");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: true });
+
+      await setListingStatus(tx, ADMIN, third, "removed");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 2 });
+    });
+  });
+
+  it("stamps published_at once and does not rewrite it on a republish", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const id = await makeListing(tx, ctx, { status: "pending", publishedAt: null });
+
+      await setListingStatus(tx, ADMIN, id, "published");
+      const first = (await readListing(tx, id))?.publishedAt;
+      expect(first).not.toBeNull();
+
+      await setListingStatus(tx, ADMIN, id, "archived");
+      await setListingStatus(tx, ADMIN, id, "published");
+      expect((await readListing(tx, id))?.publishedAt).toEqual(first);
+    });
+  });
+
+  it("is admin only, and says so without touching the row", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const id = await makeListing(tx, ctx, { status: "pending" });
+
+      expect(await setListingStatus(tx, PUBLIC_VIEWER, id, "published"))
+        .toEqual({ outcome: "forbidden" });
+      expect((await readListing(tx, id))?.status).toBe("pending");
+    });
+  });
+
+  it("reports an unknown listing rather than silently succeeding", async () => {
+    await withTestDb(async (tx) => {
+      expect(await setListingStatus(tx, ADMIN, "00000000-0000-4000-8000-0000000000ff", "published"))
+        .toEqual({ outcome: "unknown-listing" });
+    });
+  });
+
+  it("recomputes the city on a submission too, so a filed row cannot skip the gate", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await tx.update(cities).set({ introHtml: INTRO, listingCount: 99, isIndexable: true })
+        .where(eq(cities.id, ctx.cityId));
+      await makeListing(tx, ctx, { status: "published" });
+
+      await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
+
+      // The stale count is corrected and the gate closes: one published
+      // listing, and a pending submission is not a published listing.
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 1 });
     });
   });
 });

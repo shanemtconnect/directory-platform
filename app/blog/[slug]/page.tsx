@@ -10,8 +10,23 @@ import { pageOpenGraph } from "@/lib/seo/open-graph";
 
 export const revalidate = 3600;
 
-/** Unknown slugs 404 rather than rendering an empty shell. */
-export const dynamicParams = false;
+/**
+ * `true`, and the 404 comes from the page itself.
+ *
+ * `dynamicParams = false` was doing the 404 instead, and with a Redis cache
+ * handler that is fatal rather than strict: the prerendered variants of a
+ * dynamic route are never written to Redis during `next build` (the handler
+ * refuses to touch Redis in the build phase, deliberately), so the first
+ * request for a real post is a cache MISS with no fallback allowed — Next
+ * logs `NoFallbackError` and serves 404 for a post that exists. Every blog post
+ * in a freshly deployed container was unreachable until something else warmed
+ * the cache.
+ *
+ * Nothing is lost by allowing the render: `getPost` returns null for any slug
+ * that is not a file on disk, and the component below calls `notFound()` — so
+ * an unknown slug is still a 404, just one this route decides for itself.
+ */
+export const dynamicParams = true;
 
 interface Props {
   params: Promise<{ slug: string }>;

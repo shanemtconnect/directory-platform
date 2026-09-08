@@ -28,10 +28,6 @@ async function chromeOn(page: Page, path: string, expectedStatus = 200): Promise
   ).toBeGreaterThan(0);
 }
 
-// FIXME(Task 6): the 404 page does not render the shared chrome yet. Flip to
-// test.describe once the not-found/layout task merges.
-test.fixme(true, "blocked on Task 6: the 404 page renders without header or footer");
-
 test.describe("site chrome", () => {
   test("every page type renders the header and the footer", async ({ page }) => {
     await page.goto("/richmond-north-yorkshire");

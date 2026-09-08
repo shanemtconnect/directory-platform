@@ -14,40 +14,59 @@ import { siteConfig } from "@/config/site.config";
 const googleConfigured =
   Boolean(process.env.GOOGLE_CLIENT_ID) && Boolean(process.env.GOOGLE_CLIENT_SECRET);
 
-export const auth = betterAuth({
-  database: drizzleAdapter(db, { provider: "pg", schema }),
-  baseURL: process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_SITE_URL,
-  secret: process.env.BETTER_AUTH_SECRET,
-  appName: siteConfig.name,
+/**
+ * Built on FIRST USE, not on import.
+ *
+ * `drizzleAdapter(db, ...)` reads the database handle as it is constructed, so
+ * a module-scope `betterAuth({...})` opened a connection the moment anything
+ * imported this file — including `next build` collecting page data for /admin,
+ * which needs no database at all. Deferring it is what lets the image be built
+ * without one; `instrumentation.ts` still refuses to boot a server that has no
+ * DATABASE_URL, BETTER_AUTH_SECRET or BETTER_AUTH_URL.
+ */
+let instance: ReturnType<typeof build> | null = null;
 
-  emailAndPassword: {
-    enabled: true,
-    // Owners claim a business, so a working address matters more than a fast
-    // signup. Phase 4's claim ladder leans on the address being real.
-    requireEmailVerification: false,
-    minPasswordLength: 10,
-  },
+function build() {
+  return betterAuth({
+    database: drizzleAdapter(db, { provider: "pg", schema }),
+    baseURL: process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_SITE_URL,
+    secret: process.env.BETTER_AUTH_SECRET,
+    appName: siteConfig.name,
 
-  socialProviders: googleConfigured
-    ? {
-        google: {
-          clientId: process.env.GOOGLE_CLIENT_ID!,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        },
-      }
-    : {},
+    emailAndPassword: {
+      enabled: true,
+      // Owners claim a business, so a working address matters more than a fast
+      // signup. Phase 4's claim ladder leans on the address being real.
+      requireEmailVerification: false,
+      minPasswordLength: 10,
+    },
 
-  session: {
-    expiresIn: 60 * 60 * 24 * 30,
-    updateAge: 60 * 60 * 24,
-    cookieCache: { enabled: true, maxAge: 60 * 5 },
-  },
+    socialProviders: googleConfigured
+      ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID!,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+          },
+        }
+      : {},
 
-  advanced: {
-    // Cookies are already same-site; this keeps the prefix predictable across
-    // the many domains this codebase gets cloned onto.
-    cookiePrefix: "dir",
-  },
-});
+    session: {
+      expiresIn: 60 * 60 * 24 * 30,
+      updateAge: 60 * 60 * 24,
+      cookieCache: { enabled: true, maxAge: 60 * 5 },
+    },
 
-export type Auth = typeof auth;
+    advanced: {
+      // Cookies are already same-site; this keeps the prefix predictable across
+      // the many domains this codebase gets cloned onto.
+      cookiePrefix: "dir",
+    },
+  });
+}
+
+export function getAuth(): ReturnType<typeof build> {
+  instance ??= build();
+  return instance;
+}
+
+export type Auth = ReturnType<typeof build>;

@@ -82,7 +82,7 @@ export async function submitListing(
     const duplicate = await findSubmissionDuplicate(handle, PUBLIC_VIEWER, values);
     if (duplicate) return { kind: "duplicate" as const, duplicate };
 
-    const saved = await createSubmission(handle, { ...values, ip });
+    const saved = await createSubmission(handle, PUBLIC_VIEWER, { ...values, ip });
     await notifySubmission(handle, PUBLIC_VIEWER, saved);
     return { kind: "saved" as const, saved };
   });

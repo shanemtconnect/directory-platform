@@ -36,11 +36,6 @@ function advertisedHrefs(): { href: string; where: string }[] {
     .sort((a, b) => a.href.localeCompare(b.href));
 }
 
-// FIXME(Task 4): navigation.ts still advertises /guides while the route is
-// /blog, so this fails until the metadata/sitemap task merges. Drop this line
-// on merge.
-test.fixme(true, "blocked on Task 4: navigation.ts advertises /guides, route is /blog");
-
 test.describe("advertised routes", () => {
   test("every nav, footer and sitemap href returns 200", async ({ request }) => {
     const hrefs = advertisedHrefs();

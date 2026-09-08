@@ -8,11 +8,39 @@ import {
 } from "@/lib/db/queries/listings";
 import type { Db } from "@/lib/db/client";
 
+/**
+ * The public projection of an image row.
+ *
+ * `select()` on `listing_images` returns the operational columns too —
+ * `derivatives_attempts` and `derivatives_error`, which is a raw worker error
+ * string (a sharp decode failure, an R2 status line) written for an operator
+ * and not for a visitor. Both reach the browser inside the RSC payload the
+ * moment the page renders a gallery. Same rule as `publicListingColumns`:
+ * project what the page renders, nothing else.
+ */
+export const publicImageColumns = {
+  id: listingImages.id,
+  listingId: listingImages.listingId,
+  storagePath: listingImages.storagePath,
+  derivatives: listingImages.derivatives,
+  alt: listingImages.alt,
+  width: listingImages.width,
+  height: listingImages.height,
+  sortOrder: listingImages.sortOrder,
+  isPrimary: listingImages.isPrimary,
+} as const;
+
+/** What a reader is allowed to see. Never `listingImages.$inferSelect`. */
+export type PublicListingImage = Omit<
+  typeof listingImages.$inferSelect,
+  "createdAt" | "updatedAt" | "derivativesAttempts" | "derivativesError"
+>;
+
 export type ListingDetail = {
   listing: PublicListing;
   city: typeof cities.$inferSelect;
   category: typeof categories.$inferSelect | null;
-  images: (typeof listingImages.$inferSelect)[];
+  images: PublicListingImage[];
 };
 
 /** Same visibility gate as the pillar query: published only, unless admin. */
@@ -31,7 +59,7 @@ export async function getListingDetail(
   if (!row) return null;
 
   const images = await tx
-    .select()
+    .select(publicImageColumns)
     .from(listingImages)
     .where(eq(listingImages.listingId, listingId))
     .orderBy(listingImages.sortOrder);

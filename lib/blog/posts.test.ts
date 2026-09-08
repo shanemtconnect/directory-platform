@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   escapeHtml,
   parseFrontmatter,
@@ -201,6 +201,21 @@ describe("posts on disk", () => {
     expect(getPostSlugs()).toEqual(posts.map((p) => p.slug));
   });
 
+  it("returns no demo posts when the demo flag is unset", () => {
+    // The demo directory is opt-in: a clone that never sets the flag ships an
+    // empty blog rather than three articles about someone else's niche.
+    vi.stubEnv("NEXT_PUBLIC_DEMO_MODE", undefined);
+    try {
+      expect(getAllPosts()).toEqual([]);
+      expect(getPostSlugs()).toEqual([]);
+      const demoSlug = posts[0]?.slug;
+      expect(demoSlug).toBeDefined();
+      if (demoSlug) expect(getPost(demoSlug)).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("getPost round-trips a real slug and rejects unknown or traversing slugs", () => {
     const first = posts[0];
     expect(first).toBeDefined();
@@ -224,12 +239,12 @@ describe("formatDate", () => {
 describe("articleSchema", () => {
   const base = ["---", "title: T", "description: D", "date: 2026-01-02", "---", "", "Body."].join("\n");
 
-  it("emits the Article fields a post genuinely has", () => {
+  it("emits the BlogPosting fields a post genuinely has", () => {
     const post = toPost("a-slug", base.replace("date:", "author: Editorial team\ndate:"));
     expect(post).not.toBeNull();
     if (!post) return;
     const schema = articleSchema(post);
-    expect(schema["@type"]).toBe("Article");
+    expect(schema["@type"]).toBe("BlogPosting");
     expect(schema["headline"]).toBe("T");
     expect(schema["datePublished"]).toBe("2026-01-02");
     expect(schema["dateModified"]).toBe("2026-01-02");
