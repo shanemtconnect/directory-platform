@@ -2,10 +2,12 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { auditLog, categories, cities, listings } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/import/guardrails";
+import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
 import { allocateSlug } from "@/lib/routing/slugs";
 import { now } from "@/lib/clock";
 import type { TierName } from "@/config/types";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import type { listingStatus } from "@/lib/db/schema/enums";
 import type { TestDb } from "@/test/db";
 
 /**
@@ -149,7 +151,7 @@ export async function findSubmissionDuplicate(
   viewer: Viewer,
   input: Pick<SubmissionInput, "name" | "city" | "postcode" | "phone">,
 ): Promise<DuplicateMatch | null> {
-  const hit = await findDuplicate(tx, {
+  const hit = await findDuplicate(tx, viewer, {
     name: input.name.trim(),
     city: input.city.trim(),
     // findDuplicate reads only name, postcode and phone; category is part of
@@ -195,6 +197,7 @@ export async function findSubmissionDuplicate(
  */
 export async function createSubmission(
   tx: TestDb,
+  viewer: Viewer,
   input: SubmissionInput,
 ): Promise<SubmissionResult> {
   const [category] = await tx
@@ -263,5 +266,74 @@ export async function createSubmission(
     customFields: { submission },
   });
 
+  // Global constraint 9: the gate is recomputed by whatever changes a listing's
+  // status or city, in the SAME transaction as the change. A submission files a
+  // `pending` row, so today this cannot move the count — and that is exactly
+  // why it is here. The rule is "every write path recomputes", not "the write
+  // paths we think can matter recompute": the day a submission lands published,
+  // or a city's threshold changes underneath it, this is already correct.
+  await recomputeCityIndexability(tx, viewer, cityId);
+
   return { outcome: "created", listingId: id, slug };
+}
+
+export type ListingStatus = (typeof listingStatus.enumValues)[number];
+
+export type StatusChange =
+  | { outcome: "changed"; listingId: string; from: ListingStatus; to: ListingStatus }
+  | { outcome: "unknown-listing" }
+  | { outcome: "forbidden" };
+
+/**
+ * THE status change. Approval, rejection, publication and takedown are all this
+ * one function, because all four are the same event to the indexing gate.
+ *
+ * The status write and `recomputeCityIndexability` run on the same handle, so a
+ * caller that wraps them in a transaction gets both or neither. A city cannot
+ * end up advertising a listing count it does not have, which is what a status
+ * change that forgot to recompute used to leave behind: the third listing in a
+ * city would publish, the city would stay `is_indexable = false`, and the
+ * pillar page would carry `noindex` for ever with nothing to trigger a retry.
+ *
+ * Admin only. Status is the difference between a moderation queue and the open
+ * web, so it is not something a viewer can change on their own behalf.
+ */
+export async function setListingStatus(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+  status: ListingStatus,
+): Promise<StatusChange> {
+  if (!isAdmin(viewer)) return { outcome: "forbidden" };
+
+  const [before] = await tx
+    .select({
+      id: listings.id,
+      status: listings.status,
+      cityId: listings.cityId,
+      publishedAt: listings.publishedAt,
+    })
+    .from(listings)
+    .where(eq(listings.id, listingId))
+    .limit(1);
+  if (!before) return { outcome: "unknown-listing" };
+
+  await tx
+    .update(listings)
+    .set({
+      status,
+      updatedAt: now(),
+      // Stamped once, the first time it goes live, and keyed on the column
+      // rather than on the previous status. A republish after a takedown is
+      // not a new publication date, and rewriting it would reorder the site's
+      // own "recently added" every time a moderator toggled something.
+      ...(status === "published" && before.publishedAt === null
+        ? { publishedAt: now() }
+        : {}),
+    })
+    .where(eq(listings.id, listingId));
+
+  await recomputeCityIndexability(tx, viewer, before.cityId);
+
+  return { outcome: "changed", listingId, from: before.status, to: status };
 }

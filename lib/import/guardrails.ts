@@ -109,8 +109,16 @@ export async function resolveImportCity(tx: Db, row: ImportRow): Promise<string>
  * no postcode we fall back to the name plus a contact point that identifies
  * the same business. Name alone is not enough: two unrelated "The Old Barn"s
  * exist and suppressing both is its own harm.
+ *
+ * Takes a viewer (global constraint 6) and deliberately ignores it: a
+ * suppression is a takedown, and a takedown is not viewer-dependent. There is
+ * no role for which a suppressed business may be re-imported.
  */
-export async function checkSuppressed(tx: Db, row: ImportRow): Promise<boolean> {
+export async function checkSuppressed(
+  tx: Db,
+  _viewer: Viewer,
+  row: ImportRow,
+): Promise<boolean> {
   const nameMatch = eq(suppressions.nameNormalised, normaliseName(row.name));
 
   let identity: SQL | undefined;
@@ -143,9 +151,17 @@ export async function checkSuppressed(tx: Db, row: ImportRow): Promise<boolean> 
  * a duplicate check that compared them literally let "THE OLD BARN" through as
  * a new business while the suppression list treated it as the same one — two
  * guardrails disagreeing about identity.
+ *
+ * Takes a viewer (global constraint 6) and deliberately ignores it: the match
+ * runs over EVERY listing, published or not, because a second row for a
+ * business that is merely pending is still a duplicate. Narrowing it to what
+ * the caller may see would let anyone create the duplicate the guardrail
+ * exists to prevent. What the caller is then TOLD about the match is
+ * viewer-dependent, and that decision lives in `findSubmissionDuplicate`.
  */
 export async function findDuplicate(
   tx: Db,
+  _viewer: Viewer,
   row: ImportRow,
 ): Promise<{ listingId: string; reason: string } | null> {
   const clauses: SQL[] = [];
@@ -241,12 +257,12 @@ export async function importRows(
       report.notes.push(`${row.name}: rejected — description present in a scraped import; facts only`);
       continue;
     }
-    if (await checkSuppressed(tx, row)) {
+    if (await checkSuppressed(tx, viewer, row)) {
       report.suppressed++;
       report.notes.push(`${row.name}: skipped — on the suppression list`);
       continue;
     }
-    const dupe = await findDuplicate(tx, row);
+    const dupe = await findDuplicate(tx, viewer, row);
     if (dupe) {
       report.duplicates++;
       report.notes.push(`${row.name}: skipped — likely duplicate of ${dupe.listingId} (${dupe.reason})`);

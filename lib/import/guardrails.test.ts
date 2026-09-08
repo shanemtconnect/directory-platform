@@ -83,7 +83,7 @@ describe("import guardrails", () => {
       await tx.insert(suppressions).values({
         nameNormalised: "the old barn", postcodeNormalised: "ls11aa", reason: "removal request",
       });
-      expect(await checkSuppressed(tx, row)).toBe(true);
+      expect(await checkSuppressed(tx, ADMIN, row)).toBe(true);
       const r = await importRows(tx, ADMIN, [row], { dryRun: false, mode: "scraped" });
       expect(r.suppressed).toBe(1);
       expect(await tx.select().from(listings)).toHaveLength(0);
@@ -96,8 +96,8 @@ describe("import guardrails", () => {
       await tx.insert(suppressions).values({
         nameNormalised: "the old barn", postcodeNormalised: "ls11aa", reason: "x",
       });
-      expect(await checkSuppressed(tx, { ...row, postcode: "ls1 1aa" })).toBe(true);
-      expect(await checkSuppressed(tx, { ...row, postcode: "LS1  1AA" })).toBe(true);
+      expect(await checkSuppressed(tx, ADMIN, { ...row, postcode: "ls1 1aa" })).toBe(true);
+      expect(await checkSuppressed(tx, ADMIN, { ...row, postcode: "LS1  1AA" })).toBe(true);
     });
   });
 
@@ -115,7 +115,7 @@ describe("import guardrails", () => {
     await withTestDb(async (tx) => {
       await scaffold(tx);
       await importRows(tx, ADMIN, [row], { dryRun: false, mode: "scraped" });
-      const hit = await findDuplicate(tx, { ...row, name: "Old Barn Weddings", postcode: "LS9 9ZZ" });
+      const hit = await findDuplicate(tx, ADMIN, { ...row, name: "Old Barn Weddings", postcode: "LS9 9ZZ" });
       expect(hit?.reason).toMatch(/phone/);
     });
   });
@@ -124,7 +124,7 @@ describe("import guardrails", () => {
     await withTestDb(async (tx) => {
       await scaffold(tx);
       await importRows(tx, ADMIN, [row], { dryRun: false, mode: "scraped" });
-      const hit = await findDuplicate(tx, { ...row, name: "Other", postcode: "LS9 9ZZ", phone: "01134960000" });
+      const hit = await findDuplicate(tx, ADMIN, { ...row, name: "Other", postcode: "LS9 9ZZ", phone: "01134960000" });
       expect(hit).not.toBeNull();
     });
   });
@@ -225,7 +225,7 @@ describe("checkSuppressed without a postcode", () => {
         nameNormalised: "the old barn", phone: "0113 496 0000", reason: "removal request",
       });
       const { postcode: _postcode, ...noPostcode } = row;
-      expect(await checkSuppressed(tx, noPostcode)).toBe(true);
+      expect(await checkSuppressed(tx, ADMIN, noPostcode)).toBe(true);
     });
   });
 
@@ -235,7 +235,7 @@ describe("checkSuppressed without a postcode", () => {
         nameNormalised: "the old barn", phone: "(0113) 496-0000", reason: "x",
       });
       const { postcode: _postcode, ...noPostcode } = row;
-      expect(await checkSuppressed(tx, { ...noPostcode, phone: "01134960000" })).toBe(true);
+      expect(await checkSuppressed(tx, ADMIN, { ...noPostcode, phone: "01134960000" })).toBe(true);
     });
   });
 
@@ -245,7 +245,7 @@ describe("checkSuppressed without a postcode", () => {
         nameNormalised: "the old barn", email: "Hello@OldBarn.example", reason: "x",
       });
       const { postcode: _postcode, ...noPostcode } = row;
-      expect(await checkSuppressed(tx, {
+      expect(await checkSuppressed(tx, ADMIN, {
         ...noPostcode, phone: undefined, email: "hello@oldbarn.example",
       })).toBe(true);
     });
@@ -257,7 +257,7 @@ describe("checkSuppressed without a postcode", () => {
         nameNormalised: "the old barn", phone: "0113 496 0000", reason: "x",
       });
       const { postcode: _postcode, ...noPostcode } = row;
-      expect(await checkSuppressed(tx, { ...noPostcode, phone: "0113 496 0999" })).toBe(false);
+      expect(await checkSuppressed(tx, ADMIN, { ...noPostcode, phone: "0113 496 0999" })).toBe(false);
     });
   });
 
@@ -267,7 +267,7 @@ describe("checkSuppressed without a postcode", () => {
         nameNormalised: "the old barn", phone: "0113 496 0000", reason: "x",
       });
       const { postcode: _postcode, ...noPostcode } = row;
-      expect(await checkSuppressed(tx, {
+      expect(await checkSuppressed(tx, ADMIN, {
         ...noPostcode, phone: undefined, email: undefined,
       })).toBe(false);
     });
@@ -279,7 +279,7 @@ describe("findDuplicate normalisation", () => {
     await withTestDb(async (tx) => {
       await scaffold(tx);
       await importRows(tx, ADMIN, [row], { dryRun: false, mode: "scraped" });
-      const hit = await findDuplicate(tx, {
+      const hit = await findDuplicate(tx, ADMIN, {
         ...row, name: "  the OLD barn  ", phone: "0113 496 0999",
       });
       expect(hit?.reason).toMatch(/name and postcode/);
@@ -290,7 +290,7 @@ describe("findDuplicate normalisation", () => {
     await withTestDb(async (tx) => {
       await scaffold(tx);
       await importRows(tx, ADMIN, [row], { dryRun: false, mode: "scraped" });
-      const hit = await findDuplicate(tx, {
+      const hit = await findDuplicate(tx, ADMIN, {
         ...row, postcode: "ls1  1aa", phone: "0113 496 0999",
       });
       expect(hit).not.toBeNull();
@@ -301,7 +301,7 @@ describe("findDuplicate normalisation", () => {
     await withTestDb(async (tx) => {
       await scaffold(tx);
       await importRows(tx, ADMIN, [row], { dryRun: false, mode: "scraped" });
-      expect(await findDuplicate(tx, {
+      expect(await findDuplicate(tx, ADMIN, {
         ...row, name: "The New Barn", postcode: "LS9 9ZZ", phone: "0113 496 0999",
       })).toBeNull();
     });

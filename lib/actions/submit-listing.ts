@@ -83,7 +83,7 @@ export async function submitListing(
 
     return {
       kind: "saved" as const,
-      saved: await createSubmission(handle, { ...values, ip }),
+      saved: await createSubmission(handle, PUBLIC_VIEWER, { ...values, ip }),
     };
   });
 
