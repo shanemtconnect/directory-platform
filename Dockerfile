@@ -35,6 +35,27 @@ ARG NEXT_PUBLIC_MAPTILER_KEY
 ENV NEXT_PUBLIC_MAPTILER_KEY=$NEXT_PUBLIC_MAPTILER_KEY
 ARG NEXT_PUBLIC_MEDIA_URL
 ENV NEXT_PUBLIC_MEDIA_URL=$NEXT_PUBLIC_MEDIA_URL
+# SITE_ENV is a BUILD-time switch, not a runtime one, and it has to be here for
+# two separate reasons:
+#
+#  - `next build` runs `validateProductionConfig` (config/validate.ts), which is
+#    waived only by the literal `SITE_ENV=staging`. Without this ARG a staging
+#    image on a real subdomain cannot be built at all: the guard sees a
+#    reachable origin and `legalEntity: "TBC"` and fails the build.
+#  - `next.config.ts` `headers()` is evaluated during the build and frozen into
+#    `routes-manifest.json`, so the staging `X-Robots-Tag: noindex` is baked in.
+#    Setting SITE_ENV at boot cannot add or remove that header.
+#
+# Flipping staging -> production is therefore a REBUILD, not an env change. It
+# is also declared on the runner below, because lib/site-env.ts reads it per
+# request for robots.txt and the sitemap.
+#
+# NO DEFAULT, deliberately. `siteEnv()` treats anything that is not the literal
+# "production" as staging, so an image built without this arg is noindex — which
+# is the failure that is recoverable. The other way round, a staging image built
+# without the arg gets indexed, and a de-indexing takes months.
+ARG SITE_ENV
+ENV SITE_ENV=$SITE_ENV
 # No DATABASE_URL. The build does not need one.
 #
 # `/`, `/cities` and `/categories` are still ISR pages that read Postgres, but
@@ -57,6 +78,13 @@ ENV NODE_ENV=production
 # platform may still override it at boot.
 ARG NEXT_PUBLIC_SITE_URL
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+# Same value the builder was given, for the same reason: `lib/site-env.ts` reads
+# SITE_ENV per request (robots.txt is force-dynamic, the sitemap is empty on
+# staging), so the runtime and the build must not disagree about which this is.
+# The platform may override it at boot, but only for those per-request reads —
+# the X-Robots-Tag header baked into routes-manifest.json will not follow it.
+ARG SITE_ENV
+ENV SITE_ENV=$SITE_ENV
 # The entrypoint may have to write a volume Docker created as root, so it runs
 # as root and hands the server to an unprivileged user itself.
 RUN apk add --no-cache su-exec

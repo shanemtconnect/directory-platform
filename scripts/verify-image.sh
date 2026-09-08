@@ -25,6 +25,13 @@
 #    database as (5) on purpose: it is the real first-deploy order, and it
 #    proves the two images agree about the schema rather than each being
 #    self-consistent in isolation.
+# 7. SITE_ENV really is a build arg. `next.config.ts` `headers()` runs during
+#    the build and is frozen into routes-manifest.json, and
+#    `validateProductionConfig` runs there too — so a missing `ARG SITE_ENV`
+#    means a staging image on a real subdomain cannot be built at all, and the
+#    noindex header can never be flipped without a rebuild. Checked from both
+#    sides: SITE_ENV=staging on a reachable origin builds, and omitting it on
+#    the same origin fails on the placeholder guard.
 #
 # This cannot be a RUN step in the Dockerfile: importing the handler needs REDIS_URL.
 #
@@ -35,10 +42,12 @@ cd "$(dirname "$0")/.."
 IMAGE=${IMAGE:-directory-platform:verify}
 SITE_URL=${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
 
-# `next build` prerenders /, /cities and /categories, so it really does query the
-# database — the image cannot be built against a placeholder URL. From inside the
-# build container the host's dev Postgres is host.docker.internal.
-BUILD_DB=${BUILD_DATABASE_URL:-postgres://directory:directory@host.docker.internal:5433/directory_dev}
+# The build takes no DATABASE_URL: the three prerendered routes ask
+# `prerenderingWithoutDatabase()` first and emit their empty-state shell. This
+# is the dev database the WORKER is pointed at below, at runtime, where a
+# database really is required. From inside a container the host's dev Postgres
+# is host.docker.internal.
+DEV_DB=${DEV_DATABASE_URL:-postgres://directory:directory@host.docker.internal:5433/directory_dev}
 # Database index 5: the dev Redis on 6380 is shared with other work, and nothing
 # here may disturb it.
 RUNTIME_REDIS=${RUNTIME_REDIS_URL:-redis://host.docker.internal:6380/5}
@@ -50,17 +59,33 @@ RUNTIME_REDIS=${RUNTIME_REDIS_URL:-redis://host.docker.internal:6380/5}
 AUTH_SECRET=${BETTER_AUTH_SECRET:-verify-image-not-a-real-secret}
 AUTH_URL=${BETTER_AUTH_URL:-$SITE_URL}
 
+# What a real deploy passes. $SITE_URL is localhost by default, so
+# `validateProductionConfig` waives itself here whatever this is — the two cases
+# at the end of this script are what actually exercise the guard, against a
+# reachable origin.
+SITE_ENV=${SITE_ENV:-production}
+# A reachable-looking origin, so `validateProductionConfig` does NOT waive
+# itself. `.org` rather than `.example`/`.test`: those are on RESERVED_SUFFIXES
+# and would be waived as unreachable, which is exactly the mistake these two
+# cases exist to catch.
+PUBLIC_SITE_URL=${VERIFY_PUBLIC_SITE_URL:-https://staging.example.org}
+
 # Migrating and seeding get a database of their own, created and dropped here.
-# Never $BUILD_DB: these steps write, and the dev database is someone's work.
+# Never $DEV_DB: these steps write, and the dev database is someone's work.
 ADMIN_DB=${ADMIN_DATABASE_URL:-postgres://directory:directory@host.docker.internal:5433/postgres}
 VERIFY_DB=${VERIFY_DB_NAME:-directory_imgverify}
 VERIFY_DB_URL=${ADMIN_DB%/*}/$VERIFY_DB
 
+# SITE_ENV is a BUILD arg, not a boot one: `next.config.ts` `headers()` is
+# evaluated during the build and frozen into routes-manifest.json, and
+# `validateProductionConfig` runs there too. Passed explicitly on every build
+# here for the same reason a deploy must pass it — the Dockerfile gives it no
+# default, so an omitted arg is a noindex image.
 build() {
   docker build --target "$1" \
     --add-host=host.docker.internal:host-gateway \
     --build-arg NEXT_PUBLIC_SITE_URL="$SITE_URL" \
-    --build-arg DATABASE_URL="$BUILD_DB" \
+    --build-arg SITE_ENV="$SITE_ENV" \
     -t "$2" .
 }
 
@@ -86,7 +111,9 @@ admin_sql() {
 # through must not leave a stray database or volume behind for the next run.
 VOL=""
 DB_CREATED=""
+EXTRA_IMAGES=""
 cleanup() {
+  if [ -n "$EXTRA_IMAGES" ]; then docker rmi -f $EXTRA_IMAGES > /dev/null 2>&1 || true; fi
   # `if`, not `&&`: under `set -e` a false test would abort the trap and leave
   # the rest of the cleanup undone.
   if [ -n "$VOL" ]; then docker volume rm -f "$VOL" > /dev/null 2>&1 || true; fi
@@ -188,7 +215,7 @@ set +e
 W_OUT=$(docker run --rm --add-host=host.docker.internal:host-gateway \
   -e WORKER_ENABLED=true \
   -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
-  -e DATABASE_URL="$BUILD_DB" \
+  -e DATABASE_URL="$DEV_DB" \
   -e REDIS_URL="$RUNTIME_REDIS" \
   -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
   -e BETTER_AUTH_URL="$AUTH_URL" \
@@ -208,7 +235,7 @@ echo "--- worker: missing env stops the process instead of idling ---"
 # three missing keys would still exit non-zero and tell us nothing.
 set +e
 docker run --rm -e WORKER_ENABLED=true -e NEXT_PUBLIC_SITE_URL="$SITE_URL" \
-  -e DATABASE_URL="$BUILD_DB" \
+  -e DATABASE_URL="$DEV_DB" \
   -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
   -e BETTER_AUTH_URL="$AUTH_URL" \
   "$IMAGE-worker" ./node_modules/.bin/tsx worker/index.ts > /dev/null 2>&1
@@ -243,6 +270,42 @@ grep -qE '^seeded ".+": 0 cities, 0 categories, 0 listings \([1-9][0-9]* skipped
   || fail "re-seeding was not idempotent: $S2_OUT"
 echo "ok: $S2_OUT"
 
+# SITE_ENV is a build arg — these two cases are the only thing that keeps it
+# one. Both build the `builder` stage only: what is under test is `next build`
+# and the config guards it runs, not the runner's layers.
+echo "--- staging build: a real subdomain with SITE_ENV=staging builds ---"
+EXTRA_IMAGES="$IMAGE-staging-builder"
+set +e
+SB_OUT=$(docker build --target builder \
+  --add-host=host.docker.internal:host-gateway \
+  --build-arg NEXT_PUBLIC_SITE_URL="$PUBLIC_SITE_URL" \
+  --build-arg SITE_ENV=staging \
+  -t "$IMAGE-staging-builder" . 2>&1)
+SB_CODE=$?
+set -e
+[ "$SB_CODE" -eq 0 ] \
+  || fail "a staging image on a real subdomain could not be built — SITE_ENV is not reaching next build: $(tail -40 <<<"$SB_OUT")"
+echo "ok: SITE_ENV=staging reaches the builder and waives the production config guard"
+
+# The other half: without it the guard must fire, or "SITE_ENV is a build arg"
+# is a claim about a variable nothing reads.
+echo "--- no SITE_ENV: the placeholder guard fails the build ---"
+set +e
+NB_OUT=$(docker build --target builder \
+  --add-host=host.docker.internal:host-gateway \
+  --build-arg NEXT_PUBLIC_SITE_URL="$PUBLIC_SITE_URL" \
+  -t "$IMAGE-noenv-builder" . 2>&1)
+NB_CODE=$?
+set -e
+EXTRA_IMAGES="$EXTRA_IMAGES $IMAGE-noenv-builder"
+[ "$NB_CODE" -ne 0 ] || fail "the build succeeded on a reachable origin with placeholder config"
+grep -q "is not ready for production" <<<"$NB_OUT" \
+  || fail "the build failed for some other reason than the placeholder guard: $(tail -40 <<<"$NB_OUT")"
+grep -q "legalEntity is still" <<<"$NB_OUT" \
+  || fail "no placeholder was named: $(tail -40 <<<"$NB_OUT")"
+echo "ok: exit $NB_CODE, and it named the placeholder"
+
 echo "PASS: cache handler loads, assets survive a redeploy, a read-only volume"
 echo "      fails the boot, the worker runs its real entrypoint, the runner"
-echo "      migrates a fresh database and the worker seeds it."
+echo "      migrates a fresh database and the worker seeds it, and SITE_ENV is"
+echo "      genuinely a build arg — staging builds, and its absence is caught."
