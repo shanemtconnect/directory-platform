@@ -11,7 +11,7 @@ import {
 
 const ADMIN = { role: "admin", userId: "a" } as const;
 const MIN = siteConfig.seo.minListingsToIndex;
-const PLURAL = siteConfig.entity.Plural;
+const PLURAL = siteConfig.entity;
 
 async function addListings(tx: TestDb, ctx: ListingCtx, n: number) {
   for (let i = 0; i < n; i++) await makeListing(tx, ctx, { name: `Listing ${i}` });

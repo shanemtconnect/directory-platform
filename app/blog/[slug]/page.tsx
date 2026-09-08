@@ -40,6 +40,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     // og:image a bare `type: "article"` override used to leave behind.
     openGraph: pageOpenGraph({
       type: "article",
+      url: `/blog/${post.slug}`,
       title: post.title,
       description: post.description === "" ? undefined : post.description,
       publishedTime: post.date,
