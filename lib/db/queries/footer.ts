@@ -61,15 +61,18 @@ export async function getFooterMatrix(
   // `parent_scope` is text (it holds the literal 'root' as well as uuids), so
   // the join to cities.id needs an explicit cast.
   const ranked = tx
+    // Every column is aliased explicitly. Three of these tables have a `name`
+    // and a `slug`, and a subquery projects bare column names, so without the
+    // aliases the wrapping select is ambiguous at the SQL level.
     .select({
-      categoryId: categories.id,
-      categoryName: categories.name,
-      categoryPlural: categories.plural,
-      categorySort: categories.sortOrder,
-      categoryNationalSlug: categories.slug,
-      cityCategorySlug: slugs.slug,
-      cityName: cities.name,
-      citySlug: cities.slug,
+      categoryId: sql<string>`${categories.id}`.as("category_id"),
+      categoryName: sql<string>`${categories.name}`.as("category_name"),
+      categoryPlural: sql<string>`${categories.plural}`.as("category_plural"),
+      categorySort: sql<number>`${categories.sortOrder}`.as("category_sort"),
+      categoryNationalSlug: sql<string>`${categories.slug}`.as("category_national_slug"),
+      cityCategorySlug: sql<string>`${slugs.slug}`.as("city_category_slug"),
+      cityName: sql<string>`${cities.name}`.as("city_name"),
+      citySlug: sql<string>`${cities.slug}`.as("city_slug"),
       listingCount: sql<number>`${counted}::int`.as("listing_count"),
       rank: sql<number>`row_number() over (
         partition by ${categories.id}
