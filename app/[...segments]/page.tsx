@@ -9,7 +9,9 @@ import { PillarPage } from "@/components/pillar/PillarPage";
 import { ListingDetail } from "@/components/listing/ListingDetail";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-detail";
-import { listingSchema, pillarSchema, breadcrumbSchema } from "@/lib/schema/builders";
+import { listingSchema, pillarSchema, breadcrumbSchema, faqSchema } from "@/lib/schema/builders";
+import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
+import type { FaqEntry } from "@/components/pillar/PillarPage";
 
 export const revalidate = 3600;
 
@@ -38,6 +40,22 @@ interface Props {
 // No searchParams: reading them forces the route dynamic in Next 16, which
 // would keep the city pillar pages out of the ISR cache entirely. Pagination
 // lives in the path instead — /[city]/page/2.
+/**
+ * FAQ is admin-edited jsonb. Anything malformed is dropped rather than thrown —
+ * a bad FAQ entry must not 500 the most important page on the site.
+ */
+function parseFaq(value: unknown): FaqEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const q = (item as Record<string, unknown>).question;
+    const a = (item as Record<string, unknown>).answer;
+    if (typeof q !== "string" || typeof a !== "string") return [];
+    if (q.trim() === "" || a.trim() === "") return [];
+    return [{ question: q, answer: a }];
+  });
+}
+
 /** Images live on the Cloudflare-proxied R2 domain; schema.org needs absolutes. */
 function absoluteMediaUrl(path: string | null): string | null {
   const base = process.env.NEXT_PUBLIC_MEDIA_URL;
@@ -115,10 +133,22 @@ export default async function CatchAllPage({ params }: Props) {
       );
       if (!heading) notFound();
 
-      const [rows, total] = await Promise.all([
+      const cityId = "cityId" in result.scope ? result.scope.cityId : null;
+
+      const [rows, total, categories, nearby] = await Promise.all([
         listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
         countListings(db as never, PUBLIC_VIEWER, result.scope),
+        cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+        cityId ? nearbyCities(db as never, cityId) : Promise.resolve([]),
       ]);
+
+      // Premium listings shown as a featured row on page 1. They also appear in
+      // the main grid — the row is prominence, not a separate inventory.
+      const featured = result.page === 1
+        ? rows.filter((l) => l.tier === "premium" && siteConfig.tiers.premium.homepageSlot).slice(0, 3)
+        : [];
+
+      const faq = parseFaq(heading.faq);
 
       const basePath = pillarBasePath(segments);
       return (
@@ -137,12 +167,18 @@ export default async function CatchAllPage({ params }: Props) {
               { name: heading.place, path: basePath },
             ])}
           />
+          {faq.length > 0 && <JsonLd data={faqSchema(faq)} />}
           <PillarPage
             heading={heading}
+            featured={featured}
             listings={rows}
+            categories={categories}
+            nearby={nearby}
+            faq={faq}
             page={result.page}
             totalPages={Math.max(1, Math.ceil(total / PER_PAGE))}
             basePath={basePath}
+            cityPath={`/${segments[0]}`}
           />
         </>
       );

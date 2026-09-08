@@ -5,6 +5,8 @@ import type { PillarScope } from "@/lib/routing/scope";
 import type { TestDb } from "@/test/db";
 
 export interface PillarHeading {
+  /** Admin-edited jsonb; validated by the caller before rendering. */
+  faq: unknown;
   /** What the H1 says, built from entity nouns — never a hardcoded niche word. */
   title: string;
   place: string;
@@ -40,6 +42,7 @@ export async function pillarHeading(
       introHtml: city.introHtml,
       isIndexable: city.isIndexable,
       listingCount: city.listingCount,
+      faq: city.faq,
     };
   }
 
@@ -55,6 +58,7 @@ export async function pillarHeading(
       introHtml: area.introHtml,
       isIndexable: area.isIndexable,
       listingCount: area.listingCount,
+      faq: area.faq,
     };
   }
   return {
@@ -63,5 +67,6 @@ export async function pillarHeading(
     introHtml: vertical.introHtml,
     isIndexable: true,
     listingCount: 0,
+    faq: null,
   };
 }
