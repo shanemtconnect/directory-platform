@@ -50,6 +50,13 @@
       "when": 1788871629782,
       "tag": "0006_sturdy_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788872697401,
+      "tag": "0007_job_queue_delivered",
+      "breakpoints": true
     }
   ]
 }

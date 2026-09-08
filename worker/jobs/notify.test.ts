@@ -53,6 +53,20 @@ async function jobRow(tx: TestDb) {
   return row!;
 }
 
+/** Brings a backed-off job forward, so the next call is the next tick. */
+async function rearm(tx: TestDb) {
+  await tx.update(jobQueue).set({ runAfter: new Date(Date.now() - 60_000) });
+}
+
+/** Rejects mail to `address` and accepts everything else. */
+function rejectsMailTo(address: string) {
+  sendEmail.mockImplementation(async (m) =>
+    String(m.to) === address
+      ? { sent: false, reason: "rejected", error: "no such mailbox" }
+      : { sent: true, id: "eml_1" },
+  );
+}
+
 describe("processNotifications — enquiries", () => {
   it("emails the admin and marks the job done", async () => {
     await withTestDb(async (tx) => {
@@ -177,6 +191,39 @@ describe("processNotifications — enquiries", () => {
     });
   });
 
+  it("does not send the owner a second copy when the admin send is retried", async () => {
+    await withTestDb(async (tx) => {
+      await queuedEnquiry(tx, { email: "owner@example.co.uk", claimStatus: "claimed" });
+      rejectsMailTo("admin@example.co.uk");
+
+      expect(await processNotifications(tx)).toBe(0);
+      await rearm(tx);
+      expect(await processNotifications(tx)).toBe(0);
+      await rearm(tx);
+      expect(await processNotifications(tx)).toBe(0);
+
+      // The owner is told once. Only the recipient that failed is tried again.
+      expect(recipients()).toEqual([
+        "owner@example.co.uk",
+        "admin@example.co.uk",
+        "admin@example.co.uk",
+        "admin@example.co.uk",
+      ]);
+      expect((await jobRow(tx)).attempts).toBe(3);
+    });
+  });
+
+  it("records on the job which recipients it has already reached", async () => {
+    await withTestDb(async (tx) => {
+      await queuedEnquiry(tx, { email: "owner@example.co.uk", claimStatus: "claimed" });
+      rejectsMailTo("admin@example.co.uk");
+
+      await processNotifications(tx);
+
+      expect((await jobRow(tx)).delivered).toEqual(["owner"]);
+    });
+  });
+
   it("drains everything waiting in one tick", async () => {
     await withTestDb(async (tx) => {
       await queuedEnquiry(tx);
@@ -215,7 +262,8 @@ describe("processNotifications — submissions", () => {
       await notifySubmission(tx, PUBLIC_VIEWER, saved);
 
       expect(await processNotifications(tx)).toBe(1);
-      expect(recipients()).toEqual(["admin@example.co.uk", "alex@example.co.uk"]);
+      // The receipt first: a failure to reach the admin must not swallow it.
+      expect(recipients()).toEqual(["alex@example.co.uk", "admin@example.co.uk"]);
       expect((await jobRow(tx)).status).toBe("done");
     });
   });
@@ -232,8 +280,31 @@ describe("processNotifications — submissions", () => {
       await notifySubmission(tx, PUBLIC_VIEWER, saved);
 
       expect(await processNotifications(tx)).toBe(1);
-      expect(recipients()).toEqual(["admin@example.co.uk", "alex@example.co.uk"]);
-      expect(String(sendEmail.mock.calls[0]![0]!.text)).toContain("parked queue");
+      expect(recipients()).toEqual(["alex@example.co.uk", "admin@example.co.uk"]);
+      expect(String(sendEmail.mock.calls[1]![0]!.text)).toContain("parked queue");
+    });
+  });
+
+  it("does not send the submitter a second receipt when the admin send is retried", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const saved = await createSubmission(tx, {
+        ...submission,
+        categoryId: ctx.primaryCategoryId,
+        city: await cityNameFor(tx, ctx.cityId),
+      });
+      await notifySubmission(tx, PUBLIC_VIEWER, saved);
+      rejectsMailTo("admin@example.co.uk");
+
+      expect(await processNotifications(tx)).toBe(0);
+      await rearm(tx);
+      expect(await processNotifications(tx)).toBe(0);
+
+      expect(recipients()).toEqual([
+        "alex@example.co.uk",
+        "admin@example.co.uk",
+        "admin@example.co.uk",
+      ]);
     });
   });
 

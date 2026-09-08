@@ -36,6 +36,12 @@ export interface QueuedJob {
   kind: string;
   payload: Record<string, unknown>;
   attempts: number;
+  /**
+   * Recipient keys an earlier attempt already reached. A handler that sends to
+   * more than one address must skip these, or a single failing recipient makes
+   * every other one receive a copy per retry.
+   */
+  delivered: string[];
 }
 
 export type FailJobOutcome = { status: "pending" | "failed"; attempts: number };
@@ -88,6 +94,7 @@ export async function claimNextJob(
       kind: jobQueue.kind,
       payload: jobQueue.payload,
       attempts: jobQueue.attempts,
+      delivered: jobQueue.delivered,
     })
     .from(jobQueue)
     .where(and(
@@ -100,7 +107,33 @@ export async function claimNextJob(
     .for("update", { skipLocked: true });
 
   if (!row) return null;
-  return { ...row, payload: row.payload as Record<string, unknown> };
+  return {
+    ...row,
+    payload: row.payload as Record<string, unknown>,
+    delivered: Array.isArray(row.delivered) ? row.delivered : [],
+  };
+}
+
+/**
+ * Records which recipients a partly-successful job reached.
+ *
+ * Written before `failJob` so the retry the failure schedules starts from what
+ * has already been sent. The whole list is passed rather than appended in SQL:
+ * the caller holds the row lock for the length of its transaction, so there is
+ * no second writer to lose an update to, and a plain assignment is one
+ * statement the reader can check by eye.
+ */
+export async function markDelivered(
+  tx: TestDb,
+  viewer: Viewer,
+  id: string,
+  delivered: string[],
+): Promise<void> {
+  assertWorker(viewer);
+  await tx
+    .update(jobQueue)
+    .set({ delivered, updatedAt: now() })
+    .where(eq(jobQueue.id, id));
 }
 
 export async function completeJob(tx: TestDb, viewer: Viewer, id: string): Promise<void> {

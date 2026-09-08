@@ -1,5 +1,11 @@
 import { siteUrl } from "@/lib/schema/builders";
-import { claimNextJob, completeJob, failJob, type QueuedJob } from "@/lib/db/queries/jobs";
+import {
+  claimNextJob,
+  completeJob,
+  failJob,
+  markDelivered,
+  type QueuedJob,
+} from "@/lib/db/queries/jobs";
 import {
   enquiryNotification,
   parkedSubmissionNotification,
@@ -7,7 +13,7 @@ import {
   type SubmissionNotification,
 } from "@/lib/db/queries/notifications";
 import { ADMIN_VIEWER } from "@/lib/db/viewer";
-import { sendEmail, type EmailMessage, type SendResult } from "@/lib/email/sender";
+import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
 import { NOTIFY_ENQUIRY, NOTIFY_KINDS, NOTIFY_SUBMISSION } from "@/lib/email/notify";
@@ -55,19 +61,47 @@ function readId(payload: Record<string, unknown>, key: string): string | null {
 }
 
 /**
+ * A job's recipients, tracked one at a time.
+ *
+ * A notification goes to two or three people and the retry is per JOB, so
+ * without this a single bad address — a mistyped ADMIN_NOTIFICATION_EMAIL is
+ * the obvious one — sends the owner of a claimed listing the same enquiry once
+ * per attempt, six times over. `done` is what earlier attempts reached; `fresh`
+ * is what this one did, and is written back whether the job as a whole
+ * succeeds or fails.
+ *
+ * The keys are roles rather than addresses: they have to be the same string on
+ * every attempt, and an address read from a row that has since been edited
+ * would not be.
+ */
+interface Delivery {
+  done: Set<string>;
+  fresh: string[];
+}
+
+const OWNER = "owner";
+const ADMIN = "admin";
+const SUBMITTER = "submitter";
+
+/**
  * A send that never reached the provider — no key, no address — is not a
  * failure of this job. Retrying it would park every notification a site
  * accumulates before its mail is configured, and lose them.
  */
-async function deliver(message: EmailMessage): Promise<SendResult> {
+async function deliver(d: Delivery, key: string, message: EmailMessage): Promise<void> {
+  // Already sent on an earlier attempt: the retry is for the ones that failed.
+  if (d.done.has(key)) return;
+
   const result = await sendEmail(message);
   if (!result.sent && result.reason === "rejected") {
     throw new Retryable(result.error ?? "the mail provider rejected the message");
   }
-  return result;
+  // Anything that is not a rejection is as done as this recipient will get:
+  // the job will not be retried on its account.
+  d.fresh.push(key);
 }
 
-async function runEnquiry(db: Db, payload: Record<string, unknown>): Promise<void> {
+async function runEnquiry(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
   const enquiryId = readId(payload, "enquiryId");
   if (enquiryId === null) throw new Retryable("The job carries no enquiryId");
 
@@ -85,15 +119,15 @@ async function runEnquiry(db: Db, payload: Record<string, unknown>): Promise<voi
   // asked us to write to. Enquiries reach a business once it has claimed the
   // listing and not before.
   if (data.listing.claimed && data.listing.email !== null && data.listing.email.trim() !== "") {
-    await deliver({ to: data.listing.email, ...enquiryToOwner(content) });
+    await deliver(d, OWNER, { to: data.listing.email, ...enquiryToOwner(content) });
   }
 
   // Always. Until a listing is claimed we are the only one who will answer,
   // and the admin copy is the record that the lead existed at all.
-  await deliver({ to: adminAddress(), ...enquiryToAdmin(content) });
+  await deliver(d, ADMIN, { to: adminAddress(), ...enquiryToAdmin(content) });
 }
 
-async function runSubmission(db: Db, payload: Record<string, unknown>): Promise<void> {
+async function runSubmission(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
   const listingId = readId(payload, "listingId");
   const parkedId = readId(payload, "parkedId");
 
@@ -109,18 +143,19 @@ async function runSubmission(db: Db, payload: Record<string, unknown>): Promise<
 
   const content = { ...data, reviewUrl: siteUrl("/admin") };
 
-  await deliver({ to: adminAddress(), ...submissionToAdmin(content) });
-  // Second, and separately: the submitter's receipt is worth nothing if a
-  // failure to reach the admin swallowed it.
-  await deliver({ to: content.submitter.email, ...submissionReceived(content) });
+  // The person who is waiting for it goes first. The admin copy is a record we
+  // keep for ourselves, and a wrong address on it must not hold up the receipt
+  // the submitter is owed.
+  await deliver(d, SUBMITTER, { to: content.submitter.email, ...submissionReceived(content) });
+  await deliver(d, ADMIN, { to: adminAddress(), ...submissionToAdmin(content) });
 }
 
-async function run(db: Db, job: QueuedJob): Promise<void> {
+async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
   switch (job.kind) {
     case NOTIFY_ENQUIRY:
-      return runEnquiry(db, job.payload);
+      return runEnquiry(db, d, job.payload);
     case NOTIFY_SUBMISSION:
-      return runSubmission(db, job.payload);
+      return runSubmission(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -136,14 +171,21 @@ export async function processNotifications(db: Db): Promise<number> {
     const job = await claimNextJob(db, ADMIN_VIEWER, NOTIFY_KINDS);
     if (!job) break;
 
+    const d: Delivery = { done: new Set(job.delivered), fresh: [] };
+
     try {
-      await run(db, job);
+      await run(db, d, job);
       await completeJob(db, ADMIN_VIEWER, job.id);
       done++;
     } catch (e) {
       // Caught rather than thrown on: the failure has to be RECORDED, and a
       // throw here would roll back the transaction the record lives in.
       const message = e instanceof Error ? e.message : String(e);
+      // Before the failure, so the retry it schedules knows what already went
+      // out. Otherwise the surviving recipients get a copy per attempt.
+      if (d.fresh.length > 0) {
+        await markDelivered(db, ADMIN_VIEWER, job.id, [...d.done, ...d.fresh]);
+      }
       const outcome = await failJob(db, ADMIN_VIEWER, job.id, message);
       console.error(
         `[worker] ${job.kind} ${job.id} ${outcome.status === "failed" ? "PARKED" : "failed"}` +

@@ -89,6 +89,12 @@ export const jobQueue = pgTable("job_queue", {
   attempts: integer("attempts").notNull().default(0),
   lastError: text("last_error"),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+  /**
+   * The recipient keys this job has already reached, so a retry re-sends only
+   * what failed. Without it one mistyped admin address means the owner of a
+   * claimed listing gets the same enquiry once per attempt.
+   */
+  delivered: jsonb("delivered").$type<string[]>().notNull().default([]),
 }, (t) => [
   index("job_queue_claim_idx").on(t.status, t.runAfter),
   // A status the claim query cannot match is work that silently never runs.
