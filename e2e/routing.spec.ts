@@ -61,3 +61,40 @@ test.describe("routing canonicalisation", () => {
     expect(res.status(), "the fixes must not take genuine page 2 with them").toBe(200);
   });
 });
+
+/**
+ * The national category route is a second catch-all, and it had neither rule:
+ * a capital letter 404'd and /page/1 served a second copy of page 1. Both now
+ * come from the same helper as the city route above.
+ */
+test.describe("category routing canonicalisation", () => {
+  const CATEGORY = "/categories/barn-venues";
+
+  test("the category page itself is a 200", async ({ request }) => {
+    expect((await request.get(CATEGORY)).status()).toBe(200);
+  });
+
+  test("a mixed-case category path permanently redirects to its lowercase form", async ({ request }) => {
+    const res = await request.get("/categories/Barn-Venues", { maxRedirects: 0 });
+    expect(res.status()).toBe(PERMANENT);
+    expect(res.headers()["location"]).toBe(CATEGORY);
+  });
+
+  test("/page/1 permanently redirects to the unpaginated category path", async ({ request }) => {
+    const res = await request.get(`${CATEGORY}/page/1`, { maxRedirects: 0 });
+    expect(res.status()).toBe(PERMANENT);
+    expect(res.headers()["location"]).toBe(CATEGORY);
+  });
+
+  test("only the canonical spelling of a page number is a page", async ({ request }) => {
+    for (const n of ["1e0", "0x2", "02"]) {
+      const res = await request.get(`${CATEGORY}/page/${n}`, { maxRedirects: 0 });
+      expect(res.status(), `${CATEGORY}/page/${n}`).toBe(404);
+    }
+  });
+
+  test("a page number past the end is a 404, not an empty page", async ({ request }) => {
+    const res = await request.get(`${CATEGORY}/page/999`, { maxRedirects: 0 });
+    expect(res.status()).toBe(404);
+  });
+});

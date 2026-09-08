@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
@@ -15,6 +15,7 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { pillarSchema, breadcrumbSchema } from "@/lib/schema/builders";
 import { categoryEarnsIndexing } from "@/lib/db/queries/sitemap";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
+import { normalisePathSegments } from "@/lib/routing/resolve";
 
 export const revalidate = 3600;
 
@@ -45,35 +46,45 @@ interface Props {
   params: Promise<{ category: string[] }>;
 }
 
+const BASE = "/categories";
+
+type Parsed =
+  | { kind: "page"; slug: string; page: number }
+  | { kind: "redirect"; to: string }
+  | { kind: "not-found" };
+
 /**
- * Splits a trailing /page/N. Anything else with extra segments is a 404.
+ * The same two canonicalisation rules the city catch-all applies, from the same
+ * helper: /categories/Some-Slug 301s to /categories/some-slug, and
+ * /categories/some-slug/page/1 301s to /categories/some-slug.
  *
- * One spelling of a page number only: `Number()` also accepts "1e0", "0x2",
- * "02" and " 2", and each of those is another URL serving the same results.
+ * This route used to 404 the first and serve the second as a second copy of
+ * page 1 — so a link with a capital letter in it was a dead end, and the
+ * category page had a duplicate of itself at a second URL. Both are duplicate-
+ * content rules about URL shape, not about cities, which is why the helper is
+ * shared rather than reimplemented here (`normalisePathSegments` also owns the
+ * "one spelling of a page number" rule: "1e0", "0x2" and "02" are 404s).
  */
-const PAGE_NUMBER = /^[1-9]\d*$/;
+function parseSegments(segments: string[]): Parsed {
+  const normalised = normalisePathSegments(BASE, segments);
+  if (normalised.kind === "redirect") return { kind: "redirect", to: normalised.to };
+  if (normalised.kind === "not-found") return { kind: "not-found" };
 
-function parseSegments(segments: string[]): { slug: string; page: number } | null {
-  let rest = segments;
-  let page = 1;
-
-  if (segments.length >= 2 && segments[segments.length - 2] === "page") {
-    const raw = segments[segments.length - 1] ?? "";
-    if (!PAGE_NUMBER.test(raw)) return null;
-    rest = segments.slice(0, -2);
-    page = Number(raw);
-  }
-
-  if (rest.length !== 1) return null;
-  const slug = rest[0];
-  if (slug === undefined || slug === "") return null;
-  return { slug, page };
+  // A national category page is exactly one segment. /categories/a/b is not a
+  // deeper page, it is a URL nothing generated.
+  if (normalised.segments.length !== 1) return { kind: "not-found" };
+  const slug = normalised.segments[0];
+  if (slug === undefined || slug === "") return { kind: "not-found" };
+  return { kind: "page", slug, page: normalised.page };
 }
 
 export default async function CategoryNationalPage({ params }: Props) {
   const { category: segments } = await params;
   const parsed = parseSegments(segments);
-  if (!parsed) notFound();
+  // next/navigation cannot emit a 301 from a server component; 308 is the same
+  // permanent signal and is what the city catch-all serves too.
+  if (parsed.kind === "redirect") permanentRedirect(parsed.to);
+  if (parsed.kind !== "page") notFound();
 
   const category = await getCategoryBySlug(db as never, PUBLIC_VIEWER, parsed.slug);
   if (!category) notFound();
@@ -192,7 +203,9 @@ export default async function CategoryNationalPage({ params }: Props) {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { category: segments } = await params;
   const parsed = parseSegments(segments);
-  if (!parsed) return {};
+  // No metadata for a URL that redirects or 404s — the page function is what
+  // serves the redirect, and metadata for a page nobody lands on is noise.
+  if (parsed.kind !== "page") return {};
 
   const category = await getCategoryBySlug(db as never, PUBLIC_VIEWER, parsed.slug);
   if (!category) return {};
