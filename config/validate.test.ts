@@ -202,6 +202,9 @@ describe("validateProductionConfig", () => {
     for (const url of [
       "http://localhost:3200",
       "http://127.0.0.1:3000",
+      // WHATWG URL keeps the brackets on an IPv6 hostname: `new URL("http://[::1]/").hostname`
+      // is "[::1]", never "::1". A bare-"::1" comparison is a branch that can never be taken.
+      "http://[::1]:3000",
       "https://ci.example",
       "https://x.test",
       "http://directory.local",

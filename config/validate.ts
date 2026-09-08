@@ -180,7 +180,9 @@ function isUnreachableOrigin(siteUrl: string | undefined): boolean {
   } catch {
     return false;
   }
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+  // "[::1]", not "::1": WHATWG URL keeps the brackets on an IPv6 hostname, so the
+  // unbracketed form is a comparison that can never be true.
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true;
   return RESERVED_SUFFIXES.some((s) => host.endsWith(s));
 }
 
