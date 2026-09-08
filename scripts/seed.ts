@@ -246,7 +246,7 @@ export async function runSeed(tx: TestDb, niche: string = DEFAULT_NICHE): Promis
   // The denormalised count and the gate flag the pillar pages read. Goes
   // through the one helper rather than hand-rolled SQL, so the seed cannot
   // drift from the rule the importer and the approval flow apply.
-  for (const cityId of cityIdByName.values()) {
+  for (const cityId of cityIdByKey.values()) {
     await recomputeCityIndexability(tx, PUBLIC_VIEWER, cityId);
   }
 
