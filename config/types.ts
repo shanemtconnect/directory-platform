@@ -154,4 +154,25 @@ export interface SiteConfig {
     readonly requireIntroCopyToIndex: boolean;
     readonly footerCitiesPerCategory: number;
   };
+
+  /**
+   * The facts /privacy and /terms state about themselves.
+   *
+   * Those two pages are templates with the boilerplate written out and every
+   * clone-specific claim marked "[Confirm with counsel]". These are the fields
+   * that are safe to fill in from config — who the controller is, and when each
+   * document was last revised. A stale "last updated" is worse than none, so it
+   * is a value here rather than a build date.
+   */
+  readonly legal: {
+    /** ISO date, e.g. "2026-09-08". Bump it whenever the policy text changes. */
+    readonly privacyLastUpdated: string;
+    readonly termsLastUpdated: string;
+    /**
+     * The entity that decides how personal data is used. Usually the same as
+     * `legalEntity`, but not always — a site operated by one company on behalf
+     * of another has two different answers, and only one of them is right.
+     */
+    readonly dataController: string;
+  };
 }
