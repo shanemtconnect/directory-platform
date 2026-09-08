@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FEATURE_FLAGS, type FeatureMap } from "@/config/types";
 import { ConfigError, validateCountry, validateFeatureDependencies } from "@/config/validate";
+import { now } from "@/lib/clock";
 import type { Answers, CustomFieldAnswer } from "./questions";
 
 /** Relative to the site root, so the wizard can target a clone in another directory. */
@@ -275,8 +276,25 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     requireIntroCopyToIndex: ${a.seoRequireIntroCopyToIndex},
     footerCitiesPerCategory: ${a.seoFooterCitiesPerCategory},
   },
+
+  // /privacy and /terms are templates with every clone-specific claim marked
+  // "[Confirm with counsel]". These dates are the day the site was scaffolded;
+  // move them when the wording is actually reviewed, not before — a "last
+  // updated" that nobody stands behind is worse than no date at all.
+  legal: {
+    privacyLastUpdated: ${str(isoDate())},
+    termsLastUpdated: ${str(isoDate())},
+    // Usually the same as legalEntity. Not always: a site one company operates
+    // on behalf of another has two answers and only one of them is right.
+    dataController: ${str(a.legalEntity)},
+  },
 } as const satisfies SiteConfig;
 `;
+}
+
+/** Today, as a plain ISO date. Read through lib/clock so a test can pin it. */
+function isoDate(): string {
+  return now().toISOString().slice(0, 10);
 }
 
 /**

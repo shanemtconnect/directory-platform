@@ -10,21 +10,27 @@ export function HomeSearch({ cities }: { cities: CityIndexRow[] }) {
   const e = siteConfig.entity;
 
   return (
-    <search>
-      <form method="get" action="/search" data-testid="home-search">
-        <p>
+    <search className="mb-10 block">
+      <form
+        method="get"
+        action="/search"
+        data-testid="home-search"
+        className="card grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+      >
+        <p className="mb-0">
           <label htmlFor="home-q">Keyword</label>
           <input
             id="home-q"
             name="q"
             type="search"
             placeholder={`Search ${e.plural}`}
+            className="max-w-none"
           />
         </p>
 
-        <p>
+        <p className="mb-0">
           <label htmlFor="home-city">Location</label>
-          <select id="home-city" name="city" defaultValue="">
+          <select id="home-city" name="city" defaultValue="" className="max-w-none">
             <option value="">Anywhere</option>
             {cities.map((c) => (
               <option key={c.id} value={c.slug}>
@@ -34,7 +40,7 @@ export function HomeSearch({ cities }: { cities: CityIndexRow[] }) {
           </select>
         </p>
 
-        <button type="submit">Search {e.plural}</button>
+        <button type="submit" className="btn btn-primary">Search {e.plural}</button>
       </form>
     </search>
   );

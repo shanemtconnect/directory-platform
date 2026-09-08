@@ -28,13 +28,13 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
 
   return (
     <main>
-      <nav aria-label="Breadcrumb">
+      <nav aria-label="Breadcrumb" className="mb-4 text-sm text-muted">
         <a href="/">Home</a> › <a href={cityPath}>{city.name}</a> › <span>{listing.name}</span>
       </nav>
 
       <h1>{listing.name}</h1>
 
-      <p data-testid="claim-status">
+      <p data-testid="claim-status" className="text-sm text-muted">
         {listing.claimStatus === "verified" && (
           <span>Verified{listing.verifiedAt ? ` — checked ${monthYear(listing.verifiedAt)}` : ""}</span>
         )}
@@ -42,76 +42,87 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
         {listing.claimStatus === "unclaimed" && <span>Unverified</span>}
       </p>
 
-      {description && <div data-testid="description">{description}</div>}
+      {/* Two columns from lg up: everything about the listing on the left, the
+          enquiry form pinned beside it on the right. Below lg they stack in
+          source order, which puts the form last — the same order it was in
+          before, and the right one on a phone. */}
+      <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0">
+          {description && <div data-testid="description" className="prose text-lg">{description}</div>}
 
-      {tier.descriptionDisplay === "excerpt" && listing.description &&
-        listing.description.length > tier.excerptChars && (
-          <p data-testid="description-truncated">
-            <a href="/pricing">Upgrade to show the full description.</a>
-          </p>
-        )}
+          {tier.descriptionDisplay === "excerpt" && listing.description &&
+            listing.description.length > tier.excerptChars && (
+              <p data-testid="description-truncated">
+                <a href="/pricing">Upgrade to show the full description.</a>
+              </p>
+            )}
 
-      <section aria-labelledby="contact">
-        <h2 id="contact">Contact</h2>
-        <address>
-          {listing.addressLine1 && <span>{listing.addressLine1}, </span>}
-          <span>{city.name}</span>
-          {listing.postcode && <span>, {listing.postcode}</span>}
-        </address>
-        {listing.phone && <p><a href={`tel:${listing.phone.replace(/\s/g, "")}`}>{listing.phone}</a></p>}
-        {tier.showWebsite && listing.website && (
-          // rel=nofollow: a directory link is not an editorial endorsement, and
-          // selling followed links is a link scheme.
-          <p><a href={listing.website} rel="nofollow noopener" target="_blank">Visit website</a></p>
-        )}
-        {!tier.showWebsite && listing.website && (
-          <p data-testid="website-gated">
-            Website available on <a href="/pricing">Essential and above</a>.
-          </p>
-        )}
-        <p><a href={`#enquire`}>Send an enquiry</a></p>
-      </section>
+          <section aria-labelledby="contact" className="card">
+            <h2 id="contact" className="mt-0">Contact</h2>
+            <address className="text-muted">
+              {listing.addressLine1 && <span>{listing.addressLine1}, </span>}
+              <span>{city.name}</span>
+              {listing.postcode && <span>, {listing.postcode}</span>}
+            </address>
+            {listing.phone && <p><a href={`tel:${listing.phone.replace(/\s/g, "")}`}>{listing.phone}</a></p>}
+            {tier.showWebsite && listing.website && (
+              // rel=nofollow: a directory link is not an editorial endorsement, and
+              // selling followed links is a link scheme.
+              <p><a href={listing.website} rel="nofollow noopener" target="_blank">Visit website</a></p>
+            )}
+            {!tier.showWebsite && listing.website && (
+              <p data-testid="website-gated">
+                Website available on <a href="/pricing">Essential and above</a>.
+              </p>
+            )}
+            <p><a href={`#enquire`}>Send an enquiry</a></p>
+          </section>
 
-      {listing.claimStatus === "unclaimed" && (
-        <section data-testid="claim-cta">
-          <h2>Is this your {e.singular}?</h2>
-          <p><a href={mailto(`Claim ${listing.name}`)}>Claim it free</a> to edit the details.</p>
-        </section>
-      )}
+          {listing.claimStatus === "unclaimed" && (
+            <section data-testid="claim-cta" className="card bg-raised">
+              <h2 className="mt-0">Is this your {e.singular}?</h2>
+              <p><a href={mailto(`Claim ${listing.name}`)}>Claim it free</a> to edit the details.</p>
+            </section>
+          )}
 
-      {/* On EVERY listing, not just unclaimed ones. A claimed listing can carry
-          a wrong address or belong to a business that has closed, and the
-          person who spots it is the visitor, whatever the claim status says.
-          Both links are mailto: until /claim and /report ship — an advertised
-          route that 404s is worse than an inbox. */}
-      <section data-testid="correction-links">
-        <p>
-          <a href="/data-sources">Where this information came from</a>
-          {" · "}
-          <a href={mailto(`Report ${listing.name}`)}>Report incorrect information</a>
-          {" · "}
-          <a href={mailto(`Remove ${listing.name}`)}>Request removal</a>
-        </p>
-      </section>
+          {/* On EVERY listing, not just unclaimed ones. A claimed listing can carry
+              a wrong address or belong to a business that has closed, and the
+              person who spots it is the visitor, whatever the claim status says.
+              Both links are mailto: until /claim and /report ship — an advertised
+              route that 404s is worse than an inbox. */}
+          <section data-testid="correction-links" className="text-sm text-muted">
+            <p>
+              <a href="/data-sources">Where this information came from</a>
+              {" · "}
+              <a href={mailto(`Report ${listing.name}`)}>Report incorrect information</a>
+              {" · "}
+              <a href={mailto(`Remove ${listing.name}`)}>Request removal</a>
+            </p>
+          </section>
 
-      {related.length > 0 && (
-        <section aria-labelledby="nearby">
-          <h2 id="nearby">Other {e.plural} in {city.name}</h2>
-          <ul>
-            {related.map((r) => (
-              <li key={r.id}><a href={`${cityPath}/${r.slug}`}>{r.name}</a></li>
-            ))}
-          </ul>
-        </section>
-      )}
+          {related.length > 0 && (
+            <section aria-labelledby="nearby">
+              <h2 id="nearby">Other {e.plural} in {city.name}</h2>
+              <ul className="link-grid">
+                {related.map((r) => (
+                  <li key={r.id}><a href={`${cityPath}/${r.slug}`}>{r.name}</a></li>
+                ))}
+              </ul>
+            </section>
+          )}
 
-      <EnquiryForm
-        listingId={listing.id}
-        listingName={listing.name}
-        turnstileSiteKey={process.env.TURNSTILE_SITE_KEY?.trim() || null}
-      />
+        </div>
 
-      <p><small>{category?.name} in {city.name}, {city.region ?? profile.name}</small></p>
+        <aside className="lg:sticky lg:top-24">
+          <EnquiryForm
+            listingId={listing.id}
+            listingName={listing.name}
+            turnstileSiteKey={process.env.TURNSTILE_SITE_KEY?.trim() || null}
+          />
+        </aside>
+      </div>
+
+      <p className="mt-10"><small>{category?.name} in {city.name}, {city.region ?? profile.name}</small></p>
     </main>
   );
 }

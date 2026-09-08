@@ -17,8 +17,8 @@ export function IntervalToggle({
   savingNote?: string;
 }) {
   return (
-    <nav aria-label="Billing interval" data-testid="interval-toggle">
-      <ul>
+    <nav aria-label="Billing interval" data-testid="interval-toggle" className="mt-6">
+      <ul className="inline-flex list-none gap-1 rounded-[var(--radius-token)] border border-line bg-surface p-1">
         {INTERVALS.map((interval) => {
           const current = interval === active;
           return (
@@ -28,6 +28,11 @@ export function IntervalToggle({
                 aria-current={current ? "true" : undefined}
                 data-interval={interval}
                 data-active={current}
+                className={
+                  current
+                    ? "inline-flex min-h-11 items-center rounded-[calc(var(--radius-token)-0.25rem)] bg-primary px-4 font-semibold text-on-primary no-underline"
+                    : "inline-flex min-h-11 items-center rounded-[calc(var(--radius-token)-0.25rem)] px-4 text-ink no-underline hover:bg-raised"
+                }
                 // The non-default interval canonicalises to /pricing, so its
                 // link is not one we are asking a crawler to follow.
                 rel={interval === DEFAULT_INTERVAL ? undefined : "nofollow"}
@@ -38,7 +43,7 @@ export function IntervalToggle({
           );
         })}
       </ul>
-      {savingNote && <p data-testid="saving-note">{savingNote}</p>}
+      {savingNote && <p data-testid="saving-note" className="mt-3 text-sm text-muted">{savingNote}</p>}
     </nav>
   );
 }

@@ -1,47 +1,76 @@
 import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
+import { suppressFooterMatrix } from "@/components/layout/footer-matrix-flag";
 
 export const metadata: Metadata = {
   title: "Page not found",
+  // A 404 has nothing to offer a search result, and Google ignores the tag on
+  // one anyway — this is for the internal-link crawl, which should keep going.
   robots: { index: false, follow: true },
 };
 
 /**
- * The 404 page, rendered inside the root layout — so it carries the header and
- * the footer like every other page.
+ * Rendered inside the root layout, so it keeps the header and the footer.
  *
- * Without this file Next serves its own built-in 404, which renders outside the
- * layout entirely: no nav, no footer link matrix, no `<main>` and no heading. A
- * visitor who followed a stale link lands on a dead end with nothing to click,
- * and a crawler that reaches one finds nothing to follow — on a directory whose
- * URLs change whenever a listing is renamed, that is a page type worth building.
- *
- * `follow` rather than `nofollow`: the links out of here are the whole point.
+ * A 404 without the site chrome is a dead end: no nav, no footer links, no way
+ * back in for a visitor who followed a stale link, and nothing for a crawler to
+ * follow either. The three links below are the site's three entry points, and
+ * they are here rather than only in the chrome because a person who has just
+ * hit a wall should not have to go looking.
  */
 export default function NotFound() {
   const e = siteConfig.entity;
+  // See footer-matrix-flag.ts: this is a dead end, not a page the footer's
+  // city/category matrix needs to route a crawler onward from.
+  suppressFooterMatrix();
 
   return (
     <main>
-      <h1>Page not found</h1>
-      <p>
-        That page has moved or never existed. Nothing is broken — the address is
-        just not one we serve.
-      </p>
-      <ul>
-        <li>
-          <a href="/">Start again from the home page</a>
-        </li>
-        <li>
-          <a href="/cities">Browse {e.plural} by location</a>
-        </li>
-        <li>
-          <a href="/categories">Browse {e.plural} by type</a>
-        </li>
-        <li>
-          <a href="/search">Search for a {e.singular}</a>
-        </li>
-      </ul>
+      <div className="py-6">
+        <p className="prose font-heading text-sm font-semibold tracking-widest text-muted uppercase">
+          404
+        </p>
+        <h1 className="mt-2">We can&rsquo;t find that page</h1>
+        <p className="prose text-lg text-muted">
+          The address may be mistyped, or the {e.singular} that used to be here may have been
+          removed. Nothing else is broken — start again from one of these.
+        </p>
+
+        <ul className="mt-8 grid list-none gap-3 p-0 sm:grid-cols-3">
+          <li>
+            <a href="/cities" className="card card-hover block h-full no-underline">
+              <span className="font-heading font-semibold text-ink">Browse by location</span>
+              <span className="mt-1 block text-sm text-muted">
+                Every town and city we cover.
+              </span>
+            </a>
+          </li>
+          <li>
+            <a href="/categories" className="card card-hover block h-full no-underline">
+              <span className="font-heading font-semibold text-ink">Browse by type</span>
+              <span className="mt-1 block text-sm text-muted">
+                Every kind of {e.singular} on the site.
+              </span>
+            </a>
+          </li>
+          <li>
+            <a href="/search" className="card card-hover block h-full no-underline">
+              <span className="font-heading font-semibold text-ink">Search</span>
+              <span className="mt-1 block text-sm text-muted">
+                Find a {e.singular} by name, place or type.
+              </span>
+            </a>
+          </li>
+        </ul>
+
+        <p className="prose mt-8 text-sm text-muted">
+          Followed a link from another site and think it should work?{" "}
+          <a href={`mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent("Broken link")}`}>
+            Tell us where it came from
+          </a>{" "}
+          and we&rsquo;ll point it somewhere sensible.
+        </p>
+      </div>
     </main>
   );
 }

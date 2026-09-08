@@ -37,6 +37,13 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
     { href: "/advertise", label: "Advertise", inNav: false, inFooter: true, inSitemap: true },
     { href: "/trust", label: "Trust & safety", inNav: false, inFooter: true, inSitemap: true },
     { href: "/data-sources", label: "Where our data comes from", inNav: false, inFooter: true, inSitemap: true },
+    // The legal pages. No flag turns these off — a site without them is not a
+    // smaller site, it is a broken one. They are here so the sitemap and the
+    // route-existence test see them; the footer renders them from
+    // components/layout/legal-routes.ts, grouped with the copyright line
+    // rather than mixed in with the browse links.
+    { href: "/privacy", label: "Privacy", inNav: false, inFooter: false, inSitemap: true },
+    { href: "/terms", label: "Terms", inNav: false, inFooter: false, inSitemap: true },
   ];
 
   if (mode === "local-multi-vertical") {

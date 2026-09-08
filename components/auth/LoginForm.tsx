@@ -25,7 +25,7 @@ export function LoginForm() {
   }
 
   return (
-    <form action={onSubmit} data-testid="login-form">
+    <form action={onSubmit} data-testid="login-form" className="card max-w-md">
       <p>
         <label htmlFor="email">Email</label>
         <input id="email" name="email" type="email" required autoComplete="email" />
@@ -35,7 +35,9 @@ export function LoginForm() {
         <input id="password" name="password" type="password" required autoComplete="current-password" />
       </p>
       {error && <p role="alert" data-testid="login-error">{error}</p>}
-      <button type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
+      <button type="submit" disabled={pending} className="btn btn-primary w-full">
+        {pending ? "Signing in…" : "Sign in"}
+      </button>
     </form>
   );
 }

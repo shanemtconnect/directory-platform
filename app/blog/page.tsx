@@ -32,7 +32,9 @@ export default function BlogIndex() {
       {posts.length === 0 ? (
         <p>Nothing has been published here yet.</p>
       ) : (
-        posts.map((post) => <PostCard key={post.slug} post={post} />)
+        <div className="mt-6 grid gap-4">
+          {posts.map((post) => <PostCard key={post.slug} post={post} />)}
+        </div>
       )}
     </main>
   );

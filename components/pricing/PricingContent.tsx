@@ -62,7 +62,7 @@ export function PricingContent({ interval }: { interval: Interval }) {
 
       <IntervalToggle active={interval} labels={INTERVAL_LABELS} savingNote={savingNote} />
 
-      <ul data-testid="plans">
+      <ul data-testid="plans" className="mt-8 grid list-none gap-4 p-0 md:grid-cols-3">
         {tiers.map(([name, tier]) => (
           <PricingCard
             key={name}
@@ -84,10 +84,12 @@ export function PricingContent({ interval }: { interval: Interval }) {
       )}
 
       <h2>Compare the plans</h2>
-      <ComparisonTable
-        tiers={siteConfig.tiers}
-        caption={`What each plan shows on your ${e.singular} listing`}
-      />
+      <div className="table-scroll">
+        <ComparisonTable
+          tiers={siteConfig.tiers}
+          caption={`What each plan shows on your ${e.singular} listing`}
+        />
+      </div>
 
       <h2>About the Verified badge</h2>
       <p>

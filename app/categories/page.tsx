@@ -45,7 +45,7 @@ export default async function CategoriesIndex() {
         {categories.length === 0 ? (
           <p>No categories have listings yet.</p>
         ) : (
-          <ul>
+          <ul className="link-grid">
             {categories.map((c) => (
               <li key={c.id}>
                 <a href={`/categories/${c.slug}`}>{c.name}</a> <span>({c.listingCount})</span>

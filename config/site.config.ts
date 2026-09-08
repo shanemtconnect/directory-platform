@@ -194,6 +194,12 @@ export const siteConfig = {
     requireIntroCopyToIndex: true,
     footerCitiesPerCategory: 18,
   },
+
+  legal: {
+    privacyLastUpdated: "2026-09-08",
+    termsLastUpdated: "2026-09-08",
+    dataController: "TBC",
+  },
 } as const satisfies SiteConfig;
 
 /**

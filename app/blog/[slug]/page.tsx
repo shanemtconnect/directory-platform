@@ -81,9 +81,9 @@ export default async function BlogPost({ params }: Props) {
             { name: post.title, path: `/blog/${post.slug}` },
           ]}
         />
-        <article>
+        <article className="prose">
           <h1>{post.title}</h1>
-          <p>
+          <p className="text-sm text-muted">
             <time dateTime={post.date}>{formatDate(post.date, siteConfig.locale)}</time>
             {post.author ? <> · {post.author}</> : null}
             {post.updated ? (
@@ -96,15 +96,22 @@ export default async function BlogPost({ params }: Props) {
           </p>
           <PostBody html={post.html} />
           {post.tags.length === 0 ? null : (
-            <ul>
+            <ul className="mt-8 flex list-none flex-wrap gap-2 p-0">
               {post.tags.map((tag) => (
-                <li key={tag}>{tag}</li>
+                <li
+                  key={tag}
+                  className="rounded-full border border-line bg-raised px-3 py-1 text-sm text-muted"
+                >
+                  {tag}
+                </li>
               ))}
             </ul>
           )}
         </article>
-        <p>
-          <a href="/blog">All {contentSectionLabel().toLowerCase()}</a>
+        <p className="mt-10">
+          <a href="/blog" className="btn btn-secondary">
+            All {contentSectionLabel().toLowerCase()}
+          </a>
         </p>
       </main>
     </>

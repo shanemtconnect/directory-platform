@@ -30,7 +30,7 @@ export function SubmitListingForm({
   // have to merge duplicates later.
   if (state.status === "duplicate") {
     return (
-      <div data-testid="submit-duplicate" role="status">
+      <div data-testid="submit-duplicate" role="status" className="card bg-raised max-w-2xl">
         <h2>This looks like it&rsquo;s already listed</h2>
         {state.existing ? (
           <>
@@ -58,7 +58,7 @@ export function SubmitListingForm({
   }
 
   return (
-    <form action={action} data-testid="submit-listing-form">
+    <form action={action} data-testid="submit-listing-form" className="max-w-2xl">
       {/* Honeypot. Hidden from people and from screen readers, visible to bots. */}
       <div aria-hidden="true" style={{ position: "absolute", left: "-9999px" }}>
         <label htmlFor="company_website">Leave this field empty</label>
@@ -196,7 +196,7 @@ export function SubmitListingForm({
         <p role="alert" data-testid="submit-error">{state.message}</p>
       )}
 
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} className="btn btn-primary">
         {pending ? "Sending…" : "Submit listing"}
       </button>
 

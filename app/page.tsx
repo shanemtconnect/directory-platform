@@ -48,10 +48,10 @@ export default async function HomePage() {
       <JsonLd data={breadcrumbSchema([{ name: "Home", path: "/" }])} />
 
       <main>
-        <header>
-          <h1>{siteConfig.name}</h1>
-          <p>{siteConfig.tagline}</p>
-          <p>
+        <header className="mx-auto max-w-3xl py-6 text-center sm:py-10">
+          <h1 className="text-[length:var(--text-display)]">{siteConfig.name}</h1>
+          <p className="mt-3 text-xl text-muted">{siteConfig.tagline}</p>
+          <p className="mx-auto mt-3 max-w-xl text-muted">
             Compare {e.plural} across {profile.name} by location and by type, then
             enquire directly.
           </p>
@@ -65,13 +65,13 @@ export default async function HomePage() {
 
         <BrowseByType categories={categories} />
 
-        <section aria-labelledby="add-listing-cta">
-          <h2 id="add-listing-cta">Are you a {e.ownerNoun}?</h2>
-          <p>
+        <section aria-labelledby="add-listing-cta" className="card bg-raised">
+          <h2 id="add-listing-cta" className="mt-0">Are you a {e.ownerNoun}?</h2>
+          <p className="mb-4 text-muted">
             {`Add your ${e.singular} and start receiving enquiries.`}
           </p>
-          <p>
-            <a href="/add-listing">{`Add your ${e.singular}`}</a>
+          <p className="mb-0">
+            <a href="/add-listing" className="btn btn-primary">{`Add your ${e.singular}`}</a>
           </p>
         </section>
       </main>

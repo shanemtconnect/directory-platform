@@ -47,23 +47,29 @@ export function PillarPage({
 
   return (
     <main>
-      <nav aria-label="Breadcrumb">
+      <nav aria-label="Breadcrumb" className="mb-4 text-sm text-muted">
         <a href="/">Home</a> › <span>{heading.place}</span>
       </nav>
 
       <h1>{heading.title}</h1>
-      {!isFirstPage && <p data-testid="page-indicator">Page {page} of {totalPages}</p>}
+      {!isFirstPage && (
+        <p data-testid="page-indicator" className="text-muted">Page {page} of {totalPages}</p>
+      )}
 
       {/* Intro copy only on page 1 — repeating it across paginated URLs is
           duplicate content on the pages least able to afford it. */}
       {isFirstPage && heading.introHtml && (
-        <div data-testid="intro" dangerouslySetInnerHTML={{ __html: heading.introHtml }} />
+        <div
+          data-testid="intro"
+          className="prose mt-4 text-lg"
+          dangerouslySetInnerHTML={{ __html: heading.introHtml }}
+        />
       )}
 
       {isFirstPage && featured.length > 0 && (
         <section aria-labelledby="featured" data-testid="featured">
           <h2 id="featured">Featured {heading.nounPlural} in {heading.place}</h2>
-          <ul>
+          <ul className="card-grid">
             {featured.map((l) => (
               <ListingCard key={l.id} listing={l} basePath={cityPath} featured />
             ))}
@@ -82,7 +88,7 @@ export function PillarPage({
         {listings.length === 0 ? (
           <p>No {heading.nounPlural} listed in {heading.place} yet.</p>
         ) : (
-          <ul data-testid="listing-grid">
+          <ul data-testid="listing-grid" className="card-grid">
             {listings.map((l) => (
               <ListingCard key={l.id} listing={l} basePath={cityPath} />
             ))}
@@ -104,7 +110,7 @@ export function PillarPage({
       {categories.length > 0 && (
         <section aria-labelledby="by-type" data-testid="category-links">
           <h2 id="by-type">{e.Plural} in {heading.place} by type</h2>
-          <ul>
+          <ul className="link-grid">
             {categories.map((c) => (
               <li key={c.id}>
                 <a href={`${cityPath}/${c.slug}`}>{c.name} in {heading.place}</a>{" "}
@@ -118,7 +124,7 @@ export function PillarPage({
       {nearby.length > 0 && (
         <section aria-labelledby="nearby" data-testid="nearby-cities">
           <h2 id="nearby">Nearby locations</h2>
-          <ul>
+          <ul className="link-grid">
             {nearby.map((c) => (
               <li key={c.id}>
                 <a href={`/${c.slug}`}>{e.Plural} in {c.name}</a>{" "}
@@ -132,20 +138,25 @@ export function PillarPage({
       {faq.length > 0 && (
         <section aria-labelledby="faq" data-testid="faq">
           <h2 id="faq">Frequently asked questions</h2>
-          <dl>
+          <dl className="prose">
             {faq.map((f) => (
-              <div key={f.question}>
-                <dt>{f.question}</dt>
-                <dd>{f.answer}</dd>
+              <div key={f.question} className="border-t border-line py-4">
+                <dt className="font-heading font-semibold">{f.question}</dt>
+                <dd className="mt-1 ml-0 text-muted">{f.answer}</dd>
               </div>
             ))}
           </dl>
         </section>
       )}
 
-      <section data-testid="add-cta">
-        <h2>Own a {e.singular} in {heading.place}?</h2>
-        <p><a href="/add-listing">Add it free.</a></p>
+      <section data-testid="add-cta" className="card bg-raised">
+        <h2 className="mt-0">Own a {e.singular} in {heading.place}?</h2>
+        <p className="mb-4 text-muted">
+          Adding it costs nothing and takes a few minutes.
+        </p>
+        <p className="mb-0">
+          <a href="/add-listing" className="btn btn-primary">Add your {e.singular}</a>
+        </p>
       </section>
     </main>
   );

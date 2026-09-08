@@ -20,7 +20,7 @@ export function ComparisonTable({
 
   return (
     // Many columns will exceed the viewport. Scroll the table, never the page.
-    <div style={{ overflowX: "auto" }} data-testid="shortlist-comparison">
+    <div className="table-scroll" data-testid="shortlist-comparison">
       <table>
         <caption>
           {entries.length} {entries.length === 1 ? e.singular : e.plural} compared

@@ -13,7 +13,10 @@ import { resolveFeatures } from "./config/flag-variants";
 validateFeatureDependencies(resolveFeatures(siteConfig.features));
 validateEnv(process.env, { phase: "build" });
 validateCountry(siteConfig);
-validateProductionConfig(siteConfig, process.env);
+validateProductionConfig(
+  { ...siteConfig, dataController: siteConfig.legal.dataController },
+  process.env,
+);
 
 const NOINDEX_HEADER = "noindex, nofollow, noarchive, nosnippet, noimageindex";
 
