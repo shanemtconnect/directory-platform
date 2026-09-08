@@ -37,12 +37,16 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
   }
 
   // contentHub REPLACES the flat blog rather than sitting beside it, so the two
-  // can never both appear and split the same internal links.
-  routes.push(
-    f.contentHub
-      ? { href: "/guides", label: "Guides", inNav: true, inFooter: true, inSitemap: true }
-      : { href: "/blog", label: "Blog", inNav: true, inFooter: true, inSitemap: true },
-  );
+  // can never both appear and split the same internal links. The flag changes
+  // what the section is CALLED, never where it lives: /blog is the only route
+  // that exists, and advertising /guides was a link to a 404.
+  routes.push({
+    href: "/blog",
+    label: f.contentHub ? "Guides" : "Blog",
+    inNav: true,
+    inFooter: true,
+    inSitemap: true,
+  });
 
   if (f.shortlist) routes.push({ href: "/shortlist", label: "Shortlist", inNav: true, inFooter: false, inSitemap: false });
   if (f.costGuides) routes.push({ href: "/cost", label: "Costs", inNav: true, inFooter: true, inSitemap: true });
