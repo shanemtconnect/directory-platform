@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { themeStyleVars } from "./theme";
+import type { FontFamily } from "@/config/types";
 
 const theme = {
   primary: "#8B5A3C",
@@ -40,7 +41,12 @@ describe("themeStyleVars", () => {
   });
 
   it("rejects a quote that would break out of the font declaration", () => {
-    expect(() => themeStyleVars({ ...theme, fontBody: 'Inter";color:red' })).toThrow(/unsafe/i);
+    // Cast on purpose. `fontBody` is typed as the FontFamily union now, but
+    // site.config.ts is hand-edited on every clone and a hand edit can put any
+    // string there — the runtime guard is what actually holds, and it has to
+    // keep holding when the type is bypassed.
+    const injected = 'Inter";color:red' as FontFamily;
+    expect(() => themeStyleVars({ ...theme, fontBody: injected })).toThrow(/unsafe/i);
   });
 
   it("names the offending token so a clone typo is findable", () => {

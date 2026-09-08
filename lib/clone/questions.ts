@@ -2,6 +2,7 @@ import {
   FEATURE_FLAGS,
   type CustomFieldType,
   type FeatureFlag,
+  type FontFamily,
   type SiteMode,
   type TierName,
 } from "@/config/types";
@@ -24,19 +25,11 @@ import {
  */
 
 /**
- * The families the theme layer ships webfonts for.
- *
- * TODO: re-point at the `FontFamily` union in `config/types.ts` once Task 6
- * lands it there; this local copy exists only so the two can be built in
- * parallel and must stay identical in the meantime.
+ * Re-exported, not redeclared: `config/types.ts` owns the union, because that
+ * is what `SiteConfig["theme"]` is typed with. A wizard that offered a family
+ * the config type does not accept would write a config that does not compile.
  */
-export type FontFamily =
-  | "Fraunces"
-  | "Inter"
-  | "Playfair Display"
-  | "Source Sans 3"
-  | "DM Sans"
-  | "Lora";
+export type { FontFamily };
 
 export const FONT_FAMILIES: readonly FontFamily[] = [
   "Fraunces",

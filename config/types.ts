@@ -2,6 +2,21 @@ export type TierName = "free" | "essential" | "premium";
 
 export type CustomFieldType = "number" | "boolean" | "text" | "select" | "currency";
 
+/**
+ * The families the theme layer ships webfonts for.
+ *
+ * ONE list, here. A clone's font is chosen by the wizard (lib/clone/questions.ts)
+ * and read by lib/theme.ts, and a second copy of the union in either place is a
+ * font that can be written into a config nothing knows how to load.
+ */
+export type FontFamily =
+  | "Fraunces"
+  | "Inter"
+  | "Playfair Display"
+  | "Source Sans 3"
+  | "DM Sans"
+  | "Lora";
+
 export interface CustomField {
   readonly key: string;
   readonly label: string;
@@ -126,8 +141,8 @@ export interface SiteConfig {
   readonly theme: {
     readonly primary: string;
     readonly accent: string;
-    readonly fontHeading: string;
-    readonly fontBody: string;
+    readonly fontHeading: FontFamily;
+    readonly fontBody: FontFamily;
     readonly radius: string;
   };
 
