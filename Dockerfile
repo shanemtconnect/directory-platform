@@ -79,6 +79,22 @@ COPY --from=builder --chown=nextjs:nodejs /app/lib/cache/*.mjs ./lib/cache/
 # dangling symlink is what BuildKit refuses to do.
 RUN rm -rf node_modules
 COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+
+# The migrations, and the one script that can apply them without drizzle-kit.
+#
+# Coolify's pre-deployment command runs in THIS image, and `drizzle-kit` is a
+# devDependency that the prod-only tree above does not contain — so without
+# these two the deploy has no way to migrate, and a container that starts ahead
+# of its migration serves a site whose every enquiry form fails: the enquiry
+# action inserts into `job_queue` inside its own transaction, so a missing
+# column takes the form down and not merely the worker.
+#
+# `scripts/migrate.mjs` alone, not `scripts/`: everything else in there is
+# TypeScript or bash that this image cannot run anyway. Its two imports,
+# `drizzle-orm` and `postgres`, are runtime dependencies already present above.
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
+
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
