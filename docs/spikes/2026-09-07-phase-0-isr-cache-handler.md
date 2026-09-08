@@ -123,8 +123,10 @@ previous deploy's stay. Unset, the entrypoint does nothing.
 
 **Deploying this means mounting a volume.** The Coolify app needs a persistent
 volume at, say, `/data/next-static`, with `STATIC_ASSETS_DIR=/data/next-static`.
-Without it you must run `scripts/purge-cache.sh` after every single deploy, and
-between the deploy and the purge the site serves unstyled pages.
+Without it, a client that already holds a page from the previous build gets a
+404 for that build's assets until it reloads. (Written before the reversal
+below, when a purge was the only thing separating a deploy from unstyled pages;
+namespacing by build id is now what does that.)
 
 The volume grows by one build's static output per deploy and is never pruned.
 That is deliberate for now — it is small, and pruning it correctly means knowing
@@ -223,11 +225,17 @@ Build 2 served `/` fresh: its own build id in the HTML, its own stylesheet at
   of the site; the pages that matter warm within seconds of a deploy. If that
   ever becomes a problem the answer is a warming sweep over the sitemap, not a
   cache that outlives its build.
-- **Old namespaces need sweeping.** Nothing expires them. Run
-  `scripts/purge-cache.sh` as a Coolify post-deployment command: with no
-  arguments it keeps `.next/BUILD_ID` — the running build — and deletes every
-  other `nextjs:*` namespace, including the un-namespaced `nextjs:/path` keys
-  written before this scheme.
+- **Old namespaces need sweeping, and the app does it itself.** Nothing expires
+  them, so `CACHE_SWEEP_DELAY_MS` (default 60 s) after a container connects to
+  Redis the handler SCANs `nextjs:*` and deletes every key outside its own
+  prefix, including the un-namespaced `nextjs:/path` keys written before this
+  scheme. The delay is for rolling deploys: until traffic swaps, the previous
+  replica is still serving from its namespace. **Corrected 2026-09-08:** this
+  was first written as "run `scripts/purge-cache.sh` as a Coolify
+  post-deployment command", which cannot work — the runner image is
+  `node:24-alpine` with the standalone server and nothing else, so there is no
+  `scripts/`, no bash and no `redis-cli` in it. The script survives as the
+  manual tool for a host that has them.
 - **Keep `STATIC_ASSETS_DIR`.** It is no longer load-bearing for correctness,
   but a client that already holds an old page — an open tab, a bfcache entry, a
   prefetch in flight — still asks for the old build's assets. Retention keeps

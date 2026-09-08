@@ -9,6 +9,8 @@ import {
   selectBuildId,
   cacheKeyPrefix,
   resolveCacheKeyPrefix,
+  isStaleNamespaceKey,
+  namespaceScanPattern,
 } from "@/lib/cache/build-id.mjs";
 
 describe("normalizeBuildId", () => {
@@ -112,5 +114,66 @@ describe("resolveCacheKeyPrefix", () => {
     mkdirSync(join(cwd, ".next", "BUILD_ID"), { recursive: true });
     expect(resolveCacheKeyPrefix({ cwd, env: {} })).toBe("nextjs:dev:");
     cleanup();
+  });
+});
+
+describe("namespaceScanPattern", () => {
+  it("matches every build's keys, not just the current one", () => {
+    expect(namespaceScanPattern("nextjs:abc:")).toBe("nextjs:*");
+  });
+
+  it("refuses a prefix that is not `namespace:buildId:`", () => {
+    // A pattern derived from a malformed prefix is what a sweep would SCAN
+    // with, so it must never be guessed at.
+    expect(() => namespaceScanPattern("nextjs:")).toThrow(/prefix/i);
+  });
+});
+
+describe("isStaleNamespaceKey", () => {
+  const CURRENT = "nextjs:abc:";
+
+  it("spares the running build's keys", () => {
+    expect(isStaleNamespaceKey("nextjs:abc:/index", CURRENT)).toBe(false);
+    expect(isStaleNamespaceKey("nextjs:abc:__sharedTags__", CURRENT)).toBe(false);
+  });
+
+  it("spares the prefix itself, should a bare key ever exist under it", () => {
+    expect(isStaleNamespaceKey(CURRENT, CURRENT)).toBe(false);
+  });
+
+  it("selects another build's keys", () => {
+    expect(isStaleNamespaceKey("nextjs:xyz:/index", CURRENT)).toBe(true);
+  });
+
+  it("selects legacy keys written before the namespace existed", () => {
+    // `keyPrefix: "nextjs:"` — the bug this whole task exists to fix.
+    expect(isStaleNamespaceKey("nextjs:/index", CURRENT)).toBe(true);
+    expect(isStaleNamespaceKey("nextjs:", CURRENT)).toBe(true);
+  });
+
+  it("is a literal starts-with, so a longer id is not mistaken for the current one", () => {
+    // `nextjs:abcd:` shares a leading run of characters with `nextjs:abc:`;
+    // only the trailing separator distinguishes them.
+    expect(isStaleNamespaceKey("nextjs:abcd:/index", CURRENT)).toBe(true);
+    expect(isStaleNamespaceKey("nextjs:ab:/index", CURRENT)).toBe(true);
+  });
+
+  it("never selects a key outside the namespace, whatever the SCAN returned", () => {
+    expect(isStaleNamespaceKey("other:keep-me", CURRENT)).toBe(false);
+    expect(isStaleNamespaceKey("nextjsx:abc:/index", CURRENT)).toBe(false);
+    // A key that merely mentions the namespace further in is not ours.
+    expect(isStaleNamespaceKey("bull:nextjs:abc:/index", CURRENT)).toBe(false);
+  });
+
+  it("ignores a key that is not a string", () => {
+    expect(isStaleNamespaceKey(undefined as unknown as string, CURRENT)).toBe(false);
+    expect(isStaleNamespaceKey(42 as unknown as string, CURRENT)).toBe(false);
+  });
+
+  it("refuses to judge anything against a malformed prefix", () => {
+    // Deleting on a bad prefix would sweep the running build. Loud, not lenient.
+    for (const bad of ["nextjs:", "nextjs", "", "nextjs:abc", "nextjs:a:b:"]) {
+      expect(() => isStaleNamespaceKey("nextjs:xyz:/index", bad)).toThrow(/prefix/i);
+    }
   });
 });

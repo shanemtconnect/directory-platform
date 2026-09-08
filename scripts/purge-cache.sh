@@ -4,9 +4,15 @@
 # Keys are `nextjs:<buildId>:<path>`, so each build gets its own namespace and a
 # deploy starts cold rather than serving the previous build's HTML with its dead
 # asset hashes and unknown server-action ids. Nothing expires those old
-# namespaces, so run this AFTER a deploy — as a Coolify post-deployment command:
+# namespaces — so the app sweeps them itself a minute after each boot, see
+# lib/cache/sweep.mjs. This script is the MANUAL equivalent, for a host that has
+# a checkout and a redis-cli:
 #
 #   REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh
+#
+# It is deliberately not a platform post-deployment command: the runner image is
+# node:24-alpine with the standalone server and nothing else — no scripts/, no
+# bash, no redis-cli — so it cannot run in the container it would be aimed at.
 #
 # With no arguments it keeps the build id in .next/BUILD_ID (i.e. the build that
 # is running) and deletes every other `nextjs:*` namespace, including the

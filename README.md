@@ -103,17 +103,31 @@ now fails fast with a clear message if the arg is missing, rather than dying
 partway through prerendering on `ECONNREFUSED`. It is not baked into the
 runner; that gets its own at boot.
 
-**Run `scripts/purge-cache.sh` as a post-deployment command.** Each build gets
-its own `nextjs:<buildId>:` namespace in Redis and nothing expires the previous
-one. With no arguments the script keeps the build id in `.next/BUILD_ID` — the
-build that is running — and deletes every other namespace:
+**The app sweeps stale namespaces itself — there is nothing to configure.**
+Each build gets its own `nextjs:<buildId>:` namespace in Redis and nothing
+expires the previous one, so a minute after a new container connects to Redis
+it SCANs `nextjs:*` and deletes every key outside its own prefix. It is
+fire-and-forget: the site serves whether or not the sweep succeeds, and the
+result is logged next to `[cache] key prefix:`.
+
+The delay is what makes it safe during a rolling deploy — the previous replica
+is still serving from its own namespace until traffic swaps, and sweeping
+immediately would pull the cache out from under it. `CACHE_SWEEP_DELAY_MS`
+overrides it (default `60000`); raise it if your deploys take longer to drain.
+
+Do **not** wire `scripts/purge-cache.sh` in as a post-deployment command. The
+runner image is `node:24-alpine` carrying the standalone server and nothing
+else — no `scripts/`, no bash, no `redis-cli` — so it cannot run there. The
+script is for a host that has a `redis-cli` and a checkout, when you want to
+purge by hand:
 
 ```bash
 REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh
 ```
 
-`KEEP_BUILD_ID=none` purges everything instead, which is the way to force every
-page to re-render now. `DRY_RUN=1` lists without deleting.
+With no arguments it keeps the build id in `.next/BUILD_ID` and deletes every
+other namespace. `KEEP_BUILD_ID=none` purges everything instead, which is the
+way to force every page to re-render now. `DRY_RUN=1` lists without deleting.
 
 **Expect a cold cache after a deploy.** The first request to each page renders
 it; there is no way around that, and no way to avoid it that does not mean
