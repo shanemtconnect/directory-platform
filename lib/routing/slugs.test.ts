@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
-import { withTestDb } from "@/test/db";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import { withTestDb, type TestDb } from "@/test/db";
+import { makeCity, makeListing, makeScaffold } from "@/test/factories";
 import { allocateSlug, reallocateSlug, resolveSlug, seedReservedSlugs, ROOT_SCOPE, SlugError } from "./slugs";
-import { redirects } from "@/lib/db/schema";
+import { cities, listings, redirects, slugs } from "@/lib/db/schema";
+import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 describe("allocateSlug", () => {
@@ -175,7 +179,7 @@ describe("reallocateSlug", () => {
     });
   });
 
-  it("chains correctly across two renames without orphaning the first URL", async () => {
+  it("collapses a chain of renames so every old URL is one hop from the new one", async () => {
     await withTestDb(async (tx) => {
       const entityId = randomUUID();
       await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Alpha", kind: "city", entityId });
@@ -189,7 +193,8 @@ describe("reallocateSlug", () => {
       });
       const rows = await tx.select().from(redirects);
       const map = Object.fromEntries(rows.map((r) => [r.fromPath, r.toPath]));
-      expect(map["/alpha"]).toBe("/beta");
+      // Two hops leaks link equity and Google gives up after a handful of them.
+      expect(map["/alpha"]).toBe("/gamma");
       expect(map["/beta"]).toBe("/gamma");
     });
   });
@@ -201,5 +206,81 @@ describe("reallocateSlug", () => {
         newDesired: "Nowhere", oldPath: "/nowhere", newPathFor: (s) => `/${s}`,
       })).rejects.toThrow(SlugError);
     });
+  });
+
+  it("writes the new slug back to the city row the links are built from", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = await makeCity(tx, "Kingston", "Greater London");
+      await reallocateSlug(tx, {
+        parentScope: ROOT_SCOPE, entityId: cityId, kind: "city",
+        newDesired: "Kingston upon Thames", oldPath: "/kingston", newPathFor: (s) => `/${s}`,
+      });
+      const [row] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, cityId));
+      // The sitemap, homepage and category pages all read cities.slug. Leaving
+      // it stale emits the old URL everywhere and 301s every internal link.
+      expect(row?.slug).toBe("kingston-upon-thames");
+    });
+  });
+
+  it("writes the new slug back to the listing row too", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      await reallocateSlug(tx, {
+        parentScope: ctx.cityId, entityId: listingId, kind: "listing",
+        newDesired: "The New Barn", oldPath: "/leeds/the-old-barn",
+        newPathFor: (s) => `/leeds/${s}`,
+      });
+      const [row] = await tx
+        .select({ slug: listings.slug }).from(listings).where(eq(listings.id, listingId));
+      expect(row?.slug).toBe("the-new-barn");
+    });
+  });
+
+  it("refuses to reallocate a static slug", async () => {
+    await withTestDb(async (tx) => {
+      await seedReservedSlugs(tx);
+      await expect(reallocateSlug(tx, {
+        parentScope: ROOT_SCOPE, entityId: randomUUID(), kind: "static",
+        newDesired: "Prices", oldPath: "/pricing", newPathFor: (s) => `/${s}`,
+      })).rejects.toThrow(SlugError);
+    });
+  });
+});
+
+/**
+ * The one case a rolled-back single-connection test cannot reach.
+ *
+ * Two imports of the same business name landing at once used to pass the
+ * "is it taken?" check together, and the loser's INSERT raised 23505 — which
+ * in Postgres poisons the whole surrounding transaction, so the import aborted
+ * rather than taking the next candidate. These two run on their own committed
+ * connections; the scope is a fresh uuid so nothing else in the suite sees them.
+ */
+describe("allocateSlug under concurrency", () => {
+  const url =
+    process.env.TEST_DATABASE_URL ??
+    "postgres://directory:directory@localhost:5433/directory_test";
+
+  it("gives two simultaneous callers two different slugs", async () => {
+    const scope = randomUUID();
+    const clients = [postgres(url, { max: 1 }), postgres(url, { max: 1 })];
+    const dbs = clients.map((c) => drizzle(c, { schema }) as unknown as TestDb);
+    try {
+      const allocated = await Promise.all(
+        dbs.map((tx) =>
+          allocateSlug(tx, {
+            parentScope: scope, desired: "The Barn", kind: "listing", entityId: randomUUID(),
+          }),
+        ),
+      );
+      expect(new Set(allocated).size).toBe(2);
+      expect(allocated).toContain("the-barn");
+      expect(allocated).toContain("the-barn-2");
+    } finally {
+      // These rows are committed, not rolled back, so clean up after them.
+      await dbs[0]?.delete(slugs).where(eq(slugs.parentScope, scope));
+      await Promise.all(clients.map((c) => c.end({ timeout: 5 })));
+    }
   });
 });
