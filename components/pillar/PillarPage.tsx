@@ -2,6 +2,7 @@ import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import type { PillarHeading } from "@/lib/db/queries/cities";
 import type { CategoryIndexRow, CityIndexRow } from "@/lib/db/queries/indexes";
 import { siteConfig } from "@/config/site.config";
+import { sanitiseRichText } from "@/lib/html/sanitise";
 import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
 import { ListingMap } from "@/components/map/ListingMap";
@@ -62,7 +63,11 @@ export function PillarPage({
         <div
           data-testid="intro"
           className="prose mt-4 text-lg"
-          dangerouslySetInnerHTML={{ __html: heading.introHtml }}
+          // Stored HTML, so it goes through the allow-list on the way out. The
+          // seed escapes its own inputs, but this is the last point that can
+          // still be sure — and the editor that will write this copy next has
+          // not been built yet.
+          dangerouslySetInnerHTML={{ __html: sanitiseRichText(heading.introHtml) }}
         />
       )}
 
