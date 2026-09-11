@@ -20,9 +20,10 @@ import type { TestDb } from "@/test/db";
 
 export const NOTIFY_ENQUIRY = "notify.enquiry";
 export const NOTIFY_SUBMISSION = "notify.submission";
+export const NOTIFY_DECISION = "notify.decision";
 
 /** The kinds worker/jobs/notify.ts claims. */
-export const NOTIFY_KINDS: string[] = [NOTIFY_ENQUIRY, NOTIFY_SUBMISSION];
+export const NOTIFY_KINDS: string[] = [NOTIFY_ENQUIRY, NOTIFY_SUBMISSION, NOTIFY_DECISION];
 
 /**
  * Job payloads are ids, never copies of the record. The worker re-reads the
@@ -36,6 +37,21 @@ export type SubmissionJobPayload =
   | { listingId: string }
   /** The town was not one we hold, so the payload was parked instead. */
   | { parkedId: string };
+
+/**
+ * The admin's decision, not the row's current status.
+ *
+ * Every other payload here is an id alone, because the worker re-reads the row
+ * and a copied field could go stale. The decision is the exception on purpose:
+ * it names the EVENT the submitter is being told about. A listing approved this
+ * morning and taken down this afternoon still owes its submitter the approval
+ * email, and a worker reading `listings.status` at send time would write the
+ * wrong one.
+ */
+export type DecisionJobPayload = {
+  listingId: string;
+  decision: "approved" | "rejected";
+};
 
 export async function notifyEnquiry(
   tx: TestDb,
@@ -57,4 +73,17 @@ export async function notifySubmission(
   const payload: SubmissionJobPayload =
     result.outcome === "created" ? { listingId: result.listingId } : { parkedId: result.parkedId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SUBMISSION, payload });
+}
+
+/**
+ * Queued by the admin approve/reject actions, inside the transaction that
+ * changed the status. The submitter hears the outcome or the status change did
+ * not happen — there is no third state where a listing goes live silently.
+ */
+export async function notifyDecision(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: DecisionJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_DECISION, payload });
 }
