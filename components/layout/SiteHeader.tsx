@@ -111,7 +111,9 @@ export async function SiteHeader() {
   const inline = routes.filter((r) => !PROMOTED.has(r.href));
   const e = siteConfig.entity;
   const cities = await loadCities();
-  const switcherLabel = "Location:";
+  // The header has no current city to name — it renders above the route — so
+  // the label has to carry the whole meaning on its own.
+  const switcherLabel = "Browse by location";
 
   return (
     // `relative` so the mobile panel below can anchor to the whole bar rather
