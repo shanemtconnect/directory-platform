@@ -54,7 +54,6 @@ function schedule(name: string, expr: string, fn: (tx: Db) => Promise<void>): vo
 
 // Phase 1 ships the image pipeline. Later phases add:
 //   Phase 3 — city indexing gate
-//   Phase 4 — claim-document purge (30 days after decision)
 //   Phase 5 — verification expiry and renewal reminders at 30/7/0 days
 //   Phase 6 — backlink verification
 schedule("derivatives", "*/1 * * * *", async (tx) => {
@@ -67,6 +66,15 @@ schedule("derivatives", "*/1 * * * *", async (tx) => {
 schedule("notify", "*/30 * * * * *", async (tx) => {
   const { processNotifications } = await import("./jobs/notify");
   await processNotifications(tx);
+});
+
+// Daily, in the small hours. Retention is a thirty-day promise, not a
+// thirty-day-and-five-minutes one, so there is nothing to gain from running it
+// more often than once a day — and every run that finds nothing still costs a
+// query.
+schedule("purge-claim-docs", "0 3 * * *", async (tx) => {
+  const { purgeClaimDocuments } = await import("./jobs/purge-claim-docs");
+  await purgeClaimDocuments(tx);
 });
 
 console.log("[worker] started");
