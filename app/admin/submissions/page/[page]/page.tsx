@@ -25,6 +25,10 @@ export default async function SubmissionsPaged({
   if (!/^[2-9][0-9]*$/.test(page)) notFound();
 
   const viewer = await currentViewer();
+  // The layout gates this route too. Repeated here so a query never runs for
+  // a viewer it will refuse: the page and the layout render concurrently, and
+  // a thrown FORBIDDEN puts a stack trace in the log for every 404.
+  if (viewer.role !== "admin") notFound();
   const queue = await pendingSubmissions(db, viewer, Number(page));
   if (queue.page !== Number(page)) notFound();
 

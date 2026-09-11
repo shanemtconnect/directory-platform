@@ -22,6 +22,10 @@ export default async function AuditFilteredPage({
 }) {
   const { entityType } = await params;
   const viewer = await currentViewer();
+  // The layout gates this route too. Repeated here so a query never runs for
+  // a viewer it will refuse: the page and the layout render concurrently, and
+  // a thrown FORBIDDEN puts a stack trace in the log for every 404.
+  if (viewer.role !== "admin") notFound();
   const types = await auditEntityTypes(db, viewer);
   if (!types.includes(entityType)) notFound();
 
