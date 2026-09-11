@@ -1,15 +1,18 @@
 "use server";
 
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { ensureProfile } from "@/lib/auth/profile";
-import { currentViewer } from "@/lib/auth/viewer";
+import { currentViewer, requireAdmin } from "@/lib/auth/viewer";
 import {
   attachClaimDocument,
+  decideClaim,
   startDocumentClaim,
   startDomainClaim,
 } from "@/lib/db/queries/claims";
-import { notifyClaimLink, notifyClaimSubmitted } from "@/lib/email/notify";
+import { notifyClaimDecided, notifyClaimLink, notifyClaimSubmitted } from "@/lib/email/notify";
+import { stripCrlf } from "@/lib/actions/validation";
 import { CLAIM_RATE_LIMIT, validateDocumentClaim, validateDomainClaim } from "@/lib/claims/form";
 import {
   claimDocKey,
@@ -227,4 +230,60 @@ export async function confirmClaimDocument(input: {
 
   if (!attached) return { ok: false, message: GENERIC_ERROR };
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------- admin */
+
+export interface DecisionState {
+  status: "idle" | "done" | "error";
+  message?: string;
+}
+
+/**
+ * Approve or reject, from `/admin/claims/[id]`.
+ *
+ * `requireAdmin()` here as well as in the layout, because the layout is not a
+ * security boundary for actions: a server action is a POST endpoint anyone can
+ * call directly, and it never renders through the layout that guards the page.
+ */
+export async function decideClaimAction(
+  _prev: DecisionState,
+  form: FormData,
+): Promise<DecisionState> {
+  const viewer = await requireAdmin();
+
+  const claimId = String(form.get("claimId") ?? "");
+  const decision = String(form.get("decision") ?? "");
+  if (decision !== "approved" && decision !== "rejected") {
+    return { status: "error", message: GENERIC_ERROR };
+  }
+  const reason = stripCrlf(String(form.get("reason") ?? "")).trim().slice(0, 500);
+
+  const requestHeaders = await headers();
+  const ip = clientIp(requestHeaders);
+
+  const result = await db.transaction(async (tx) => {
+    const handle = tx as unknown as Db;
+    const profile = await ensureProfile(handle, viewer);
+    const decided = await decideClaim(handle, viewer, {
+      claimId, decision, reason: reason || null, actorProfileId: profile.id, ip,
+    });
+    // Inside the transaction, so a rolled-back decision sends no email.
+    if (decided.outcome === "decided") await notifyClaimDecided(handle, viewer, claimId);
+    return decided;
+  });
+
+  switch (result.outcome) {
+    case "decided":
+      // The public page states who owns the listing, and it is ISR-cached.
+      revalidatePath(result.listingPath);
+      revalidatePath("/admin/claims");
+      return { status: "done" };
+    case "reason-required":
+      return { status: "error", message: "Please say why, so the claimant is told something useful." };
+    case "already-decided":
+      return { status: "error", message: "That claim has already been decided." };
+    case "unknown":
+      return { status: "error", message: "That claim could not be found." };
+  }
 }
