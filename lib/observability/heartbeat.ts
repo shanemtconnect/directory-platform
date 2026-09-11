@@ -105,3 +105,43 @@ export async function pushUptime(
     clearTimeout(timer);
   }
 }
+
+export interface HeartbeatDeps {
+  /** Reads the counts. Rejects when the database is unreachable. */
+  counts: (since: Date) => Promise<HeartbeatCounts>;
+  log: (line: string) => void;
+  error: (line: string) => void;
+  push: (message: string) => Promise<UptimePushResult>;
+  nowMs: () => number;
+}
+
+/**
+ * One beat: read the counts, write the line, tell the monitor.
+ *
+ * The push is SKIPPED when the counts could not be read, which is the whole
+ * design of this function. A worker whose database has gone is still a running
+ * process — it would keep pushing "up" forever while doing no work at all, and
+ * the monitor would keep saying everything is fine. Withholding the push lets
+ * the monitor's own missed-heartbeat alarm fire, which is the alert that is
+ * actually wanted. The log line is still written either way, because a human
+ * reading `docker logs` needs to see the reason.
+ *
+ * Returns the result of the push so the worker can log it; never throws.
+ */
+export async function runHeartbeat(deps: HeartbeatDeps): Promise<UptimePushResult | "degraded"> {
+  const since = new Date(deps.nowMs() - HEARTBEAT_INTERVAL_MINUTES * 60_000);
+
+  let counts: HeartbeatCounts;
+  try {
+    counts = await deps.counts(since);
+  } catch (e) {
+    deps.error(`heartbeat degraded — cannot read job counts: ${
+      e instanceof Error ? e.message : String(e)
+    }`);
+    return "degraded";
+  }
+
+  const message = heartbeatMessage(counts);
+  deps.log(`heartbeat ${message}`);
+  return deps.push(message);
+}
