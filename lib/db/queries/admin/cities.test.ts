@@ -52,8 +52,22 @@ describe("adminCities", () => {
       expect(leeds?.isPublished).toBe(true);
       expect(leeds?.isIndexable).toBe(false);
       expect(leeds?.hasIntro).toBe(false);
+      expect(leeds?.introHtml).toBeNull();
       // The stored column, which only a recompute updates.
       expect(leeds?.listingCount).toBe(0);
+    });
+  });
+
+  it("returns the stored copy so an admin can see what a save would replace", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeViewer(tx);
+      const ctx = await makeScaffold(tx);
+      await saveCityIntro(tx, admin, ctx.cityId, "Existing copy.", { ip: null });
+
+      const rows = await adminCities(tx, admin);
+      const leeds = rows.find((r) => r.id === ctx.cityId);
+      expect(leeds?.introHtml).toBe("<p>Existing copy.</p>");
+      expect(leeds?.hasIntro).toBe(true);
     });
   });
 

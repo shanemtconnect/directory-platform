@@ -132,7 +132,7 @@ async function seedPendingListing(name: string): Promise<string> {
   }
 }
 
-/** Fills and sends the public submission form. Returns the name it used. */
+/** Fills and sends the public submission form, the way a stranger would. */
 async function submitListing(page: Page, name: string): Promise<void> {
   await page.goto("/add-listing");
   const form = page.locator('[data-testid="submit-listing-form"]');

@@ -60,6 +60,11 @@ export interface AdminCity {
   listingCount: number;
   createdBy: "seed" | "admin" | "auto";
   hasIntro: boolean;
+  /**
+   * The copy as stored. Shown to an admin so a save is a decision to replace
+   * something they have read, not a blind overwrite of seeded copy.
+   */
+  introHtml: string | null;
 }
 
 export async function adminCities(tx: TestDb, viewer: Viewer): Promise<AdminCity[]> {
@@ -76,6 +81,7 @@ export async function adminCities(tx: TestDb, viewer: Viewer): Promise<AdminCity
       listingCount: cities.listingCount,
       createdBy: cities.createdBy,
       hasIntro: sql<boolean>`(${cities.introHtml} is not null and btrim(${cities.introHtml}) <> '')`,
+      introHtml: cities.introHtml,
     })
     .from(cities)
     .orderBy(asc(cities.name), asc(cities.slug));
