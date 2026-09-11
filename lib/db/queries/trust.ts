@@ -50,7 +50,7 @@ export const REMOVAL_RELATIONSHIPS = ["owner", "employee", "subject", "other"] a
 export type RemovalRelationship = (typeof REMOVAL_RELATIONSHIPS)[number];
 
 /** What the suppression row says it is for, in an admin's own words. */
-export const REMOVAL_SUPPRESSION_REASON = "Removal request actioned";
+const REMOVAL_SUPPRESSION_REASON = "Removal request actioned";
 
 function assertAdmin(viewer: Viewer): void {
   if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
@@ -397,7 +397,12 @@ export async function actionRemovalRequest(
   let suppressionId: string | null = null;
 
   if (decision === "actioned") {
-    await setListingStatus(tx, viewer, row.listingId, "removed");
+    // Checked rather than assumed: the viewer is an admin and the listing was
+    // just joined, so neither refusal is reachable — but a takedown that
+    // quietly suppressed a listing it had not actually removed would be the
+    // worst possible way to find out that changed.
+    const change = await setListingStatus(tx, viewer, row.listingId, "removed");
+    if (change.outcome !== "changed") return { outcome: "unknown" };
 
     // Normalised with the importer's OWN functions, not with a second copy of
     // the rules. `checkSuppressed` compares `normaliseName(row.name)` against
