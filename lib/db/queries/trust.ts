@@ -75,6 +75,46 @@ async function writeAudit(
   await tx.insert(auditLog).values(input);
 }
 
+/* ------------------------------------------------------------- the target */
+
+export interface TrustTarget {
+  id: string;
+  name: string;
+  /** Site-relative path to the public page, so the form can link back to it. */
+  path: string;
+}
+
+/**
+ * The listing a report or removal form is about, or null.
+ *
+ * Behind the same published-only gate as the writes, so /report/<id> for a
+ * listing nobody can see is a 404 rather than a form that fails on submit —
+ * and so the id in a URL cannot be used to probe whether an unpublished
+ * listing exists.
+ */
+export async function trustTarget(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<TrustTarget | null> {
+  if (!UUID.test(listingId)) return null;
+
+  const [row] = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(and(eq(listings.id, listingId), publishedListings(viewer)))
+    .limit(1);
+  if (!row) return null;
+
+  return { id: row.id, name: row.name, path: `/${row.citySlug}/${row.listingSlug}` };
+}
+
 /* ------------------------------------------------------------------ reports */
 
 export interface ReportInput {

@@ -16,6 +16,7 @@ import {
   listOpenReports,
   removalNotification,
   reportNotification,
+  trustTarget,
 } from "./trust";
 
 /** An admin viewer whose user row exists, so `ensureProfile` can bridge it. */
@@ -513,6 +514,30 @@ describe("the notification read models", () => {
       const admin = await makeAdmin(tx);
       expect(await reportNotification(tx, admin, randomUUID())).toBeNull();
       expect(await removalNotification(tx, admin, randomUUID())).toBeNull();
+    });
+  });
+});
+
+describe("trustTarget", () => {
+  it("names the listing the two forms are about", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Mill" });
+
+      const target = await trustTarget(tx, PUBLIC_VIEWER, listingId);
+      expect(target).toMatchObject({ id: listingId, name: "The Old Mill" });
+      expect(target?.path).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
+    });
+  });
+
+  it("is nothing for a listing the public cannot see, or an id that is not one", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const hidden = await makeListing(tx, ctx, { status: "removed" });
+
+      expect(await trustTarget(tx, PUBLIC_VIEWER, hidden)).toBeNull();
+      expect(await trustTarget(tx, PUBLIC_VIEWER, randomUUID())).toBeNull();
+      expect(await trustTarget(tx, PUBLIC_VIEWER, "not-a-uuid")).toBeNull();
     });
   });
 });

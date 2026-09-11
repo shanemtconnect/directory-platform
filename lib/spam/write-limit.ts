@@ -67,6 +67,24 @@ export const SUBMIT_LISTING_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as co
 export const SHORTLIST_RATE_LIMIT = { limit: 120, windowSeconds: 3600 } as const;
 
 /**
+ * Five an hour, like the enquiry form.
+ *
+ * A visitor who spots three wrong phone numbers in a row is doing us a favour,
+ * so the budget has to leave room for it; what it stops is a script filing a
+ * report against every listing in a town to bury the real ones.
+ */
+export const REPORT_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as const;
+
+/**
+ * Three an hour.
+ *
+ * Asking to be removed is something a person does once, and each one commits
+ * us to a five-working-day answer — so the cheapest denial of service against
+ * this site is a flood of removal requests nobody can action in time.
+ */
+export const REMOVAL_REQUEST_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
  * 20 POSTs per 10 minutes per client, in front of `/api/auth/[...all]`.
  *
  * Everything a stranger can POST there is an attempt at somebody's account —
