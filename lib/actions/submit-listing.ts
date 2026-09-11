@@ -109,7 +109,9 @@ export async function submitListing(
   }
 
   // 'parked' and 'created' are the same event to the submitter: we have it and
-  // an admin will look at it. The difference is only whether the town already
-  // existed, which is our problem and not theirs.
+  // an admin will look at it. A town we had never heard of is now created with
+  // the submission, so parking is the narrower case it always should have been
+  // — a town name we cannot place against the ones we hold. Either way the
+  // difference is ours to resolve, not something to put back on the form.
   redirect("/add-listing/thanks");
 }
