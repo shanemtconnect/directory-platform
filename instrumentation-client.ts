@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { clientSentryDsn, initSentry } from "@/lib/observability/sentry";
 
 /**
@@ -6,22 +5,46 @@ import { clientSentryDsn, initSentry } from "@/lib/observability/sentry";
  * app hydrates — the client-side counterpart to `instrumentation.ts`, and the
  * replacement for the `sentry.client.config.ts` the SDK's wizard would write.
  *
- * The import is static, unlike the server's. A dynamic `import()` here would
- * become a second chunk fetched at runtime, i.e. a network round trip before
- * any error can be reported — and the errors worth catching happen early. The
- * cost is that the SDK ships in the bundle whether or not a DSN is set; the
- * cost of the alternative is missing the first seconds of every session.
+ * The SDK is imported DYNAMICALLY, and only when a DSN was inlined at build
+ * time. Statically, it lands in `rootMainFiles` — the chunks every page of the
+ * site loads before anything renders — and measured on this app that is about
+ * 190 KB of JavaScript downloaded and parsed by every visitor of every clone,
+ * including the clones with no Sentry account, which is most of them. A
+ * platform meant to be cloned cannot make its default configuration pay for a
+ * feature its default configuration does not use.
  *
- * `initSentry` still does the guarding: with no `NEXT_PUBLIC_SENTRY_DSN` the
- * SDK is never initialised, installs no handlers, patches no `fetch`, and
- * prints nothing. `NEXT_PUBLIC_` values are inlined by `next build`, so a DSN
- * added at boot will not appear here — it is a rebuild, like every other
- * `NEXT_PUBLIC_` variable (see config/validate.ts).
+ * What that costs: errors thrown in the few milliseconds between this module
+ * running and the chunk arriving are not captured. Worth it, and only paid by
+ * sites that opted in.
+ *
+ * `NEXT_PUBLIC_` values are inlined by `next build`, so the DSN check below is
+ * a comparison against a literal — a site adding Sentry later rebuilds, exactly
+ * as it would to change `SITE_ENV`. With no DSN the condition is statically
+ * false and the SDK is never fetched at all.
  */
-initSentry((options) => Sentry.init(options), clientSentryDsn());
+type RouterTransitionStart = (href: string, navigationType: string) => void;
+
+let captureRouterTransitionStart: RouterTransitionStart | undefined;
+
+const dsn = clientSentryDsn();
+if (dsn !== undefined) {
+  void import("@sentry/nextjs")
+    .then((Sentry) => {
+      initSentry((options) => Sentry.init(options), dsn);
+      captureRouterTransitionStart = Sentry.captureRouterTransitionStart;
+    })
+    .catch(() => {
+      // An error tracker that cannot load must not blank the page it was meant
+      // to report on.
+    });
+}
 
 /**
- * Client-side navigation timing. Next looks this export up by name; without it
- * every route change after the first is missing from a trace.
+ * Client-side navigation timing. Next looks this export up by name at load, so
+ * it cannot be conditional — it forwards to the SDK once the chunk above has
+ * arrived, and does nothing before that or when no DSN is configured. Without
+ * it every route change after the first is missing from a trace.
  */
-export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
+export const onRouterTransitionStart: RouterTransitionStart = (href, navigationType) => {
+  captureRouterTransitionStart?.(href, navigationType);
+};
