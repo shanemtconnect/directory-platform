@@ -9,6 +9,7 @@ import type { Viewer } from "@/lib/db/viewer";
 import {
   attachClaimDocument,
   claimNotification,
+  claimsForProfile,
   claimsWithPurgeableDocuments,
   decideClaim,
   getClaimForAdmin,
@@ -454,6 +455,35 @@ describe("the 30-day document purge", () => {
       const { viewer } = await scene(tx);
       await expect(claimsWithPurgeableDocuments(tx, viewer)).rejects.toThrow(/FORBIDDEN/);
       await expect(markClaimDocumentsPurged(tx, viewer, randomUUID(), [])).rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+});
+
+describe("claimsForProfile", () => {
+  it("returns the claimant's own claims with the LISTING id for the retry link", async () => {
+    await withTestDb(async (tx) => {
+      const { listingId, profileId, viewer } = await scene(tx);
+      const started = await startDomainClaim(tx, viewer, {
+        listingId, profileId, businessEmail: "jo@oldmill.example",
+        claimantName: null, roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+
+      const mine = await claimsForProfile(tx, viewer, profileId);
+      expect(mine).toHaveLength(1);
+      expect(mine[0]?.listingId).toBe(listingId);
+      expect(mine[0]?.status).toBe("pending");
+
+      // Scoped by the profile it is given, so another account sees nothing.
+      const stranger = await makeUser(tx);
+      expect(await claimsForProfile(tx, stranger.viewer, stranger.profileId)).toEqual([]);
+    });
+  });
+
+  it("is closed to an anonymous viewer", async () => {
+    await withTestDb(async (tx) => {
+      const { profileId } = await scene(tx);
+      await expect(claimsForProfile(tx, { role: "public" }, profileId)).rejects.toThrow(/FORBIDDEN/);
     });
   });
 });

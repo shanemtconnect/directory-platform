@@ -793,16 +793,28 @@ export async function markClaimDocumentsPurged(
   });
 }
 
+export interface ProfileClaim {
+  id: string;
+  /** The LISTING id, which is what `/claim/<id>` takes — not this claim's id. */
+  listingId: string;
+  listingName: string;
+  listingPath: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn";
+  rejectionReason: string | null;
+  createdAt: Date;
+}
+
 /** Newest first, for the claimant's own view of what they have asked for. */
 export async function claimsForProfile(
   tx: Db,
   viewer: Viewer,
   profileId: string,
-): Promise<{ id: string; listingName: string; listingPath: string; status: string; rejectionReason: string | null; createdAt: Date }[]> {
+): Promise<ProfileClaim[]> {
   assertSignedIn(viewer);
   const rows = await tx
     .select({
       id: claims.id,
+      listingId: claims.listingId,
       listingName: listings.name,
       listingSlug: listings.slug,
       citySlug: cities.slug,
