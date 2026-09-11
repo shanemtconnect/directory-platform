@@ -28,7 +28,8 @@ export interface SentryInitOptions {
   dsn: string;
   tracesSampleRate: number;
   sendDefaultPii: boolean;
-  environment: string;
+  /** Omitted where it cannot be known — see `sentryOptions`. */
+  environment?: string;
 }
 
 /**
@@ -59,15 +60,26 @@ export function serverSentryDsn(
 }
 
 /**
- * Only the `NEXT_PUBLIC_` one, and never the fallback above: `SENTRY_DSN` is
- * not inlined into the client bundle, so reading it here would compile to
- * `undefined` in the browser while looking, in the source, as though the client
- * were configured.
+ * Only the `NEXT_PUBLIC_` one, and never the server fallback above:
+ * `SENTRY_DSN` is not inlined into the client bundle, so reading it here would
+ * compile to `undefined` in the browser while looking, in the source, as though
+ * the client were configured.
+ *
+ * The parameter is the DSN itself rather than an environment record, which
+ * looks like an inconsistency and is not. `next build` inlines a
+ * `NEXT_PUBLIC_*` value by substituting the literal member expression
+ * `process.env.NEXT_PUBLIC_SENTRY_DSN` in the source text. Reaching it through
+ * a variable — `env.NEXT_PUBLIC_SENTRY_DSN`, where `env` happens to be
+ * `process.env` — is not that expression, so nothing is substituted and the
+ * browser reads a property of an object that does not have it. The whole
+ * client half of this integration would be dead, silently, and only in a
+ * production build. The default argument below is the one place the literal
+ * has to appear.
  */
 export function clientSentryDsn(
-  env: Record<string, string | undefined> = process.env,
+  dsn: string | undefined = process.env.NEXT_PUBLIC_SENTRY_DSN,
 ): string | undefined {
-  return clean(env.NEXT_PUBLIC_SENTRY_DSN);
+  return clean(dsn);
 }
 
 /**
@@ -78,20 +90,31 @@ export function clientSentryDsn(
  * message. A third-party error tracker is not a lawful place to put those, and
  * the privacy policy does not say they go there.
  *
- * `environment` mirrors `lib/site-env.ts`: anything that is not the literal
- * "production" is staging. Read from the passed env rather than by calling
- * `siteEnv()` so this module stays importable from the client bundle without
- * dragging `config/site.config.ts` in behind it.
+ * `environment` mirrors `lib/site-env.ts` when it can: anything that is not the
+ * literal "production" is staging. It is OMITTED rather than guessed when
+ * `SITE_ENV` is not readable, which in practice means the browser —
+ * `SITE_ENV` has no `NEXT_PUBLIC_` prefix, so it is not inlined into the client
+ * bundle and cannot be. Tagging every browser event "staging" because the value
+ * was missing would be worse than not tagging it: an operator would filter
+ * their production dashboard on `environment:production` and see none of their
+ * real users' errors. Sentry's own default takes over instead.
+ *
+ * Read from the passed env rather than by calling `siteEnv()` so this module
+ * stays importable from the client bundle without dragging
+ * `config/site.config.ts` in behind it.
  */
 export function sentryOptions(
   dsn: string,
   env: Record<string, string | undefined> = process.env,
 ): SentryInitOptions {
+  const siteEnv = clean(env.SITE_ENV);
   return {
     dsn,
     tracesSampleRate: TRACES_SAMPLE_RATE,
     sendDefaultPii: false,
-    environment: env.SITE_ENV === "production" ? "production" : "staging",
+    ...(siteEnv === undefined
+      ? {}
+      : { environment: siteEnv === "production" ? "production" : "staging" }),
   };
 }
 

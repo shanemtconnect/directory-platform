@@ -23,17 +23,24 @@ describe("which DSN each runtime uses", () => {
     );
   });
 
-  it("never lets the server-only DSN reach the browser", () => {
-    expect(clientSentryDsn({ SENTRY_DSN: "https://a@o1.ingest.sentry.io/1" })).toBeUndefined();
+  it("uses the public DSN in the browser", () => {
+    expect(clientSentryDsn("https://b@o/2")).toBe("https://b@o/2");
   });
 
-  it("uses the public DSN in the browser", () => {
-    expect(clientSentryDsn({ NEXT_PUBLIC_SENTRY_DSN: "https://b@o/2" })).toBe("https://b@o/2");
+  it("never lets the server-only DSN reach the browser", () => {
+    // `clientSentryDsn` takes the value, not an env record, so that the source
+    // text contains the literal `process.env.NEXT_PUBLIC_SENTRY_DSN` that
+    // `next build` substitutes. Reading it through a variable inlines nothing.
+    const source = clientSentryDsn.toString();
+
+    expect(source).toContain("process.env.NEXT_PUBLIC_SENTRY_DSN");
+    expect(source).not.toMatch(/\bSENTRY_DSN\b(?<!NEXT_PUBLIC_SENTRY_DSN)/);
   });
 
   it("treats blank and whitespace as unset", () => {
     expect(serverSentryDsn({ SENTRY_DSN: "", NEXT_PUBLIC_SENTRY_DSN: "  " })).toBeUndefined();
-    expect(clientSentryDsn({ NEXT_PUBLIC_SENTRY_DSN: "" })).toBeUndefined();
+    expect(clientSentryDsn("")).toBeUndefined();
+    expect(clientSentryDsn(undefined)).toBeUndefined();
   });
 });
 
@@ -56,8 +63,16 @@ describe("sentryOptions", () => {
     );
     // Anything that is not the literal "production" is staging, exactly as
     // lib/site-env.ts decides it for robots.
-    expect(sentryOptions("https://a@o/1", {}).environment).toBe("staging");
     expect(sentryOptions("https://a@o/1", { SITE_ENV: "typo" }).environment).toBe("staging");
+  });
+
+  it("omits the environment rather than guessing it in the browser", () => {
+    // SITE_ENV has no NEXT_PUBLIC_ prefix, so the client bundle cannot see it.
+    // Defaulting to "staging" there would hide every real user's browser error
+    // from an operator filtering on environment:production.
+    const options = sentryOptions("https://a@o/1", {});
+
+    expect("environment" in options).toBe(false);
   });
 
   it("carries the DSN it was given", () => {

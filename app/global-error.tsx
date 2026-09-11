@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import { siteConfig } from "@/config/site.config";
+import { clientSentryDsn } from "@/lib/observability/sentry";
 
 /**
  * The last resort: this replaces the root layout, so there is no header, no
@@ -11,6 +13,12 @@ import { siteConfig } from "@/config/site.config";
  * where the layout itself threw — a page that depends on the thing that broke
  * is not a fallback. The one import is site.config.ts, a plain object with no
  * runtime dependencies of its own.
+ *
+ * The Sentry report below is the one exception, and it keeps that invariant:
+ * the SDK is imported dynamically, inside an effect, after the markup has
+ * rendered. If the import fails the visitor still sees this page — the
+ * reporting is best-effort, the fallback is not. The static import is the
+ * DSN check, which is a string comparison compiled from an inlined constant.
  */
 export default function GlobalError({
   error,
@@ -19,6 +27,16 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    // React error boundaries swallow the errors they catch, so nothing here
+    // reaches `window.onerror` and Sentry's global handlers never see it. This
+    // is the only way a render failure this bad gets reported at all.
+    if (clientSentryDsn() === undefined) return;
+    void import("@sentry/nextjs")
+      .then((Sentry) => Sentry.captureException(error))
+      .catch(() => {});
+  }, [error]);
+
   return (
     <html lang={siteConfig.locale}>
       <body

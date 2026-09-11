@@ -1,4 +1,5 @@
 import { validateEnv } from "./config/validate";
+import { initSentry, serverSentryDsn } from "./lib/observability/sentry";
 
 /**
  * Next calls this once per server process, before the first request.
@@ -48,5 +49,53 @@ export async function register(): Promise<void> {
     // `process.exit` never appears in the Edge bundle Turbopack analyses.
     const { fatal } = await import("./lib/boot/exit");
     fatal(e instanceof Error ? e.message : String(e));
+  }
+
+  // AFTER the environment check, and outside its try, deliberately. Sentry is
+  // the thing that watches the process; it is not a reason to keep a process
+  // alive that has already been told to exit, and it must not be able to mask
+  // a missing DATABASE_URL by throwing first. `fatal` does not return.
+  //
+  // Dynamically imported so the SDK is absent from the Edge bundle Turbopack
+  // analyses, and absent from the module graph entirely on a site with no DSN —
+  // which is most clones. `initSentry` is what decides; this closure is only
+  // reached when it has already found a DSN.
+  await startSentry();
+}
+
+/**
+ * No `sentry.server.config.ts`. See lib/observability/sentry.ts for why this
+ * SDK is wired by hand rather than by its wizard.
+ */
+async function startSentry(): Promise<void> {
+  const dsn = serverSentryDsn();
+  if (dsn === undefined) return;
+  try {
+    const Sentry = await import("@sentry/nextjs");
+    initSentry((options) => Sentry.init(options), dsn);
+  } catch {
+    // An error tracker that cannot load is not a reason to refuse to serve.
+  }
+}
+
+/**
+ * Next calls this for every server-side request error, including the ones
+ * thrown inside nested Server Components that never reach `global-error.tsx`
+ * because React streamed the page before they failed. Without it, the largest
+ * class of server errors on an App Router site is invisible in Sentry.
+ *
+ * Async and DSN-guarded for the same reason as `startSentry`: on a site with no
+ * DSN this must cost nothing and load nothing.
+ */
+export async function onRequestError(
+  ...args: Parameters<typeof import("@sentry/nextjs").captureRequestError>
+): Promise<void> {
+  if (serverSentryDsn() === undefined) return;
+  try {
+    const Sentry = await import("@sentry/nextjs");
+    Sentry.captureRequestError(...args);
+  } catch {
+    // Reporting an error must never be the thing that throws inside the
+    // handler for that error.
   }
 }
