@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, asc, desc, eq, or } from "drizzle-orm";
 import { cities, categories, verticals, areas } from "@/lib/db/schema";
 import type { Viewer } from "@/lib/db/viewer";
 import { scopeIndexability } from "@/lib/db/queries/indexing";
@@ -107,4 +107,56 @@ export async function pillarHeading(
     ...indexability,
     faq: null,
   };
+}
+
+/** One option in the location switcher. A link, never a form control. */
+export interface SwitcherCity {
+  id: string;
+  name: string;
+  slug: string;
+  listingCount: number;
+  /** The city whose page this is. Rendered as the current value, not a link. */
+  isCurrent: boolean;
+}
+
+/**
+ * The cities the location switcher may offer.
+ *
+ * Indexable ones plus, when given, the city the visitor is already on — which
+ * may not be indexable, because a page has to be able to say where it is even
+ * when it has not earned indexing. Nothing else gets in: the switcher renders
+ * a block of real `<a href>`s into pages that are cached and crawled, so
+ * listing a noindexed city here would spend crawl budget on a page we have
+ * told Google to ignore, exactly as the footer and the sitemap must not.
+ *
+ * The viewer is threaded for consistency and deliberately changes nothing.
+ * `listCities` widens for an admin; this must not. The switcher renders inside
+ * the ISR-cached shell, so an extra link rendered for an admin is written into
+ * the cache everyone else — crawlers included — then reads back.
+ *
+ * Busiest first: the switcher is a shortcut to somewhere worth going, and a
+ * city with forty listings is a better destination than one with three. Name
+ * breaks the tie so the order is stable between renders of the same data.
+ */
+export async function listSwitcherCities(
+  tx: Db,
+  _viewer: Viewer,
+  currentCityId?: string | null,
+): Promise<SwitcherCity[]> {
+  const visible = currentCityId
+    ? or(eq(cities.isIndexable, true), eq(cities.id, currentCityId))
+    : eq(cities.isIndexable, true);
+
+  const rows = await tx
+    .select({
+      id: cities.id,
+      name: cities.name,
+      slug: cities.slug,
+      listingCount: cities.listingCount,
+    })
+    .from(cities)
+    .where(and(eq(cities.isPublished, true), visible))
+    .orderBy(desc(cities.listingCount), asc(cities.name));
+
+  return rows.map((r) => ({ ...r, isCurrent: r.id === currentCityId }));
 }

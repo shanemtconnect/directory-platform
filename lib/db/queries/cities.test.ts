@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
-import { pillarHeading } from "./cities";
+import { listSwitcherCities, pillarHeading } from "./cities";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { cities, verticals } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import {
-  makeScaffold, makeCategoryInCity, makeListing, type ListingCtx,
+  makeCity, makeScaffold, makeCategoryInCity, makeListing, type ListingCtx,
 } from "@/test/factories";
 
 const ADMIN = { role: "admin", userId: "a" } as const;
@@ -119,6 +119,76 @@ describe("pillarHeading — the indexing gate is never bypassed", () => {
         tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId }, PLURAL,
       );
       expect(heading?.title).toBe(`${PLURAL.Plural} in Leeds`);
+    });
+  });
+});
+
+/**
+ * The switcher is a block of crawlable links rendered on cached pages, so what
+ * it may list is an indexing question, not a navigation one.
+ */
+describe("listSwitcherCities", () => {
+  async function indexableCity(
+    tx: TestDb, name: string, region: string, listingCount: number,
+  ): Promise<string> {
+    const id = await makeCity(tx, name, region);
+    await tx.update(cities)
+      .set({ isIndexable: true, listingCount, introHtml: "<p>About.</p>" })
+      .where(eq(cities.id, id));
+    return id;
+  }
+
+  it("lists indexable cities, busiest first, then by name", async () => {
+    await withTestDb(async (tx) => {
+      await indexableCity(tx, "Harrogate", "North Yorkshire", 4);
+      await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      await indexableCity(tx, "Askrigg", "North Yorkshire", 4);
+
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER);
+      expect(rows.map((r) => r.name)).toEqual(["Ripon", "Askrigg", "Harrogate"]);
+    });
+  });
+
+  it("never links a city we have told Google to ignore", async () => {
+    await withTestDb(async (tx) => {
+      await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      await makeCity(tx, "Otley", "West Yorkshire");
+
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER);
+      expect(rows.map((r) => r.name)).toEqual(["Ripon"]);
+    });
+  });
+
+  it("keeps the city you are on in the list, marked, even when it is not indexable", async () => {
+    await withTestDb(async (tx) => {
+      await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      const otley = await makeCity(tx, "Otley", "West Yorkshire");
+
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, otley);
+      expect(rows.map((r) => r.name)).toEqual(["Ripon", "Otley"]);
+      expect(rows.find((r) => r.id === otley)?.isCurrent).toBe(true);
+      expect(rows.find((r) => r.name === "Ripon")?.isCurrent).toBe(false);
+    });
+  });
+
+  it("lists a city once, not twice, when the one you are on is also indexable", async () => {
+    await withTestDb(async (tx) => {
+      const ripon = await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, ripon);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.isCurrent).toBe(true);
+    });
+  });
+
+  it("never links an unpublished city, not even to an admin", async () => {
+    await withTestDb(async (tx) => {
+      const id = await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, id));
+
+      expect(await listSwitcherCities(tx, PUBLIC_VIEWER, id)).toEqual([]);
+      // An admin gets the public answer too: this renders into the shared ISR
+      // cache, so an admin-only extra link would be served to everyone.
+      expect(await listSwitcherCities(tx, ADMIN, id)).toEqual([]);
     });
   });
 });
