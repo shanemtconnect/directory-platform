@@ -4,8 +4,11 @@ import { siteConfig } from "@/config/site.config";
 import type { CustomField } from "@/config/types";
 import { search } from "@/lib/db/queries/search";
 import { listCities, listCategories } from "@/lib/db/queries/indexes";
+import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { Pagination } from "@/components/pillar/Pagination";
+import { LocationSwitcher } from "@/components/location/LocationSwitcher";
+import { searchCityHref } from "@/components/location/switcher-links";
 
 // Search is a utility page, not an indexable asset. Faceted URLs are a classic
 // source of near-duplicate thin pages, so it is noindexed and excluded from the
@@ -51,6 +54,11 @@ export default async function SearchPage({ searchParams }: Props) {
     listCities(db as never, PUBLIC_VIEWER),
     listCategories(db as never, PUBLIC_VIEWER),
   ]);
+
+  // The facet is a slug; the switcher marks the current city by id. The select
+  // above is built from the same list, so a city being filtered on is in it.
+  const currentCityId = cities.find((c) => c.slug === params.city)?.id ?? null;
+  const switcherCities = await listSwitcherCities(db as never, PUBLIC_VIEWER, currentCityId);
 
   // Preserve every active filter in pagination links.
   const qs = new URLSearchParams();
@@ -111,6 +119,21 @@ export default async function SearchPage({ searchParams }: Props) {
           Search
         </button>
       </form>
+
+      {/*
+        The city facet as links rather than a second select: a `<select>` needs
+        the form submitted to go anywhere, and one click is the whole point.
+        Each href is this same search with one facet changed — /search is
+        noindex,follow and canonicalises to itself, so no faceted URL here can
+        become a competing document.
+      */}
+      <LocationSwitcher
+        label="Narrow to"
+        cities={switcherCities}
+        hrefFor={(city) => searchCityHref(city.slug, { ...fields, q: params.q, category: params.category })}
+        className="mt-6"
+        testId="search-location-switcher"
+      />
 
       <p data-testid="result-count" className="mt-8 font-medium">
         {results.total} {results.total === 1 ? e.singular : e.plural} found

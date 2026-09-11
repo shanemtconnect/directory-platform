@@ -10,7 +10,10 @@ import {
   countCategoryListings,
   citiesForCategory,
 } from "@/lib/db/queries/category-page";
+import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { Pagination } from "@/components/pillar/Pagination";
+import { LocationSwitcher } from "@/components/location/LocationSwitcher";
+import { cityScopedHref } from "@/components/location/switcher-links";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { pillarSchema, breadcrumbSchema } from "@/lib/schema/builders";
 import { categoryEarnsIndexing } from "@/lib/db/queries/sitemap";
@@ -89,11 +92,25 @@ export default async function CategoryNationalPage({ params }: Props) {
   const category = await getCategoryBySlug(db as never, PUBLIC_VIEWER, parsed.slug);
   if (!category) notFound();
 
-  const [rows, total, locations] = await Promise.all([
+  const [rows, total, locations, switcherCities] = await Promise.all([
     listCategoryListings(db as never, PUBLIC_VIEWER, category.id, { page: parsed.page }),
     countCategoryListings(db as never, PUBLIC_VIEWER, category.id),
     citiesForCategory(db as never, PUBLIC_VIEWER, category.id),
+    listSwitcherCities(db as never, PUBLIC_VIEWER),
   ]);
+
+  /*
+   * A category's route inside a city comes from the SLUG REGISTRY, not from
+   * `categories.slug`: the per-city entry can be disambiguated on collision, so
+   * building /{city}/{national slug} produces a 404 exactly when one happened.
+   * `citiesForCategory` has already joined the registry, so it is the authority
+   * on where this category lives in each city — and a city missing from it has
+   * nothing published under this category, which is not somewhere to send
+   * anyone. The switcher therefore offers the intersection: cities allowed to
+   * be linked at all, that this category actually has a page in.
+   */
+  const routedIn = new Map(locations.map((c) => [c.id, c.categorySlug]));
+  const switchable = switcherCities.filter((c) => routedIn.has(c.id));
 
   const basePath = `/categories/${category.slug}`;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
@@ -136,6 +153,18 @@ export default async function CategoryNationalPage({ params }: Props) {
         </nav>
 
         <h1>{category.name}</h1>
+
+        {/*
+          Constraint 18: this changes nothing about THIS URL. Every entry is an
+          <a href> to a city page that already exists and already returns
+          exactly this, whether it is reached from here or typed in.
+        */}
+        <LocationSwitcher
+          label={`See ${category.name} in`}
+          cities={switchable}
+          hrefFor={(city) => cityScopedHref(city.slug, routedIn.get(city.id))}
+          testId="category-location-switcher"
+        />
         {!isFirstPage && (
           <p data-testid="page-indicator">
             Page {parsed.page} of {totalPages}
