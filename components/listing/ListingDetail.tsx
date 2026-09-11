@@ -83,15 +83,18 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
           {listing.claimStatus === "unclaimed" && (
             <section data-testid="claim-cta" className="card bg-raised">
               <h2 className="mt-0">Is this your {e.singular}?</h2>
-              <p><a href={mailto(`Claim ${listing.name}`)}>Claim it free</a> to edit the details.</p>
+              <p>
+                <a href={`/claim/${listing.id}`} data-testid="claim-link">Claim it free</a> to edit
+                the details and see every enquiry it receives.
+              </p>
             </section>
           )}
 
           {/* On EVERY listing, not just unclaimed ones. A claimed listing can carry
               a wrong address or belong to a business that has closed, and the
               person who spots it is the visitor, whatever the claim status says.
-              Both links are mailto: until /claim and /report ship — an advertised
-              route that 404s is worse than an inbox. */}
+              Both links stay mailto: until /report ships — an advertised route
+              that 404s is worse than an inbox. */}
           <section data-testid="correction-links" className="text-sm text-muted">
             <p>
               <a href="/data-sources">Where this information came from</a>
