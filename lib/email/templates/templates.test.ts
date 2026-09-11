@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { siteConfig } from "@/config/site.config";
 import { escapeHtml } from "./layout";
 import { enquiryToOwner, enquiryToAdmin } from "./enquiry";
-import { submissionToAdmin, submissionReceived } from "./submission";
+import {
+  submissionToAdmin,
+  submissionReceived,
+  submissionApproved,
+  submissionRejected,
+} from "./submission";
 import type { EmailContent } from "./layout";
 
 const enquiry = {
@@ -19,11 +24,21 @@ const submission = {
   reviewUrl: "https://example.co.uk/admin/listings/1",
 };
 
+const decision = {
+  listingName: "The Old Mill",
+  cityName: "Bath",
+  listingUrl: "https://example.co.uk/bath/the-old-mill",
+  submitter: { name: "Alex Owner", email: "alex@example.co.uk" },
+};
+
 const every: [string, EmailContent][] = [
   ["enquiryToOwner", enquiryToOwner(enquiry)],
   ["enquiryToAdmin", enquiryToAdmin(enquiry)],
   ["submissionToAdmin", submissionToAdmin(submission)],
   ["submissionReceived", submissionReceived(submission)],
+  ["submissionApproved", submissionApproved(decision)],
+  ["submissionRejected", submissionRejected({ ...decision, reason: "Not a real business." })],
+  ["submissionRejected (no reason)", submissionRejected({ ...decision, reason: null })],
 ];
 
 describe("escapeHtml", () => {
@@ -124,5 +139,37 @@ describe("submissionReceived", () => {
     expect(content.text).toContain("Alex Owner");
     expect(content.text).toContain("The Old Mill");
     expect(content.subject).toContain(siteConfig.name);
+  });
+});
+
+describe("submissionApproved", () => {
+  const content = submissionApproved(decision);
+
+  it("links the page that is now live", () => {
+    expect(content.text).toContain(decision.listingUrl);
+    expect(content.html).toContain(decision.listingUrl);
+  });
+
+  it("greets the submitter by name and names what went live", () => {
+    expect(content.text).toContain("Alex Owner");
+    expect(content.text).toContain("The Old Mill");
+  });
+});
+
+describe("submissionRejected", () => {
+  it("gives the reason the admin typed", () => {
+    const content = submissionRejected({ ...decision, reason: "We could not verify the address." });
+    expect(content.text).toContain("We could not verify the address.");
+  });
+
+  it("escapes a reason rather than rendering it as markup", () => {
+    const content = submissionRejected({ ...decision, reason: "<script>alert(1)</script>" });
+    expect(content.html).not.toContain("<script>alert(1)</script>");
+    expect(content.html).toContain("&lt;script&gt;");
+  });
+
+  it("never links a page that is not live", () => {
+    const content = submissionRejected({ ...decision, reason: "No." });
+    expect(content.text).not.toContain(decision.listingUrl);
   });
 });

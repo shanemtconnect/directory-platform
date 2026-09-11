@@ -150,3 +150,61 @@ export async function parkedSubmissionNotification(
 
   return { listingName: name, cityName: null, submitter };
 }
+
+export interface DecisionNotification {
+  listingName: string;
+  cityName: string;
+  /** Site-relative path to the public page. Only meaningful once published. */
+  listingPath: string;
+  submitter: { name: string; email: string };
+  /** What the admin typed when turning it down; null on an approval. */
+  rejectedReason: string | null;
+}
+
+/**
+ * What the approve/reject email is written from.
+ *
+ * The address comes from `listings.submitted_by_email` first — it is the column
+ * the submission wrote it to, and it survives an edit to `custom_fields` — and
+ * falls back to the stored blob. Without one there is nobody to tell, which is
+ * a row that arrived from a seed or an import rather than a form, so the job
+ * has nothing to do.
+ */
+export async function decisionNotification(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<DecisionNotification | null> {
+  assertWorker(viewer);
+
+  const [row] = await tx
+    .select({
+      name: listings.name,
+      slug: listings.slug,
+      cityName: cities.name,
+      citySlug: cities.slug,
+      customFields: listings.customFields,
+      submittedByEmail: listings.submittedByEmail,
+      rejectedReason: listings.rejectedReason,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(eq(listings.id, listingId))
+    .limit(1);
+  if (!row) return null;
+
+  const stored = (row.customFields as { submission?: StoredSubmission } | null)?.submission ?? {};
+  const fromBlob = submitterFrom(stored);
+  const email = fromBlob?.email ?? row.submittedByEmail;
+  if (email === null || email.trim() === "") return null;
+
+  return {
+    listingName: row.name,
+    cityName: row.cityName,
+    listingPath: `/${row.citySlug}/${row.slug}`,
+    // A missing name is survivable: the address identifies the person well
+    // enough, and it is better than a greeting addressed to nobody.
+    submitter: { name: fromBlob?.name ?? email, email },
+    rejectedReason: row.rejectedReason,
+  };
+}
