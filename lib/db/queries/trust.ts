@@ -399,3 +399,116 @@ export async function actionRemovalRequest(
 
   return { outcome: "updated", id: removalRequestId };
 }
+
+/* --------------------------------------------------- notification read models */
+
+/**
+ * What the worker sends from. Admin-only, like every other read here: these
+ * carry a reporter's address and a requester's name.
+ *
+ * The job payload is an id, so these re-read the row at send time — a payload
+ * cannot go stale and personal data is not copied into a queue that outlives
+ * the thing it describes.
+ */
+
+export interface ReportNotification {
+  listingName: string;
+  /** Site-relative path to the public page. */
+  listingPath: string;
+  reason: ReportReason;
+  detail: string | null;
+  reporterEmail: string | null;
+}
+
+export async function reportNotification(
+  tx: TestDb,
+  viewer: Viewer,
+  reportId: string,
+): Promise<ReportNotification | null> {
+  assertAdmin(viewer);
+  if (!UUID.test(reportId)) return null;
+
+  const [row] = await tx
+    .select({
+      reason: reports.reason,
+      detail: reports.detail,
+      reporterEmail: reports.reporterEmail,
+      listingName: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(reports)
+    .innerJoin(listings, eq(listings.id, reports.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(eq(reports.id, reportId))
+    .limit(1);
+  if (!row) return null;
+
+  return {
+    listingName: row.listingName,
+    listingPath: `/${row.citySlug}/${row.listingSlug}`,
+    reason: row.reason,
+    detail: row.detail,
+    reporterEmail: row.reporterEmail,
+  };
+}
+
+export interface RemovalNotification {
+  listingName: string;
+  listingPath: string;
+  requesterName: string;
+  requesterEmail: string;
+  relationship: RemovalRelationship;
+  reason: string | null;
+  dueAt: Date;
+}
+
+export async function removalNotification(
+  tx: TestDb,
+  viewer: Viewer,
+  removalRequestId: string,
+): Promise<RemovalNotification | null> {
+  assertAdmin(viewer);
+  if (!UUID.test(removalRequestId)) return null;
+
+  const [row] = await tx
+    .select({
+      requesterName: removalRequests.requesterName,
+      requesterEmail: removalRequests.requesterEmail,
+      relationship: removalRequests.relationship,
+      reason: removalRequests.reason,
+      dueAt: removalRequests.dueAt,
+      listingName: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(removalRequests)
+    .innerJoin(listings, eq(listings.id, removalRequests.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(eq(removalRequests.id, removalRequestId))
+    .limit(1);
+  if (!row) return null;
+
+  // The columns are nullable and the form's validation is not the database's.
+  // Without an address there is nobody to acknowledge, and without a deadline
+  // there is no SLA to state — a row like that is not notifiable.
+  if (row.requesterEmail === null || row.dueAt === null) return null;
+
+  return {
+    listingName: row.listingName,
+    listingPath: `/${row.citySlug}/${row.listingSlug}`,
+    // The address identifies the requester well enough if the name is missing.
+    requesterName: row.requesterName ?? row.requesterEmail,
+    requesterEmail: row.requesterEmail,
+    // A text column, so the value is checked rather than cast. Only the four
+    // ever reach it through the form; anything else is described as "other"
+    // rather than blocking a takedown notification over a label.
+    relationship: isRelationship(row.relationship) ? row.relationship : "other",
+    reason: row.reason,
+    dueAt: row.dueAt,
+  };
+}
+
+function isRelationship(value: string | null): value is RemovalRelationship {
+  return value !== null && (REMOVAL_RELATIONSHIPS as readonly string[]).includes(value);
+}

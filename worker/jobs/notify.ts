@@ -16,7 +16,15 @@ import { ADMIN_VIEWER } from "@/worker/viewer";
 import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
-import { NOTIFY_ENQUIRY, NOTIFY_KINDS, NOTIFY_SUBMISSION } from "@/lib/email/notify";
+import { removalNotification, reportNotification } from "@/lib/db/queries/trust";
+import { removalReceived, removalToAdmin, reportToAdmin } from "@/lib/email/templates/trust";
+import {
+  NOTIFY_ENQUIRY,
+  NOTIFY_KINDS,
+  NOTIFY_REMOVAL,
+  NOTIFY_REPORT,
+  NOTIFY_SUBMISSION,
+} from "@/lib/email/notify";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -82,6 +90,7 @@ interface Delivery {
 const OWNER = "owner";
 const ADMIN = "admin";
 const SUBMITTER = "submitter";
+const REQUESTER = "requester";
 
 /**
  * A send that never reached the provider — no key, no address — is not a
@@ -150,12 +159,61 @@ async function runSubmission(db: Db, d: Delivery, payload: Record<string, unknow
   await deliver(d, ADMIN, { to: adminAddress(), ...submissionToAdmin(content) });
 }
 
+async function runReport(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const reportId = readId(payload, "reportId");
+  if (reportId === null) throw new Retryable("The job carries no reportId");
+
+  const data = await reportNotification(db, ADMIN_VIEWER, reportId);
+  if (!data) throw new Retryable(`No notifiable report ${reportId}`);
+
+  // Us only. A report is a correction queue, not something to forward to the
+  // business it is about — the reporter did not write to them.
+  await deliver(d, ADMIN, {
+    to: adminAddress(),
+    ...reportToAdmin({
+      listingName: data.listingName,
+      listingUrl: siteUrl(data.listingPath),
+      reason: data.reason,
+      detail: data.detail,
+      reporterEmail: data.reporterEmail,
+      reviewUrl: siteUrl("/admin"),
+    }),
+  });
+}
+
+async function runRemoval(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const removalRequestId = readId(payload, "removalRequestId");
+  if (removalRequestId === null) throw new Retryable("The job carries no removalRequestId");
+
+  const data = await removalNotification(db, ADMIN_VIEWER, removalRequestId);
+  if (!data) throw new Retryable(`No notifiable removal request ${removalRequestId}`);
+
+  const content = {
+    listingName: data.listingName,
+    listingUrl: siteUrl(data.listingPath),
+    requester: { name: data.requesterName, email: data.requesterEmail },
+    relationship: data.relationship,
+    reason: data.reason,
+    dueAt: data.dueAt,
+    reviewUrl: siteUrl("/admin"),
+  };
+
+  // The person waiting for an answer goes first, as on a submission: a wrong
+  // address on our own copy must not hold up the acknowledgement they are owed.
+  await deliver(d, REQUESTER, { to: data.requesterEmail, ...removalReceived(content) });
+  await deliver(d, ADMIN, { to: adminAddress(), ...removalToAdmin(content) });
+}
+
 async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
   switch (job.kind) {
     case NOTIFY_ENQUIRY:
       return runEnquiry(db, d, job.payload);
     case NOTIFY_SUBMISSION:
       return runSubmission(db, d, job.payload);
+    case NOTIFY_REPORT:
+      return runReport(db, d, job.payload);
+    case NOTIFY_REMOVAL:
+      return runRemoval(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.

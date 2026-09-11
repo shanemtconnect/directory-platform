@@ -14,6 +14,8 @@ import {
   createReport,
   listOpenRemovalRequests,
   listOpenReports,
+  removalNotification,
+  reportNotification,
 } from "./trust";
 
 /** An admin viewer whose user row exists, so `ensureProfile` can bridge it. */
@@ -437,6 +439,80 @@ describe("actionRemovalRequest", () => {
       expect(again.outcome).toBe("not-open");
       // One decision, one suppression. A double click must not file two.
       expect(await tx.select().from(suppressions)).toHaveLength(1);
+    });
+  });
+});
+
+describe("the notification read models", () => {
+  it("refuse anyone but the worker", async () => {
+    await withTestDb(async (tx) => {
+      await expect(reportNotification(tx, PUBLIC_VIEWER, randomUUID())).rejects.toThrow(/FORBIDDEN/);
+      await expect(removalNotification(tx, USER, randomUUID())).rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+
+  it("give the report notification everything the email needs", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Mill" });
+      const filed = await createReport(tx, PUBLIC_VIEWER, {
+        listingId,
+        reason: "closed",
+        detail: "Shut in March.",
+        reporterEmail: "spotter@example.co.uk",
+        ip: null,
+      });
+      if (filed.outcome !== "created") throw new Error("setup failed");
+
+      const data = await reportNotification(tx, admin, filed.reportId);
+      expect(data).toMatchObject({
+        listingName: "The Old Mill",
+        reason: "closed",
+        detail: "Shut in March.",
+        reporterEmail: "spotter@example.co.uk",
+      });
+      expect(data?.listingPath).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
+    });
+  });
+
+  it("give the removal notification the requester and the deadline", async () => {
+    setClock(new Date("2026-06-12T10:00:00Z"));
+    try {
+      await withTestDb(async (tx) => {
+        const admin = await makeAdmin(tx);
+        const ctx = await makeScaffold(tx);
+        const listingId = await makeListing(tx, ctx, { name: "The Old Mill" });
+        const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+          listingId,
+          requesterName: "Alex Owner",
+          requesterEmail: "alex@example.co.uk",
+          relationship: "subject",
+          reason: null,
+          ip: null,
+        });
+        if (filed.outcome !== "created") throw new Error("setup failed");
+
+        const data = await removalNotification(tx, admin, filed.removalRequestId);
+        expect(data).toMatchObject({
+          listingName: "The Old Mill",
+          requesterName: "Alex Owner",
+          requesterEmail: "alex@example.co.uk",
+          relationship: "subject",
+          reason: null,
+        });
+        expect(data?.dueAt.toISOString()).toBe("2026-06-19T10:00:00.000Z");
+      });
+    } finally {
+      resetClock();
+    }
+  });
+
+  it("report nothing for a row that is not there", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      expect(await reportNotification(tx, admin, randomUUID())).toBeNull();
+      expect(await removalNotification(tx, admin, randomUUID())).toBeNull();
     });
   });
 });

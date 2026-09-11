@@ -1,6 +1,7 @@
 import { enqueueJob } from "@/lib/db/queries/jobs";
 import type { EnquiryResult } from "@/lib/db/queries/enquiries";
 import type { SubmissionResult } from "@/lib/db/queries/submissions";
+import type { RemovalRequestResult, ReportResult } from "@/lib/db/queries/trust";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -20,9 +21,16 @@ import type { TestDb } from "@/test/db";
 
 export const NOTIFY_ENQUIRY = "notify.enquiry";
 export const NOTIFY_SUBMISSION = "notify.submission";
+export const NOTIFY_REPORT = "notify.report";
+export const NOTIFY_REMOVAL = "notify.removal";
 
 /** The kinds worker/jobs/notify.ts claims. */
-export const NOTIFY_KINDS: string[] = [NOTIFY_ENQUIRY, NOTIFY_SUBMISSION];
+export const NOTIFY_KINDS: string[] = [
+  NOTIFY_ENQUIRY,
+  NOTIFY_SUBMISSION,
+  NOTIFY_REPORT,
+  NOTIFY_REMOVAL,
+];
 
 /**
  * Job payloads are ids, never copies of the record. The worker re-reads the
@@ -57,4 +65,32 @@ export async function notifySubmission(
   const payload: SubmissionJobPayload =
     result.outcome === "created" ? { listingId: result.listingId } : { parkedId: result.parkedId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SUBMISSION, payload });
+}
+
+export type ReportJobPayload = { reportId: string };
+export type RemovalJobPayload = { removalRequestId: string };
+
+export async function notifyReport(
+  tx: TestDb,
+  viewer: Viewer,
+  result: ReportResult,
+): Promise<void> {
+  if (result.outcome !== "created") return;
+  const payload: ReportJobPayload = { reportId: result.reportId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REPORT, payload });
+}
+
+/**
+ * A removal request notifies two people: the admin who has five working days
+ * to act, and the requester, who otherwise has no way of knowing the form
+ * worked. Silence after a privacy request is what turns it into a complaint.
+ */
+export async function notifyRemoval(
+  tx: TestDb,
+  viewer: Viewer,
+  result: RemovalRequestResult,
+): Promise<void> {
+  if (result.outcome !== "created") return;
+  const payload: RemovalJobPayload = { removalRequestId: result.removalRequestId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REMOVAL, payload });
 }
