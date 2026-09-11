@@ -16,7 +16,19 @@ import { ADMIN_VIEWER } from "@/worker/viewer";
 import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
-import { NOTIFY_ENQUIRY, NOTIFY_KINDS, NOTIFY_SUBMISSION } from "@/lib/email/notify";
+import {
+  claimApproved, claimMagicLink, claimRejected, claimToAdmin,
+} from "@/lib/email/templates/claim";
+import { claimNotification } from "@/lib/db/queries/claims";
+import { MAGIC_TOKEN_TTL_MINUTES } from "@/lib/claims/token";
+import {
+  NOTIFY_CLAIM_DECIDED,
+  NOTIFY_CLAIM_LINK,
+  NOTIFY_CLAIM_SUBMITTED,
+  NOTIFY_ENQUIRY,
+  NOTIFY_KINDS,
+  NOTIFY_SUBMISSION,
+} from "@/lib/email/notify";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -82,6 +94,7 @@ interface Delivery {
 const OWNER = "owner";
 const ADMIN = "admin";
 const SUBMITTER = "submitter";
+const CLAIMANT = "claimant";
 
 /**
  * A send that never reached the provider — no key, no address — is not a
@@ -150,12 +163,83 @@ async function runSubmission(db: Db, d: Delivery, payload: Record<string, unknow
   await deliver(d, ADMIN, { to: adminAddress(), ...submissionToAdmin(content) });
 }
 
+/**
+ * The three claim notifications.
+ *
+ * All of them re-read the claim rather than trusting the payload, so a token
+ * that has since been replaced by a resend is never the one that goes out, and
+ * a decision that has since been changed is never announced twice differently.
+ */
+async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<string, unknown>): Promise<void> {
+  const claimId = readId(payload, "claimId");
+  if (claimId === null) throw new Retryable("The job carries no claimId");
+
+  const claim = await claimNotification(db, ADMIN_VIEWER, claimId);
+  if (!claim) throw new Retryable(`No such claim ${claimId}`);
+
+  const listing = { listingName: claim.listingName, listingUrl: siteUrl(claim.listingPath) };
+
+  if (kind === NOTIFY_CLAIM_LINK) {
+    if (claim.magicToken === null || claim.businessEmail === null) {
+      throw new Retryable("The claim has no live magic link to send");
+    }
+    // Only ever to the address on the business's own domain. Copying an admin
+    // would hand a credential to somebody the claimant never authorised.
+    return deliver(d, CLAIMANT, {
+      to: claim.businessEmail,
+      ...claimMagicLink({
+        ...listing,
+        verifyUrl: siteUrl(`/claim/verify/${claim.magicToken}`),
+        expiresInMinutes: MAGIC_TOKEN_TTL_MINUTES,
+      }),
+    });
+  }
+
+  if (kind === NOTIFY_CLAIM_SUBMITTED) {
+    return deliver(d, ADMIN, {
+      to: adminAddress(),
+      ...claimToAdmin({
+        ...listing,
+        claimantName: claim.claimantName,
+        claimantEmail: claim.accountEmail ?? claim.businessEmail,
+        reviewUrl: siteUrl(`/admin/claims/${claim.claimId}`),
+      }),
+    });
+  }
+
+  // NOTIFY_CLAIM_DECIDED. The account that asked is told, not the business
+  // address: a rejection going to a shared inbox tells the business somebody
+  // tried to take their listing, which is not ours to broadcast.
+  const to = claim.accountEmail ?? claim.businessEmail;
+  if (to === null) throw new Retryable("The claim has nobody to tell");
+  if (claim.status === "approved") {
+    return deliver(d, CLAIMANT, {
+      to,
+      ...claimApproved({ ...listing, dashboardUrl: siteUrl("/account") }),
+    });
+  }
+  if (claim.status === "rejected") {
+    return deliver(d, CLAIMANT, {
+      to,
+      ...claimRejected({ ...listing, reason: claim.rejectionReason ?? "" }),
+    });
+  }
+  // Enqueued inside the deciding transaction, so a claim that is still pending
+  // means the decision rolled back. Retrying is right: the next attempt reads
+  // whatever the database settled on.
+  throw new Retryable(`Claim ${claimId} has no decision to announce`);
+}
+
 async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
   switch (job.kind) {
     case NOTIFY_ENQUIRY:
       return runEnquiry(db, d, job.payload);
     case NOTIFY_SUBMISSION:
       return runSubmission(db, d, job.payload);
+    case NOTIFY_CLAIM_LINK:
+    case NOTIFY_CLAIM_SUBMITTED:
+    case NOTIFY_CLAIM_DECIDED:
+      return runClaim(db, d, job.kind, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
