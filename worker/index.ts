@@ -69,4 +69,19 @@ schedule("notify", "*/30 * * * * *", async (tx) => {
   await processNotifications(tx);
 });
 
+// Phase 6. Hourly rather than daily: the query decides what is DUE (weekly for
+// a verified link, daily for one we have never seen work), so running often
+// only spreads the fetches out — it never re-checks anything early.
+schedule("backlink-check", "0 * * * *", async (tx) => {
+  const { checkBadgeBacklinks } = await import("./jobs/backlink-check");
+  await checkBadgeBacklinks(tx);
+});
+
+// Badge impressions and clicks live in Redis between flushes, so this is the
+// only thing standing between a counter and a lost minute of it.
+schedule("badge-counters", "*/1 * * * *", async (tx) => {
+  const { flushBadgeCounters } = await import("./jobs/badge-counters");
+  await flushBadgeCounters(tx);
+});
+
 console.log("[worker] started");

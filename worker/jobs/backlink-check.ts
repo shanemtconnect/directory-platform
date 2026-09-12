@@ -1,0 +1,69 @@
+import { siteUrl } from "@/lib/schema/builders";
+import { now } from "@/lib/clock";
+import { badgesDueForCheck, recordBacklinkCheck } from "@/lib/db/queries/badges";
+import { checkBacklink, type Resolver } from "@/lib/badge/backlink";
+import { ADMIN_VIEWER } from "../viewer";
+import type { Db } from "@/lib/db/client";
+
+/**
+ * Weekly for a verified badge, daily for one we have never seen work.
+ *
+ * The badge buys a listing +5 rank_boost, so the link has to be real and it
+ * has to still be there. Owners redesign sites, agencies delete footers, and a
+ * boost granted once and never re-checked is a ranking signal we are lying to
+ * ourselves about.
+ *
+ * Every fetch goes through the SSRF guard in lib/badge/backlink.ts: the URL
+ * was typed into a form by a stranger, which makes this the one outbound
+ * request in the application that an attacker chooses the destination of.
+ */
+
+/** The links that count: this listing's canonical URL, or the site root. */
+export function backlinkTargets(listing: { citySlug: string; listingSlug: string }): string[] {
+  return [siteUrl(`/${listing.citySlug}/${listing.listingSlug}`), siteUrl("/")];
+}
+
+export interface BacklinkCheckDeps {
+  at?: Date;
+  limit?: number;
+  resolve?: Resolver;
+  fetchImpl?: typeof fetch;
+}
+
+export interface BacklinkCheckReport {
+  checked: number;
+  verified: number;
+  failed: number;
+}
+
+export async function checkBadgeBacklinks(
+  db: Db,
+  deps: BacklinkCheckDeps = {},
+): Promise<BacklinkCheckReport> {
+  const at = deps.at ?? now();
+  const due = await badgesDueForCheck(db, ADMIN_VIEWER, { at, limit: deps.limit });
+
+  const report: BacklinkCheckReport = { checked: 0, verified: 0, failed: 0 };
+
+  // Sequential on purpose. Ten seconds each is slow, but firing a hundred
+  // concurrent requests at a hundred third-party sites from one IP is how a
+  // verification crawler gets itself blocked everywhere at once.
+  for (const badge of due) {
+    const result = await checkBacklink(badge.backlinkUrl, backlinkTargets(badge), {
+      resolve: deps.resolve,
+      fetchImpl: deps.fetchImpl,
+    });
+
+    await recordBacklinkCheck(db, ADMIN_VIEWER, {
+      badgeId: badge.id,
+      verified: result.verified,
+      at,
+    });
+
+    report.checked++;
+    if (result.verified) report.verified++;
+    else report.failed++;
+  }
+
+  return report;
+}

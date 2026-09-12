@@ -1,8 +1,10 @@
+import { after } from "next/server";
 import { siteConfig } from "@/config/site.config";
 import { badgeListing } from "@/lib/db/queries/badges";
 import { db } from "@/lib/db/client";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { parseBadgeStyle, renderBadgeSvg } from "@/lib/badge/svg";
+import { recordBadgeImpression } from "@/lib/badge/counters";
 
 /**
  * GET /badge/{listingId}?style=dark|light|compact|rating
@@ -40,6 +42,16 @@ export async function GET(
   // badge on someone else's website.
   const row = await badgeListing(db as never, PUBLIC_VIEWER, id);
   if (!row) return notFound();
+
+  // Counted in Redis and folded into `badges.impression_count` by the worker
+  // once a minute. One UPDATE per impression would mean a row lock on every
+  // page view of every site that ever pasted the snippet — the one traffic
+  // shape this application does not control. Deferred past the response, and
+  // swallowing its own errors: the image renders whether or not the cache is
+  // reachable.
+  after(() => {
+    void recordBadgeImpression(row.id).catch(() => {});
+  });
 
   const svg = renderBadgeSvg({
     siteName: siteConfig.name,
