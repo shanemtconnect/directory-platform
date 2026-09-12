@@ -86,6 +86,21 @@ export const SHORTLIST_RATE_LIMIT = { limit: 120, windowSeconds: 3600 } as const
  */
 export const AUTH_RATE_LIMIT = { limit: 20, windowSeconds: 600 } as const;
 
+/**
+ * 120 beacons per 10 minutes per client.
+ *
+ * Not a write budget in the sense the others are — nothing here reaches the
+ * database — but the same shape of problem: a public endpoint anyone can POST
+ * to, whose counters are the number a listing owner is later asked to renew
+ * against. Sized for a person browsing hard: one beacon per page view, so 120
+ * is a page every five seconds for ten minutes.
+ *
+ * Generous on purpose at the individual level, because the cost of a false
+ * positive is a silently uncounted view. What it stops is the cheap version of
+ * the abuse: one client looping the endpoint to inflate their own numbers.
+ */
+export const BEACON_RATE_LIMIT = { limit: 120, windowSeconds: 600 } as const;
+
 /** The message a blocked visitor sees. Minutes, because seconds read as an error. */
 export function retryMessage(result: RateLimitResult): string {
   return `Too many changes from this connection. Please try again in ${Math.ceil(result.retryAfterSeconds / 60)} minutes.`;
