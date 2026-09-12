@@ -58,7 +58,7 @@ export default async function SearchPage({ searchParams }: Props) {
   // The facet is a slug; the switcher marks the current city by id. The select
   // above is built from the same list, so a city being filtered on is in it.
   const currentCityId = cities.find((c) => c.slug === params.city)?.id ?? null;
-  const switcherCities = await listSwitcherCities(db as never, PUBLIC_VIEWER, currentCityId);
+  const switcherCities = await listSwitcherCities(db as never, PUBLIC_VIEWER, { currentCityId });
 
   // Preserve every active filter in pagination links.
   const qs = new URLSearchParams();

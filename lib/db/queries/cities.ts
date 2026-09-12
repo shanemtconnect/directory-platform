@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { cities, categories, verticals, areas } from "@/lib/db/schema";
 import type { Viewer } from "@/lib/db/viewer";
 import { scopeIndexability } from "@/lib/db/queries/indexing";
@@ -120,6 +120,22 @@ export interface SwitcherCity {
 }
 
 /**
+ * How many locations a switcher offers when the caller does not say.
+ *
+ * A cap rather than "every indexable city" because this runs on cached pages
+ * with fifty cities today and no ceiling tomorrow, and a disclosure with two
+ * hundred links in it is not a shortcut — /cities is the full list.
+ */
+export const SWITCHER_LIMIT = 24;
+
+export interface SwitcherOptions {
+  /** The city whose page this is. Kept in the list even outside the cap. */
+  currentCityId?: string | null;
+  /** Rows returned, applied in SQL. Defaults to SWITCHER_LIMIT. */
+  limit?: number;
+}
+
+/**
  * The cities the location switcher may offer.
  *
  * Indexable ones plus, when given, the city the visitor is already on — which
@@ -137,26 +153,49 @@ export interface SwitcherCity {
  * Busiest first: the switcher is a shortcut to somewhere worth going, and a
  * city with forty listings is a better destination than one with three. Name
  * breaks the tie so the order is stable between renders of the same data.
+ *
+ * The cap is a LIMIT, not a slice: a caller that wants twelve must not make the
+ * database sort and ship every city we hold first. The city you are on is
+ * fetched separately when the cap cut it, because a switcher that cannot name
+ * where you are is broken — so the list is at most `limit + 1` rows.
  */
 export async function listSwitcherCities(
   tx: Db,
   _viewer: Viewer,
-  currentCityId?: string | null,
+  options: SwitcherOptions = {},
 ): Promise<SwitcherCity[]> {
-  const visible = currentCityId
-    ? or(eq(cities.isIndexable, true), eq(cities.id, currentCityId))
-    : eq(cities.isIndexable, true);
+  const currentCityId = options.currentCityId ?? null;
+  const limit = Math.max(1, options.limit ?? SWITCHER_LIMIT);
+
+  const columns = {
+    id: cities.id,
+    name: cities.name,
+    slug: cities.slug,
+    listingCount: cities.listingCount,
+  };
 
   const rows = await tx
-    .select({
-      id: cities.id,
-      name: cities.name,
-      slug: cities.slug,
-      listingCount: cities.listingCount,
-    })
+    .select(columns)
     .from(cities)
-    .where(and(eq(cities.isPublished, true), visible))
-    .orderBy(desc(cities.listingCount), asc(cities.name));
+    .where(and(eq(cities.isPublished, true), eq(cities.isIndexable, true)))
+    .orderBy(desc(cities.listingCount), asc(cities.name))
+    .limit(limit);
+
+  if (currentCityId !== null && !rows.some((r) => r.id === currentCityId)) {
+    // Published is still required: an unpublished city has no page to link to,
+    // and this is the one row that arrives without the indexable filter.
+    const [current] = await tx
+      .select(columns)
+      .from(cities)
+      .where(and(eq(cities.isPublished, true), eq(cities.id, currentCityId)))
+      .limit(1);
+    if (current) {
+      rows.push(current);
+      // Re-sorted rather than appended, so the extra row lands where the single
+      // uncapped query would have put it instead of always at the end.
+      rows.sort((a, b) => b.listingCount - a.listingCount || a.name.localeCompare(b.name));
+    }
+  }
 
   return rows.map((r) => ({ ...r, isCurrent: r.id === currentCityId }));
 }

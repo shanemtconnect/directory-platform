@@ -51,8 +51,7 @@ const HEADER_CITIES = 12;
  */
 async function loadCities(): Promise<SwitcherCity[]> {
   try {
-    const cities = await listSwitcherCities(db as never, PUBLIC_VIEWER);
-    return cities.slice(0, HEADER_CITIES);
+    return await listSwitcherCities(db as never, PUBLIC_VIEWER, { limit: HEADER_CITIES });
   } catch (error) {
     console.error("header location switcher query failed", error);
     return [];

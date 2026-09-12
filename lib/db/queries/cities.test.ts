@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
-import { listSwitcherCities, pillarHeading } from "./cities";
+import { SWITCHER_LIMIT, listSwitcherCities, pillarHeading } from "./cities";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { cities, verticals } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
@@ -164,7 +164,7 @@ describe("listSwitcherCities", () => {
       await indexableCity(tx, "Ripon", "North Yorkshire", 9);
       const otley = await makeCity(tx, "Otley", "West Yorkshire");
 
-      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, otley);
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, { currentCityId: otley });
       expect(rows.map((r) => r.name)).toEqual(["Ripon", "Otley"]);
       expect(rows.find((r) => r.id === otley)?.isCurrent).toBe(true);
       expect(rows.find((r) => r.name === "Ripon")?.isCurrent).toBe(false);
@@ -174,7 +174,7 @@ describe("listSwitcherCities", () => {
   it("lists a city once, not twice, when the one you are on is also indexable", async () => {
     await withTestDb(async (tx) => {
       const ripon = await indexableCity(tx, "Ripon", "North Yorkshire", 9);
-      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, ripon);
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, { currentCityId: ripon });
       expect(rows).toHaveLength(1);
       expect(rows[0]?.isCurrent).toBe(true);
     });
@@ -185,10 +185,49 @@ describe("listSwitcherCities", () => {
       const id = await indexableCity(tx, "Ripon", "North Yorkshire", 9);
       await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, id));
 
-      expect(await listSwitcherCities(tx, PUBLIC_VIEWER, id)).toEqual([]);
+      expect(await listSwitcherCities(tx, PUBLIC_VIEWER, { currentCityId: id })).toEqual([]);
       // An admin gets the public answer too: this renders into the shared ISR
       // cache, so an admin-only extra link would be served to everyone.
-      expect(await listSwitcherCities(tx, ADMIN, id)).toEqual([]);
+      expect(await listSwitcherCities(tx, ADMIN, { currentCityId: id })).toEqual([]);
+    });
+  });
+
+  it("caps the list in the query, at the busiest end", async () => {
+    await withTestDb(async (tx) => {
+      for (let n = 1; n <= 6; n++) {
+        await indexableCity(tx, `City ${n}`, "North Yorkshire", n);
+      }
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, { limit: 3 });
+      expect(rows.map((r) => r.name)).toEqual(["City 6", "City 5", "City 4"]);
+    });
+  });
+
+  it("defaults to a bounded list rather than every city we hold", async () => {
+    await withTestDb(async (tx) => {
+      for (let n = 1; n <= SWITCHER_LIMIT + 3; n++) {
+        await indexableCity(tx, `City ${String(n).padStart(3, "0")}`, "North Yorkshire", n);
+      }
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER);
+      expect(rows).toHaveLength(SWITCHER_LIMIT);
+    });
+  });
+
+  it("keeps the city you are on even when the cap would have cut it", async () => {
+    await withTestDb(async (tx) => {
+      for (let n = 1; n <= 6; n++) {
+        await indexableCity(tx, `City ${n}`, "North Yorkshire", n);
+      }
+      // Indexable, published, and dead last on listing count: exactly the row a
+      // LIMIT drops. A switcher that cannot name where you are is broken.
+      const quietest = await indexableCity(tx, "Askrigg", "North Yorkshire", 0);
+
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, {
+        currentCityId: quietest,
+        limit: 3,
+      });
+      expect(rows).toHaveLength(4);
+      expect(rows.at(-1)?.name).toBe("Askrigg");
+      expect(rows.find((r) => r.id === quietest)?.isCurrent).toBe(true);
     });
   });
 });
