@@ -234,6 +234,63 @@ describe("verifyClaimToken", () => {
       expect((await verifyClaimToken(tx, { role: "public" }, token)).outcome).toBe("already-claimed");
     });
   });
+
+  it("never overwrites an owner, even on a listing still marked unclaimed", async () => {
+    await withTestDb(async (tx) => {
+      const { token, listingId, profileId } = await requested(tx);
+      const squatter = await makeUser(tx);
+      // The half-applied state a check-then-act race leaves behind: the row
+      // has an owner while its status has not caught up. Taking it would hand
+      // the listing away from somebody who already holds it.
+      await tx.update(listings).set({ ownerId: squatter.profileId }).where(eq(listings.id, listingId));
+
+      expect((await verifyClaimToken(tx, { role: "public" }, token)).outcome).toBe("already-claimed");
+
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing?.ownerId).toBe(squatter.profileId);
+
+      const [claim] = await tx.select().from(claims).where(eq(claims.userId, profileId));
+      expect(claim?.status, "a claim that lost the race is not approved").toBe("pending");
+
+      const [profile] = await tx.select().from(profiles).where(eq(profiles.id, profileId));
+      expect(profile?.role, "and the loser is not promoted").toBe("user");
+
+      const approvals = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(approvals).toHaveLength(0);
+    });
+  });
+
+  it("gives the listing to the first of two live tokens and refuses the second", async () => {
+    await withTestDb(async (tx) => {
+      const first = await requested(tx);
+      const second = await makeUser(tx);
+      const started = await startDomainClaim(tx, second.viewer, {
+        listingId: first.listingId, profileId: second.profileId,
+        businessEmail: "sam@oldmill.example",
+        claimantName: null, roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+
+      expect((await verifyClaimToken(tx, { role: "public" }, first.token)).outcome).toBe("approved");
+      expect((await verifyClaimToken(tx, { role: "public" }, started.token)).outcome)
+        .toBe("already-claimed");
+
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, first.listingId));
+      expect(listing?.ownerId).toBe(first.profileId);
+
+      const [loser] = await tx.select().from(profiles).where(eq(profiles.id, second.profileId));
+      expect(loser?.role).toBe("user");
+
+      const approvals = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(approvals).toHaveLength(1);
+    });
+  });
 });
 
 describe("document claims", () => {
@@ -350,6 +407,69 @@ describe("decideClaim", () => {
         actorProfileId: admin.profileId, ip: null,
       });
       expect(out.outcome).toBe("reason-required");
+    });
+  });
+
+  it("refuses to approve onto a listing that already has an owner", async () => {
+    await withTestDb(async (tx) => {
+      const { claimId, listingId, profileId, admin } = await pending(tx);
+      const squatter = await makeUser(tx);
+      await tx.update(listings).set({ ownerId: squatter.profileId }).where(eq(listings.id, listingId));
+
+      const out = await decideClaim(tx, admin.viewer, {
+        claimId, decision: "approved", reason: null,
+        actorProfileId: admin.profileId, ip: null,
+      });
+      expect(out.outcome).toBe("already-decided");
+
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing?.ownerId).toBe(squatter.profileId);
+
+      const [claim] = await tx.select().from(claims).where(eq(claims.id, claimId));
+      expect(claim?.status).toBe("pending");
+
+      const [profile] = await tx.select().from(profiles).where(eq(profiles.id, profileId));
+      expect(profile?.role).toBe("user");
+
+      const approvals = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(approvals).toHaveLength(0);
+    });
+  });
+
+  it("lets the first of two approvals take the listing and no more", async () => {
+    await withTestDb(async (tx) => {
+      const first = await pending(tx);
+      const rival = await makeUser(tx);
+      const started = await startDocumentClaim(tx, rival.viewer, {
+        listingId: first.listingId, profileId: rival.profileId,
+        claimantName: null, roleAtBusiness: null, evidenceNotes: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "open") throw new Error("setup failed");
+
+      expect((await decideClaim(tx, first.admin.viewer, {
+        claimId: first.claimId, decision: "approved", reason: null,
+        actorProfileId: first.admin.profileId, ip: null,
+      })).outcome).toBe("decided");
+
+      expect((await decideClaim(tx, first.admin.viewer, {
+        claimId: started.claimId, decision: "approved", reason: null,
+        actorProfileId: first.admin.profileId, ip: null,
+      })).outcome).toBe("already-decided");
+
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, first.listingId));
+      expect(listing?.ownerId).toBe(first.profileId);
+
+      const [lost] = await tx.select().from(claims).where(eq(claims.id, started.claimId));
+      expect(lost?.status, "the losing claim stays pending for a human to close").toBe("pending");
+
+      const approvals = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(approvals).toHaveLength(1);
     });
   });
 

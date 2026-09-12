@@ -243,7 +243,6 @@ export async function verifyClaimToken(
       listingName: listings.name,
       listingSlug: listings.slug,
       citySlug: cities.slug,
-      claimStatus: listings.claimStatus,
       ownerId: listings.ownerId,
     })
     .from(claims)
@@ -268,9 +267,27 @@ export async function verifyClaimToken(
   if (row.status === "approved" && row.ownerId === row.userId) return approved;
   if (row.status !== "pending") return { outcome: "unknown" };
   if (isTokenExpired(row.expiresAt)) return { outcome: "expired" };
-  if (row.claimStatus !== "unclaimed") return { outcome: "already-claimed" };
 
   const at = now();
+
+  // The listing moves FIRST, and only out of the state this claim was granted
+  // against. Reading `claim_status` and then writing on the strength of what
+  // was read is a race: two live tokens on one listing, or an admin approving
+  // between the read and the write, and both sides believe they won — the
+  // second silently overwriting the first owner. The guard is the whole of the
+  // check, so zero rows updated means somebody else got there and nothing else
+  // in this function runs: no approval, no promotion, no email.
+  const taken = await tx
+    .update(listings)
+    .set({ ownerId: row.userId, claimStatus: "claimed", updatedAt: at })
+    .where(and(
+      eq(listings.id, row.listingId),
+      eq(listings.claimStatus, "unclaimed"),
+      isNull(listings.ownerId),
+    ))
+    .returning({ id: listings.id });
+  if (taken.length === 0) return { outcome: "already-claimed" };
+
   await tx
     .update(claims)
     .set({
@@ -280,11 +297,6 @@ export async function verifyClaimToken(
       updatedAt: at,
     })
     .where(eq(claims.id, row.id));
-
-  await tx
-    .update(listings)
-    .set({ ownerId: row.userId, claimStatus: "claimed", updatedAt: at })
-    .where(eq(listings.id, row.listingId));
 
   await promoteToOwner(tx, row.userId);
 
@@ -595,7 +607,6 @@ export async function decideClaim(
       status: claims.status,
       listingSlug: listings.slug,
       citySlug: cities.slug,
-      claimStatus: listings.claimStatus,
     })
     .from(claims)
     .innerJoin(listings, eq(listings.id, claims.listingId))
@@ -604,11 +615,28 @@ export async function decideClaim(
     .limit(1);
   if (!row) return { outcome: "unknown" };
   if (row.status !== "pending") return { outcome: "already-decided" };
-  if (input.decision === "approved" && row.claimStatus !== "unclaimed") {
-    return { outcome: "already-decided" };
-  }
 
   const at = now();
+
+  // Approval takes the listing before it touches the claim, and only from the
+  // unowned state — see `verifyClaimToken` for why the read above is not the
+  // check. Zero rows means a magic link or another admin got there first, and
+  // the claim is left pending rather than marked approved over a listing that
+  // went somewhere else.
+  if (input.decision === "approved") {
+    const taken = await tx
+      .update(listings)
+      .set({ ownerId: row.userId, claimStatus: "claimed", updatedAt: at })
+      .where(and(
+        eq(listings.id, row.listingId),
+        eq(listings.claimStatus, "unclaimed"),
+        isNull(listings.ownerId),
+      ))
+      .returning({ id: listings.id });
+    if (taken.length === 0) return { outcome: "already-decided" };
+    await promoteToOwner(tx, row.userId);
+  }
+
   await tx
     .update(claims)
     .set({
@@ -619,14 +647,6 @@ export async function decideClaim(
       updatedAt: at,
     })
     .where(eq(claims.id, row.id));
-
-  if (input.decision === "approved") {
-    await tx
-      .update(listings)
-      .set({ ownerId: row.userId, claimStatus: "claimed", updatedAt: at })
-      .where(eq(listings.id, row.listingId));
-    await promoteToOwner(tx, row.userId);
-  }
 
   await writeAudit(tx, {
     actorId: input.actorProfileId,
