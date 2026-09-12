@@ -79,6 +79,56 @@ export interface ListingSchemaInput {
   imageUrls?: string[];
   /** Only pass these when the rating is genuinely on the page. */
   rating?: { value: number; count: number };
+  /**
+   * The reviews the page RENDERS, in the order it renders them. Never the
+   * whole set — a page showing three must not claim twenty.
+   */
+  reviews?: RenderedReview[];
+}
+
+/**
+ * One review, as it appears on the page.
+ *
+ * Deliberately not the database row: `authorEmail`, the IP and the moderation
+ * state have no place in markup, and a builder handed the row would eventually
+ * emit one of them.
+ */
+export interface RenderedReview {
+  author: string;
+  rating: number;
+  title: string | null;
+  body: string | null;
+  published: Date;
+}
+
+/** schema.org wants a date, and the page shows a date, not a timestamp. */
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The `Review` nodes for a set of reviews that are on the page.
+ *
+ * `bestRating`/`worstRating` are stated rather than left to default because
+ * the default is 5/1 only by convention, and a consumer that assumes a
+ * ten-point scale would read every four-star review as poor.
+ */
+function reviewNodes(written: RenderedReview[]): JsonLd[] {
+  return written.map((r) =>
+    prune({
+      "@type": "Review",
+      author: { "@type": "Person", name: r.author },
+      reviewRating: {
+        "@type": "Rating",
+        ratingValue: r.rating,
+        bestRating: 5,
+        worstRating: 1,
+      },
+      name: r.title ?? undefined,
+      reviewBody: r.body ?? undefined,
+      datePublished: isoDate(r.published),
+    }),
+  );
 }
 
 /**
@@ -131,7 +181,47 @@ export function listingSchema(input: ListingSchemaInput): JsonLd {
             reviewCount: input.rating.count,
           }
         : undefined,
+    // Only what the page shows, and only if it shows any. An empty array is
+    // an assertion that there are none, which is not the same as silence.
+    review:
+      input.reviews && input.reviews.length > 0 ? reviewNodes(input.reviews) : undefined,
     isPartOf: { "@id": siteUrl("#website") },
+  });
+}
+
+/**
+ * The standalone /[city]/[listing]/reviews page.
+ *
+ * A CollectionPage whose mainEntity is the SAME business node the listing page
+ * publishes — same `@id` — so the reviews are attached to one entity rather
+ * than describing a second business that happens to share a name. It carries
+ * no `aggregateRating`: the summary belongs to the business, is rendered on
+ * the listing page, and asserting it twice from two URLs is how a rating ends
+ * up counted twice.
+ *
+ * Returns null when there is nothing to show, because a reviews page with no
+ * reviews on it is a page that must say nothing at all in its markup.
+ */
+export function reviewsPageSchema(input: {
+  listingName: string;
+  listingPath: string;
+  path: string;
+  reviews: RenderedReview[];
+}): JsonLd | null {
+  if (input.reviews.length === 0) return null;
+  const businessUrl = siteUrl(input.listingPath);
+  return prune({
+    "@context": SCHEMA,
+    "@type": "CollectionPage",
+    "@id": `${siteUrl(input.path)}#reviews`,
+    url: siteUrl(input.path),
+    isPartOf: { "@id": siteUrl("#website") },
+    mainEntity: {
+      "@id": `${businessUrl}#business`,
+      name: input.listingName,
+      url: businessUrl,
+      review: reviewNodes(input.reviews),
+    },
   });
 }
 
