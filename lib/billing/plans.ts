@@ -136,3 +136,108 @@ export function parseTier(raw: string): TierName | null {
 export function parseBillingInterval(raw: string): Interval | null {
   return raw === "monthly" || raw === "annual" ? raw : null;
 }
+
+/* --------------------------------------------------------------- setup shape */
+
+export interface PlanFrequency {
+  readonly interval_unit: "DAY" | "MONTH" | "YEAR";
+  readonly interval_count: number;
+}
+
+export interface PlanBillingCycle {
+  readonly frequency: PlanFrequency;
+  readonly tenure_type: "TRIAL" | "REGULAR";
+  readonly sequence: number;
+  /** 0 means "for ever". Exactly one cycle in a plan may say it. */
+  readonly total_cycles: number;
+  readonly pricing_scheme: { readonly fixed_price: PayPalAmount };
+}
+
+export interface PlanRequestBody {
+  readonly product_id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly status: "ACTIVE";
+  readonly billing_cycles: readonly PlanBillingCycle[];
+  readonly payment_preferences: {
+    readonly auto_bill_outstanding: boolean;
+    readonly setup_fee_failure_action: "CONTINUE";
+    readonly payment_failure_threshold: number;
+  };
+}
+
+const FREQUENCY: Record<Interval, PlanFrequency> = {
+  monthly: { interval_unit: "MONTH", interval_count: 1 },
+  annual: { interval_unit: "YEAR", interval_count: 1 },
+};
+
+/**
+ * The body `scripts/paypal-setup.ts` posts to create one plan.
+ *
+ * The cycle list has a shape the rest of this codebase depends on:
+ *
+ *   1. TRIAL, free, one cycle        — only when the tier has trial days.
+ *   2. REGULAR, full price, ONE cycle — the cycle a coupon discounts.
+ *   3. REGULAR, full price, for ever  — every renewal after that.
+ *
+ * Two regular cycles rather than one, because PayPal's subscription-level
+ * plan override can only rewrite a cycle the plan already has. With a single
+ * open-ended cycle, "25% off the first payment" would be 25% off every payment
+ * for the life of the subscription. Splitting the first payment into its own
+ * finite cycle is what makes a first-cycle discount expressible at all — see
+ * `firstPaidCycleSequence`.
+ *
+ * No `taxes` block: the seller is in Jersey and is not VAT registered, so a
+ * tax percentage here would be inventing a charge.
+ */
+export function planRequestBody(
+  tier: TierName,
+  interval: Interval,
+  productId: string,
+): PlanRequestBody {
+  const amount = planAmount(tier, interval);
+  const trialDays = trialDaysFor(tier);
+  const cycles: PlanBillingCycle[] = [];
+
+  if (trialDays > 0) {
+    cycles.push({
+      frequency: { interval_unit: "DAY", interval_count: trialDays },
+      tenure_type: "TRIAL",
+      sequence: 1,
+      total_cycles: 1,
+      pricing_scheme: { fixed_price: { value: "0.00", currency_code: amount.currency_code } },
+    });
+  }
+
+  const firstPaid = firstPaidCycleSequence(tier);
+  cycles.push(
+    {
+      frequency: FREQUENCY[interval],
+      tenure_type: "REGULAR",
+      sequence: firstPaid,
+      total_cycles: 1,
+      pricing_scheme: { fixed_price: amount },
+    },
+    {
+      frequency: FREQUENCY[interval],
+      tenure_type: "REGULAR",
+      sequence: firstPaid + 1,
+      total_cycles: 0,
+      pricing_scheme: { fixed_price: amount },
+    },
+  );
+
+  return {
+    product_id: productId,
+    name: planNameFor(tier, interval),
+    description: `${siteConfig.tiers[tier].label} plan, billed ${interval === "annual" ? "yearly" : "monthly"}`,
+    status: "ACTIVE",
+    billing_cycles: cycles,
+    payment_preferences: {
+      auto_bill_outstanding: true,
+      setup_fee_failure_action: "CONTINUE",
+      // Three tries, then PayPal suspends and our webhook drops the tier.
+      payment_failure_threshold: 3,
+    },
+  };
+}

@@ -7,6 +7,8 @@ import {
   planEnvVar,
   planIdFor,
   planNameFor,
+  planRequestBody,
+  firstPaidCycleSequence,
   tierForPlanId,
   trialDaysFor,
 } from "./plans";
@@ -98,5 +100,62 @@ describe("planNameFor", () => {
   it("is stable, so the setup script is idempotent by name", () => {
     expect(planNameFor("essential", "annual")).toBe(planNameFor("essential", "annual"));
     expect(planNameFor("essential", "annual")).not.toBe(planNameFor("essential", "monthly"));
+  });
+});
+
+describe("planRequestBody", () => {
+  const body = planRequestBody("premium", "annual", "PROD-1");
+  const cycles = body.billing_cycles;
+
+  it("puts the free trial first, priced at nothing", () => {
+    expect(cycles[0]).toMatchObject({
+      tenure_type: "TRIAL",
+      sequence: 1,
+      total_cycles: 1,
+      frequency: { interval_unit: "DAY", interval_count: siteConfig.tiers.premium.trialDays },
+    });
+    expect(cycles[0]!.pricing_scheme.fixed_price.value).toBe("0.00");
+  });
+
+  it("splits the paid part into a discountable first cycle and an open-ended one", () => {
+    // This split is the ONLY thing that makes "25% off the first payment"
+    // expressible as a PayPal plan override. Overriding a single open-ended
+    // cycle would discount every renewal for ever.
+    const [, first, ongoing] = cycles;
+    expect(first).toMatchObject({ tenure_type: "REGULAR", sequence: 2, total_cycles: 1 });
+    expect(ongoing).toMatchObject({ tenure_type: "REGULAR", sequence: 3, total_cycles: 0 });
+    expect(firstPaidCycleSequence("premium")).toBe(first!.sequence);
+  });
+
+  it("prices both paid cycles from the config, to the penny", () => {
+    const expected = siteConfig.tiers.premium.priceAnnual.toFixed(2);
+    expect(cycles[1]!.pricing_scheme.fixed_price.value).toBe(expected);
+    expect(cycles[2]!.pricing_scheme.fixed_price.value).toBe(expected);
+  });
+
+  it("bills yearly for annual and monthly for monthly", () => {
+    expect(cycles[1]!.frequency).toEqual({ interval_unit: "YEAR", interval_count: 1 });
+    expect(planRequestBody("premium", "monthly", "PROD-1").billing_cycles[1]!.frequency).toEqual({
+      interval_unit: "MONTH",
+      interval_count: 1,
+    });
+  });
+
+  it("omits the trial cycle for a tier that has none", () => {
+    // Read through a widened view: the config asserts literal types, and a
+    // clone that sets trialDays to 0 must still get a valid plan.
+    const trialDays: number = siteConfig.tiers.essential.trialDays;
+    const cyclesForEssential = planRequestBody("essential", "annual", "PROD-1").billing_cycles;
+    expect(cyclesForEssential[0]!.tenure_type).toBe(trialDays > 0 ? "TRIAL" : "REGULAR");
+    expect(firstPaidCycleSequence("essential")).toBe(trialDays > 0 ? 2 : 1);
+    expect(cyclesForEssential).toHaveLength(trialDays > 0 ? 3 : 2);
+  });
+
+  it("carries no tax block — the seller is not VAT registered", () => {
+    expect(body).not.toHaveProperty("taxes");
+  });
+
+  it("refuses to build a plan for a free tier", () => {
+    expect(() => planRequestBody("free", "annual", "PROD-1")).toThrow();
   });
 });

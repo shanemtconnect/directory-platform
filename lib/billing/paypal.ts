@@ -132,7 +132,26 @@ const SIGNATURE_HEADERS = [
   "paypal-transmission-time",
 ] as const;
 
-export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}): PayPalClient {
+export interface PayPalResponse {
+  readonly status: number;
+  readonly ok: boolean;
+  readonly json: Record<string, unknown>;
+}
+
+/** An authenticated call to any PayPal path. */
+export type PayPalRequest = (path: string, init?: RequestInit) => Promise<PayPalResponse>;
+
+/**
+ * The token-caching request function the client is built on, exported for
+ * `scripts/paypal-setup.ts`.
+ *
+ * The setup script creates a product and four plans, which are catalogue
+ * operations the application never performs — so they are not on
+ * `PayPalClient`. A one-off script reaching for the raw requester is honest;
+ * widening the interface the whole app depends on so a script can use it twice
+ * a year is not.
+ */
+export function createPayPalRequest(opts: { env?: Env; http?: PayPalHttp } = {}): PayPalRequest {
   const env = opts.env ?? process.env;
   const http = opts.http ?? ((url, init) => fetch(url, init));
   const base = paypalApiBase(env);
@@ -168,10 +187,7 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
     return token;
   }
 
-  async function call(
-    path: string,
-    init: RequestInit = {},
-  ): Promise<{ status: number; ok: boolean; json: Record<string, unknown> }> {
+  return async function call(path, init = {}) {
     const bearer = await accessToken();
     const res = await http(`${base}${path}`, {
       ...init,
@@ -191,7 +207,12 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
       }
     }
     return { status: res.status, ok: res.ok, json };
-  }
+  };
+}
+
+export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}): PayPalClient {
+  const env = opts.env ?? process.env;
+  const call = createPayPalRequest(opts);
 
   /** PayPal's own `message`/`details` beat "request failed with 400". */
   function fail(path: string, status: number, json: Record<string, unknown>): Error {
