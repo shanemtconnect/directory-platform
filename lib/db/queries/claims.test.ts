@@ -299,6 +299,30 @@ describe("verifyClaimToken", () => {
       expect(approvals).toHaveLength(1);
     });
   });
+
+  it("tells the claimant they won, not that they lost, on a double-submitted confirmation", async () => {
+    await withTestDb(async (tx) => {
+      const { token, claimId, listingId, profileId } = await requested(tx);
+      // The state a second, near-simultaneous POST of the SAME token would
+      // find: the first request's guarded UPDATE has already landed and the
+      // listing is this claimant's own, even though (from this call's point
+      // of view) nothing else has happened yet.
+      await tx.update(listings).set({ claimStatus: "claimed", ownerId: profileId })
+        .where(eq(listings.id, listingId));
+
+      const result = await verifyClaimToken(tx, { role: "public" }, token);
+      expect(result.outcome).toBe("approved");
+      if (result.outcome === "approved") expect(result.claimId).toBe(claimId);
+
+      // The winning request is the one that audits and emails; this one, a
+      // duplicate, must not do either a second time.
+      const approvals = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(approvals).toHaveLength(0);
+    });
+  });
 });
 
 describe("previewClaimToken", () => {
@@ -551,6 +575,32 @@ describe("decideClaim", () => {
       const first = { claimId, decision: "approved" as const, reason: null, actorProfileId: admin.profileId, ip: null };
       expect((await decideClaim(tx, admin.viewer, first)).outcome).toBe("decided");
       expect((await decideClaim(tx, admin.viewer, first)).outcome).toBe("already-decided");
+    });
+  });
+
+  it("reports an approval as decided, not already-decided, when a double-submit already gave this claimant the listing", async () => {
+    await withTestDb(async (tx) => {
+      const { claimId, listingId, profileId, admin } = await pending(tx);
+      // The state a second, near-simultaneous approval click would find: the
+      // first request's guarded listings UPDATE already landed, and the
+      // listing belongs to the very claimant this claim is for.
+      await tx.update(listings).set({ claimStatus: "claimed", ownerId: profileId })
+        .where(eq(listings.id, listingId));
+
+      const out = await decideClaim(tx, admin.viewer, {
+        claimId, decision: "approved", reason: null, actorProfileId: admin.profileId, ip: null,
+      });
+      expect(out.outcome).toBe("decided");
+
+      // The winning request is the one that decides the claim, audits and
+      // emails; a duplicate must not do any of that a second time.
+      const [claim] = await tx.select().from(claims).where(eq(claims.id, claimId));
+      expect(claim?.status).toBe("pending");
+      const approvals = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(approvals).toHaveLength(0);
     });
   });
 

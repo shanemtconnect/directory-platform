@@ -336,7 +336,23 @@ export async function verifyClaimToken(
       isNull(listings.ownerId),
     ))
     .returning({ id: listings.id });
-  if (taken.length === 0) return { outcome: "already-claimed" };
+  if (taken.length === 0) {
+    // Zero rows does not always mean somebody else won. A double-submitted
+    // confirmation — two tabs, a slow network retry, a second tap on the
+    // button — sends the same claimant's browser twice; the first request's
+    // UPDATE already landed by the time the second's runs, so the second sees
+    // the same "not unclaimed" state a genuine loser would. Telling THIS
+    // claimant they lost, when the row now belongs to them, is simply false.
+    // The winning transaction has already written the audit row and sent the
+    // email, so this one reports the same success without writing either.
+    const [current] = await tx
+      .select({ ownerId: listings.ownerId })
+      .from(listings)
+      .where(eq(listings.id, row.listingId))
+      .limit(1);
+    if (current?.ownerId === row.userId) return approved;
+    return { outcome: "already-claimed" };
+  }
 
   await tx
     .update(claims)
@@ -692,7 +708,23 @@ export async function decideClaim(
         isNull(listings.ownerId),
       ))
       .returning({ id: listings.id });
-    if (taken.length === 0) return { outcome: "already-decided" };
+    if (taken.length === 0) {
+      // As in `verifyClaimToken`: zero rows can mean a double-submitted
+      // decision rather than a genuine loser — an admin's second click, or a
+      // retry, landing after their own first request already won. If the
+      // listing now belongs to THIS claim's claimant, the winning request has
+      // already recorded the decision and sent the notification; say so
+      // without writing either a second time.
+      const [current] = await tx
+        .select({ ownerId: listings.ownerId })
+        .from(listings)
+        .where(eq(listings.id, row.listingId))
+        .limit(1);
+      if (current?.ownerId === row.userId) {
+        return { outcome: "decided", listingId: row.listingId, listingPath: `/${row.citySlug}/${row.listingSlug}` };
+      }
+      return { outcome: "already-decided" };
+    }
     await promoteToOwner(tx, row.userId);
   }
 
