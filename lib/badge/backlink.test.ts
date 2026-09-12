@@ -38,6 +38,18 @@ describe("isPrivateAddress", () => {
     "fe80::1",
     "::ffff:127.0.0.1",
     "::ffff:169.254.169.254",
+    // The same two addresses as WHATWG URL re-serialises them. A dotted-quad
+    // regex sees nothing here, which is exactly how the guard was bypassed.
+    "::ffff:7f00:1",
+    "::ffff:a9fe:a9fe",
+    "::ffff:a00:1",
+    "::7f00:1",
+    "2002:7f00:1::",
+    "2002:a9fe:a9fe::",
+    "64:ff9b::7f00:1",
+    "64:ff9b::a9fe:a9fe",
+    "ff02::1",
+    "fe80::1%eth0",
   ])("refuses %s", (ip) => {
     expect(isPrivateAddress(ip)).toBe(true);
   });
@@ -50,6 +62,10 @@ describe("isPrivateAddress", () => {
     "172.32.0.1",
     "100.63.255.255",
     "2606:4700:4700::1111",
+    // 6to4 and NAT64 wrapping a PUBLIC v4 address are ordinary public routes.
+    "2002:808:808::",
+    "64:ff9b::808:808",
+    "::ffff:8.8.8.8",
   ])("allows %s", (ip) => {
     expect(isPrivateAddress(ip)).toBe(false);
   });
@@ -106,6 +122,76 @@ describe("assertPublicUrl", () => {
     await expect(assertPublicUrl("https://nx.example.com/", boom)).rejects.toBeInstanceOf(
       SsrfRefusal,
     );
+  });
+});
+
+describe("assertPublicUrl — IPv6 literals", () => {
+  // A literal address must never reach DNS, so a resolver that throws is the
+  // assertion: if any of these consults it, the test fails for that reason.
+  const never: Resolver = async () => {
+    throw new Error("DNS must not be consulted for a literal address");
+  };
+
+  it.each([
+    "http://[::ffff:127.0.0.1]/",
+    "http://[::ffff:7f00:1]/",
+    "http://[::ffff:169.254.169.254]/",
+    "http://[::ffff:a9fe:a9fe]/",
+    "http://[::ffff:10.0.0.1]/",
+    "http://[::127.0.0.1]/",
+    "http://[2002:7f00:1::]/",
+    "http://[2002:a9fe:a9fe::]/",
+    "http://[64:ff9b::7f00:1]/",
+    "http://[64:ff9b::a9fe:a9fe]/",
+    "http://[::1]/",
+    "http://[::]/",
+    "http://[fc00::1]/",
+    "http://[fd00:1234::5678]/",
+    "http://[fe80::1]/",
+    "http://[ff02::1]/",
+  ])("refuses %s", async (url) => {
+    await expect(assertPublicUrl(url, never)).rejects.toBeInstanceOf(SsrfRefusal);
+  });
+
+  it.each([
+    "http://[2606:4700:4700::1111]/",
+    "https://[2a00:1450:4009:81f::200e]/",
+    "http://[2002:808:808::]/",
+    "http://[64:ff9b::808:808]/",
+  ])("accepts %s", async (url) => {
+    await expect(assertPublicUrl(url, never)).resolves.toBeInstanceOf(URL);
+  });
+
+  it("refuses an IPv4-mapped address that comes back from DNS", async () => {
+    const mapped: Resolver = async () => ["::ffff:7f00:1"];
+    await expect(assertPublicUrl("https://rebind.example/", mapped)).rejects.toBeInstanceOf(
+      SsrfRefusal,
+    );
+  });
+
+  it("accepts a public v6 address that comes back from DNS", async () => {
+    const v6: Resolver = async () => ["2606:4700:4700::1111"];
+    await expect(assertPublicUrl("https://cf.example/", v6)).resolves.toBeInstanceOf(URL);
+  });
+});
+
+describe("assertPublicUrl — ports", () => {
+  it.each([
+    "http://example.com:22/",
+    "https://example.com:5432/",
+    "http://example.com:8080/",
+    "http://example.com:6379/",
+  ])("refuses %s", async (url) => {
+    await expect(assertPublicUrl(url, PUBLIC)).rejects.toBeInstanceOf(SsrfRefusal);
+  });
+
+  it.each([
+    "http://example.com/",
+    "https://example.com/",
+    "http://example.com:80/",
+    "https://example.com:443/",
+  ])("accepts %s", async (url) => {
+    await expect(assertPublicUrl(url, PUBLIC)).resolves.toBeInstanceOf(URL);
   });
 });
 

@@ -17,9 +17,15 @@ import { slugify } from "@/lib/routing/slugify";
  *
  * So the rules are:
  *   - http(s) only — file:, gopher: and friends are not links;
+ *   - port 80 or 443 only, because a fetcher that will connect anywhere is a
+ *     port scanner even when it never gets a page back;
  *   - the host is RESOLVED and every address it answers with must be public,
  *     because a public hostname pointing at 127.0.0.1 costs an attacker one
  *     DNS record;
+ *   - every IPv6 literal is expanded to sixteen BYTES before it is judged.
+ *     Text matching loses here: `[::ffff:127.0.0.1]` comes back out of
+ *     `URL` as `[::ffff:7f00:1]`, so a dotted-quad pattern is checking a
+ *     spelling that no longer exists;
  *   - the same check runs again on every redirect hop, since a 302 to a
  *     private address is the standard way round a check that only looks at
  *     the URL it was given;
@@ -73,28 +79,112 @@ function ipv4IsPrivate(ip: string): boolean {
 }
 
 /**
+ * Expands an IPv6 literal to its sixteen bytes, or null if it is not one.
+ *
+ * Matching IPv6 with a regex on its TEXT is the trap this exists to avoid.
+ * `::ffff:127.0.0.1` and `::ffff:7f00:1` are the same address, and WHATWG
+ * `URL` re-serialises the first into the second — so a dotted-quad pattern
+ * checks a spelling the URL no longer has, and loopback walks straight
+ * through. Sixteen bytes have exactly one spelling.
+ *
+ * `node:net`'s `isIP` does the grammar; this only does the arithmetic.
+ */
+export function expandIpv6(raw: string): Uint8Array | null {
+  // Brackets are URL syntax and a zone id (%eth0) is local to the sender —
+  // neither is part of the address.
+  let text = raw.trim().replace(/^\[/, "").replace(/\]$/, "");
+  const zone = text.indexOf("%");
+  if (zone !== -1) text = text.slice(0, zone);
+  if (isIP(text) !== 6) return null;
+
+  // A trailing dotted quad is two hex groups written the other way round.
+  const lastColon = text.lastIndexOf(":");
+  const tail = text.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    const quad = tail.split(".").map(Number);
+    if (quad.length !== 4 || quad.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    const hi = ((quad[0]! << 8) | quad[1]!).toString(16);
+    const lo = ((quad[2]! << 8) | quad[3]!).toString(16);
+    text = `${text.slice(0, lastColon + 1)}${hi}:${lo}`;
+  }
+
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] === "" ? [] : halves[0]!.split(":");
+  const tailGroups = halves.length === 1 ? [] : halves[1] === "" ? [] : halves[1]!.split(":");
+  const groups =
+    halves.length === 1
+      ? head
+      : [...head, ...Array<string>(8 - head.length - tailGroups.length).fill("0"), ...tailGroups];
+  if (groups.length !== 8) return null;
+
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const value = Number.parseInt(groups[i]!, 16);
+    if (!Number.isInteger(value) || value < 0 || value > 0xffff) return null;
+    bytes[i * 2] = value >> 8;
+    bytes[i * 2 + 1] = value & 0xff;
+  }
+  return bytes;
+}
+
+function dotted(bytes: Uint8Array, offset: number): string {
+  return `${bytes[offset]}.${bytes[offset + 1]}.${bytes[offset + 2]}.${bytes[offset + 3]}`;
+}
+
+function allZero(bytes: Uint8Array, from: number, to: number): boolean {
+  for (let i = from; i < to; i++) if (bytes[i] !== 0) return false;
+  return true;
+}
+
+/**
+ * True for anything that is not a routable public IPv6 address.
+ *
+ * Four of these ranges carry an IPv4 address inside them, and each is a way
+ * to say "127.0.0.1" or "169.254.169.254" in v6 clothing, so each hands its
+ * embedded quad to the v4 table rather than being waved through:
+ *
+ *   ::ffff:0:0/96   IPv4-mapped, the everyday form
+ *   ::/96           IPv4-compatible, deprecated but still parsed by stacks
+ *   2002::/16       6to4 — the v4 address is in bytes 2..5, not at the end
+ *   64:ff9b::/96    NAT64 — a well-known prefix a translator will forward
+ */
+function ipv6IsPrivate(bytes: Uint8Array): boolean {
+  // :: (unspecified) and ::1 (loopback) before the IPv4-compatible rule,
+  // which would otherwise read them as 0.0.0.0 and 0.0.0.1.
+  if (allZero(bytes, 0, 16)) return true;
+  if (allZero(bytes, 0, 15) && bytes[15] === 1) return true;
+
+  if (allZero(bytes, 0, 10) && bytes[10] === 0xff && bytes[11] === 0xff) {
+    return ipv4IsPrivate(dotted(bytes, 12)); // ::ffff:0:0/96
+  }
+  if (allZero(bytes, 0, 12)) return ipv4IsPrivate(dotted(bytes, 12)); // ::/96
+  if (bytes[0] === 0x20 && bytes[1] === 0x02) return ipv4IsPrivate(dotted(bytes, 2)); // 2002::/16
+  if (
+    bytes[0] === 0x00 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b &&
+    allZero(bytes, 4, 12)
+  ) {
+    return ipv4IsPrivate(dotted(bytes, 12)); // 64:ff9b::/96
+  }
+
+  if ((bytes[0]! & 0xfe) === 0xfc) return true; // fc00::/7 unique local
+  if (bytes[0] === 0xfe && (bytes[1]! & 0xc0) === 0x80) return true; // fe80::/10 link local
+  if (bytes[0] === 0xff) return true; // ff00::/8 multicast
+  return false;
+}
+
+/**
  * True for anything that is not a routable public address.
  *
  * Unknown or unparseable input returns true: the only safe default when the
  * question is "may the worker connect to this?" is no.
  */
 export function isPrivateAddress(ip: string): boolean {
-  const version = isIP(ip);
-  if (version === 4) return ipv4IsPrivate(ip);
-  if (version !== 6) return true;
-
-  const lower = ip.toLowerCase().replace(/^\[|\]$/g, "").split("%")[0]!;
-
-  // An IPv4-mapped or -compatible address is an IPv4 address wearing a hat.
-  // Missing this is how ::ffff:127.0.0.1 gets through a v6-only check.
-  const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(lower);
-  if (mapped) return ipv4IsPrivate(mapped[1]!);
-
-  if (lower === "::" || lower === "::1") return true;
-  if (/^f[cd]/.test(lower)) return true; // fc00::/7 unique local
-  if (/^fe[89ab]/.test(lower)) return true; // fe80::/10 link local
-  if (/^ff/.test(lower)) return true; // multicast
-  return false;
+  const bare = ip.trim().replace(/^\[/, "").replace(/\]$/, "").split("%")[0]!;
+  if (isIP(bare) === 4) return ipv4IsPrivate(bare);
+  const bytes = expandIpv6(bare);
+  if (bytes === null) return true;
+  return ipv6IsPrivate(bytes);
 }
 
 const defaultResolver: Resolver = async (hostname) => {
@@ -127,6 +217,15 @@ export async function assertPublicUrl(
 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new SsrfRefusal(`refused scheme ${url.protocol}`);
+  }
+
+  // Web pages live on 80 and 443. Any other port is a service, and a fetcher
+  // that will connect to an arbitrary one is a port scanner with a 10-second
+  // timeout: the response code and the timing tell the caller what is
+  // listening even when the body is never a page. `port` is empty when the
+  // scheme default applies, which URL has already normalised for us.
+  if (url.port !== "" && url.port !== "80" && url.port !== "443") {
+    throw new SsrfRefusal(`refused port ${url.port}`);
   }
 
   // A literal address needs no DNS, and asking for one would be a free
