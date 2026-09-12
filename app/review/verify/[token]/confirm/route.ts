@@ -9,20 +9,23 @@ import { siteOrigin } from "@/lib/site-env";
 import type { TestDb } from "@/test/db";
 
 /**
- * The link in the verification email. Clicking it is what publishes a review.
+ * POST /review/verify/<token>/confirm — the button on the landing page.
  *
- * A GET that writes, which is normally the wrong shape — but the thing being
- * clicked is a link in an email, and every alternative (a form, a POST, a
- * confirm button) costs conversions on the one action the whole module depends
- * on. It is safe to replay: the token is single-use, a second click reports the
- * same outcome, and nothing is created.
+ * POST only, deliberately. This is the request that puts a rating on a
+ * business's public page, and the one thing standing between a mail-security
+ * scanner (or a gateway link rewriter, or a chat link previewer, or the
+ * browser's prefetcher) and a published review is that all of them issue GETs.
+ * There is no GET export here: anything that follows this URL without
+ * submitting the form gets a 405.
  *
- * A route handler rather than a page because its whole job is to decide where
- * the reader goes next. Whatever happens, they land on a real page — the
- * reviews page with their review on it, or the honest "a person is reading it"
- * page — rather than on a URL with a token in it.
+ * Still safe to replay — the token is single-use and a second submit reports
+ * the same outcome — but replay-safety was never the gap. Being reached
+ * without a person was.
  */
-export async function GET(
+
+export const dynamic = "force-dynamic";
+
+export async function POST(
   _request: Request,
   { params }: { params: Promise<{ token: string }> },
 ): Promise<Response> {
@@ -42,17 +45,11 @@ export async function GET(
     return verified;
   });
 
-  if (result.outcome === "expired") {
-    // Nothing was published and the token was not burned. Finding 2's
-    // confirmation page replaces this handler and offers a fresh link; until
-    // then, say so rather than pretending the link worked.
-    return new NextResponse(null, { status: 410 });
-  }
-
-  if (result.outcome === "unknown-token") {
-    // A token nobody issued, or one that never matched a review. Not a
-    // redirect: there is nowhere meaningful to send them.
-    return new NextResponse(null, { status: 404 });
+  // Both dead ends go back to the page the button was on, which knows how to
+  // say what happened — and, for an expired link, how to offer a new one. A
+  // 303 so the browser follows with a GET and the back button cannot resubmit.
+  if (result.outcome === "unknown-token" || result.outcome === "expired") {
+    return NextResponse.redirect(`${origin}/review/verify/${encodeURIComponent(token)}`, 303);
   }
 
   if (result.status === "published") {

@@ -31,6 +31,21 @@ describe("reviewVerification", () => {
     expect(reviewVerification(data).replyTo).toBeUndefined();
   });
 
+  it("does not promise that opening the link publishes anything", () => {
+    // Mail scanners, gateway link rewriters, chat previewers and the browser's
+    // own prefetcher all GET every URL they see, so opening the link is no
+    // longer the last step — there is a Confirm button behind it. Copy that
+    // says "one click and it goes live" would be describing the old route.
+    const mail = reviewVerification(data);
+    expect(mail.text.toLowerCase()).toContain("confirm");
+    expect(mail.text.toLowerCase()).not.toContain("click here to publish");
+    expect(mail.text.toLowerCase()).not.toContain("one click and your review goes live");
+  });
+
+  it("says how long the link lasts", () => {
+    expect(reviewVerification(data).text).toContain("7 days");
+  });
+
   it("escapes the review body — mail clients render HTML", () => {
     const mail = reviewVerification({ ...data, body: '<img src=x onerror="alert(1)">' });
     expect(mail.html).not.toContain("<img");

@@ -1,5 +1,6 @@
 import { siteConfig } from "@/config/site.config";
 import { layout, type Block, type EmailContent } from "./layout";
+import { REVIEW_TOKEN_TTL_DAYS } from "@/lib/db/queries/reviews";
 
 /**
  * The three review notifications.
@@ -25,6 +26,13 @@ export interface ReviewEmailData {
   /** Why the review was held, or null if it published itself. */
   flaggedReason: string | null;
 }
+
+/**
+ * Stated in the copy because a link that stops working without warning reads
+ * as a broken site rather than as a deadline. One source: the query layer that
+ * enforces it.
+ */
+const REVIEW_LINK_DAYS = REVIEW_TOKEN_TTL_DAYS;
 
 function stars(rating: number): string {
   return `${rating} out of 5`;
@@ -54,12 +62,21 @@ export function reviewVerification(data: ReviewEmailData): EmailContent {
     subject,
     ...layout({
       subject,
-      heading: "One click and your review goes live",
+      heading: "Confirm your review",
       blocks: [
         { value: `Thanks for writing about ${data.listingName}. We ask everyone to confirm their email address so that every review on ${siteConfig.name} comes from a real person.` },
-        { label: "Confirm your review", value: "Click here to publish it", href: data.verifyUrl },
+        { label: "Confirm your review", value: "Open this link and press Confirm", href: data.verifyUrl },
+        {
+          value:
+            `The link works once and lasts ${REVIEW_LINK_DAYS} days. Opening it only shows ` +
+            "you what you wrote — nothing is published until you press Confirm.",
+        },
         ...reviewBlocks(data),
-        { value: "If you did not write this, ignore this email and nothing will be published." },
+        {
+          value:
+            "If you did not write this, ignore this email. Nothing goes on the site unless " +
+            "somebody opens the link and confirms.",
+        },
       ],
     }),
   };

@@ -32,18 +32,26 @@ function marker(): string {
   return randomBytes(8).toString("hex").replace(/\d/g, "x");
 }
 
-async function tokenFor(email: string): Promise<string> {
+async function rows<T>(
+  query: (sql: ReturnType<typeof postgres>) => Promise<unknown>,
+): Promise<T[]> {
   const sql = postgres(DATABASE_URL, { max: 1 });
   try {
-    const rows = await sql<{ token: string }[]>`
-      select token from review_invites where sent_to = ${email} order by created_at desc limit 1
-    `;
-    const token = rows[0]?.token;
-    if (!token) throw new Error(`No review_invites row for ${email}`);
-    return token;
+    return (await query(sql)) as T[];
   } finally {
     await sql.end({ timeout: 5 });
   }
+}
+
+async function tokenFor(email: string): Promise<string> {
+  const found = await rows<{ token: string }>(
+    (sql) => sql`
+      select token from review_invites where sent_to = ${email} order by created_at desc limit 1
+    `,
+  );
+  const token = found[0]?.token;
+  if (!token) throw new Error(`No review_invites row for ${email}`);
+  return token;
 }
 
 async function openFirstListing(page: import("@playwright/test").Page): Promise<void> {
@@ -100,9 +108,23 @@ test.describe("reviews", () => {
     await expect(page.getByText(body)).toHaveCount(0);
 
     const token = await tokenFor(email);
-    await page.goto(`/review/verify/${token}`);
 
-    // The link lands on the reviews page with the review on it.
+    // Opening the link shows what is being confirmed and nothing more — a mail
+    // scanner following it must not be able to publish the review.
+    await page.goto(`/review/verify/${token}`);
+    const confirm = page.locator('[data-testid="review-confirm"]');
+    await expect(confirm).toBeVisible();
+    await expect(page.locator("h1")).toContainText("Confirm your review");
+
+    const [stillPending] = await rows<{ status: string; email_verified_at: string | null }>(
+      (sql) => sql`select status, email_verified_at from reviews where author_email = ${email}`,
+    );
+    expect(stillPending?.status, "a GET on the link must not publish anything").toBe("pending");
+    expect(stillPending?.email_verified_at).toBeNull();
+
+    await confirm.locator('button[type="submit"]').click();
+
+    // The button lands on the reviews page with the review on it.
     await expect(page).toHaveURL(new RegExp(`${listingUrl}/reviews$`));
     await expect(async () => {
       await page.reload();
@@ -137,9 +159,18 @@ test.describe("reviews", () => {
     await expect(page.locator('[data-testid="review-sent"]')).toHaveCount(0);
   });
 
-  test("an unissued token is a 404, not a published review", async ({ page }) => {
-    const response = await page.goto(`/review/verify/${randomBytes(24).toString("base64url")}`);
-    expect(response?.status()).toBe(404);
+  test("an unissued token confirms nothing", async ({ page }) => {
+    await page.goto(`/review/verify/${randomBytes(24).toString("base64url")}`);
+    await expect(page.locator('[data-testid="review-verify-unknown"]')).toBeVisible();
+    await expect(page.locator('[data-testid="review-confirm"]')).toHaveCount(0);
+  });
+
+  test("a GET on the confirm URL publishes nothing", async ({ page }) => {
+    // The method is the guard. Anything that follows the URL without
+    // submitting the form — a scanner, a prefetcher — gets a 405.
+    const token = randomBytes(24).toString("base64url");
+    const response = await page.goto(`/review/verify/${token}/confirm`);
+    expect(response?.status()).toBe(405);
   });
 });
 
@@ -158,5 +189,7 @@ test.describe("reviews, flag off", () => {
     expect((await page.goto("/leave-review/00000000-0000-4000-8000-000000000000"))?.status())
       .toBe(404);
     expect((await page.goto("/review/verify/anything"))?.status()).toBe(404);
+    // POST, because the confirm route has no GET to answer with a 405 first.
+    expect((await page.request.post("/review/verify/anything/confirm")).status()).toBe(404);
   });
 });
