@@ -15,12 +15,14 @@ export async function makeVertical(tx: TestDb, name = "Venues"): Promise<string>
   return id;
 }
 
+/** `region: null` is the shape an auto-created city has — see createAutoCity. */
 export async function makeCity(
-  tx: TestDb, name = "Leeds", region = "West Yorkshire",
+  tx: TestDb, name = "Leeds", region: string | null = "West Yorkshire",
 ): Promise<string> {
   const id = randomUUID();
   const slug = await allocateSlug(tx, {
-    parentScope: ROOT_SCOPE, desired: name, kind: "city", entityId: id, disambiguator: region,
+    parentScope: ROOT_SCOPE, desired: name, kind: "city", entityId: id,
+    ...(region === null ? {} : { disambiguator: region }),
   });
   await tx.insert(cities).values({ id, name, slug, region, country: "GB" });
   return id;

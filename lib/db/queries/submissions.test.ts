@@ -123,7 +123,11 @@ describe("createSubmission", () => {
 
       const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
       expect(city?.name).toBe("Otley");
-      expect(city?.region).toBe("West Yorkshire");
+      // NOT the submitted region. The form's region <select> is built from the
+      // regions we already hold, so a submitter naming a town in a region we do
+      // not cover can only pick a wrong one — and a wrong region persisted here
+      // would be fed straight back into that select for everyone after them.
+      expect(city?.region).toBeNull();
       expect(city?.country).toBe(siteConfig.country);
       expect(city?.createdBy).toBe("auto");
       // Renders, but earns nothing: no intro copy, no coordinates, no index.
@@ -192,9 +196,90 @@ describe("createSubmission", () => {
       expect(row?.entityType).toBe("city");
       expect(row?.entityId).toBe(city?.id);
       expect(row?.ip).toBe("203.0.113.5");
-      const meta = row?.meta as { name?: string; geocode?: string } | null;
+      const meta = row?.meta as {
+        name?: string;
+        region?: string | null;
+        submittedRegion?: string | null;
+        geocode?: string;
+      } | null;
       expect(meta?.name).toBe("Otley");
       expect(meta?.geocode).toBe(GEOCODER_UNCONFIGURED);
+      // The city's own region is null; what the submitter picked is kept here so
+      // an admin can set the real one without going back to the submitter.
+      expect(meta?.region).toBeNull();
+      expect(meta?.submittedRegion).toBe("West Yorkshire");
+    });
+  });
+
+  it("files a later submission for the same new town in the city the first one made", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const first = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+      );
+      if (first.outcome !== "created") throw new Error("expected a created listing");
+
+      // A different region, because the auto city holds none and the select the
+      // submitter picked from cannot offer the right one. Without the null-region
+      // match in resolveSubmittedCity, every submission after the first for the
+      // same new town would be "ambiguous" and park for ever.
+      const second = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({
+          categoryId: ctx.primaryCategoryId,
+          city: "Otley",
+          region: "Suffolk",
+          name: "The New Mill",
+          phone: "01632 960111",
+          postcode: "LS21 1AA",
+        }),
+      );
+      if (second.outcome !== "created") throw new Error("expected a created listing");
+
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
+      expect(await readListing(tx, second.listingId).then((r) => r?.cityId)).toBe(city?.id);
+      expect(await tx.select({ id: cities.id }).from(cities).where(eq(cities.name, "Otley")))
+        .toHaveLength(1);
+    });
+  });
+
+  it("numbers the slug when a second auto-created town slugifies to a taken one", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      // Two distinct names — the registry matches on the slug, not the name —
+      // so the second really is a second auto city wanting the same slug. With
+      // the region gone there is no disambiguator left, so it takes "-2", which
+      // is the accepted cost of never persisting a region we cannot trust.
+      await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Great Ayton", region: "West Yorkshire" }),
+      );
+      const second = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({
+          categoryId: ctx.primaryCategoryId,
+          city: "Great-Ayton",
+          region: "West Yorkshire",
+          name: "The New Mill",
+          phone: "01632 960222",
+          postcode: "TS9 6AA",
+        }),
+      );
+      expect(second.outcome).toBe("created");
+
+      const [a] = await tx.select().from(cities).where(eq(cities.name, "Great Ayton")).limit(1);
+      const [b] = await tx.select().from(cities).where(eq(cities.name, "Great-Ayton")).limit(1);
+      expect(a?.slug).toBe("great-ayton");
+      expect(b?.slug).toBe("great-ayton-2");
+      expect(await resolveSlug(tx, ROOT_SCOPE, "great-ayton-2")).toMatchObject({
+        kind: "city",
+        entityId: b?.id,
+      });
     });
   });
 
@@ -333,6 +418,30 @@ describe("resolveSubmittedCity", () => {
       // A second Leeds may well be real, but "Leeds, Kent" from a form is far
       // more often a mistyped county than a new town — an admin decides.
       expect(await resolveSubmittedCity(tx, "Leeds", "Kent")).toEqual({ kind: "ambiguous" });
+    });
+  });
+
+  it("resolves to an auto-created city that holds no region, whatever region is typed", async () => {
+    await withTestDb(async (tx) => {
+      await makeScaffold(tx);
+      const auto = await makeCity(tx, "Otley", null);
+
+      // The submitter can only pick from the regions we hold, so the region they
+      // send for a town we auto-created is meaningless. Treating it as a
+      // mismatch would park every submission after the first one for ever.
+      expect(await resolveSubmittedCity(tx, "Otley", "Suffolk"))
+        .toEqual({ kind: "found", cityId: auto });
+      expect(await resolveSubmittedCity(tx, "Otley", null))
+        .toEqual({ kind: "found", cityId: auto });
+    });
+  });
+
+  it("still prefers an exact region match over the region-less namesake", async () => {
+    await withTestDb(async (tx) => {
+      const suffolk = await makeCity(tx, "Otley", "Suffolk");
+      await makeCity(tx, "Otley", null);
+      expect(await resolveSubmittedCity(tx, "Otley", "Suffolk"))
+        .toEqual({ kind: "found", cityId: suffolk });
     });
   });
 

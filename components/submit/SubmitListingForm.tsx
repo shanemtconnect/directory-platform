@@ -120,7 +120,8 @@ export function SubmitListingForm({
             ))}
           </select>
           <small id="sl-region-help">
-            Used to tell towns of the same name apart. It never appears in your web address.
+            Used to tell towns of the same name apart. It never appears in your web address,
+            and if your town is new to us we check it ourselves rather than taking this one.
           </small>
           {err.region && <span role="alert">{err.region}</span>}
         </p>

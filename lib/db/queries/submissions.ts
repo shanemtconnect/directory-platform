@@ -120,6 +120,12 @@ export async function submissionOptions(
  * The second of those looks like a new town and is far more often a mistyped
  * county, so it goes to a human rather than minting a near-twin city that then
  * splits a town's listings across two pages.
+ *
+ * The exception is a namesake that holds NO region — which is what an
+ * auto-created city is (see `createAutoCity`). The region a submitter sends for
+ * such a town is picked from a `<select>` of the regions we already hold, so it
+ * cannot be right and must not be read as a mismatch: doing so would park every
+ * submission after the first one for the same new town, for ever.
  */
 export type CityResolution =
   | { kind: "found"; cityId: string }
@@ -142,11 +148,19 @@ export async function resolveSubmittedCity(
 
   if (rows.length === 0) return { kind: "new" };
 
-  if (region !== null && region.trim() !== "") {
-    const wantedRegion = region.trim().toLowerCase();
+  const wantedRegion = region?.trim().toLowerCase() ?? "";
+  if (wantedRegion !== "") {
     const exact = rows.find((r) => r.region?.toLowerCase() === wantedRegion);
-    return exact ? { kind: "found", cityId: exact.id } : { kind: "ambiguous" };
+    if (exact) return { kind: "found", cityId: exact.id };
   }
+
+  // An earlier auto-created city, which holds no region by design. One is an
+  // answer; two would be a genuine question, and go to an admin like any other.
+  const regionless = rows.filter((r) => r.region === null);
+  if (regionless.length === 1) return { kind: "found", cityId: regionless[0]!.id };
+  if (regionless.length > 1) return { kind: "ambiguous" };
+
+  if (wantedRegion !== "") return { kind: "ambiguous" };
   const only = rows.length === 1 ? rows[0] : undefined;
   return only ? { kind: "found", cityId: only.id } : { kind: "ambiguous" };
 }
@@ -163,9 +177,16 @@ export async function resolveSubmittedCity(
  * it is simply not met yet, and `recomputeCityIndexability` is what will
  * notice when it is.
  *
- * `lat`/`lng` are null rather than guessed. `geocodeCity` is a no-op today and
- * says so; the reason is written to the audit row so "why has this city no
- * coordinates?" has an answer that does not require reading this comment.
+ * `lat`/`lng` are null rather than guessed, and so is `region`. The form's
+ * region `<select>` is built from the regions we already hold, so a submitter
+ * naming a town in a region we do not cover can only pick a wrong one —
+ * persisting it would feed that wrong value straight back into the select for
+ * everybody after them, and into the city's own page. What they picked is kept
+ * on the audit row as `submittedRegion` so an admin can set the real one.
+ *
+ * The cost is that the slug has no disambiguator left: a second auto city whose
+ * name slugifies the same takes `name-2`. That is the accepted trade — a
+ * numbered slug is visible and fixable, a wrong region is neither.
  *
  * Returns null for a name `allocateSlug` refuses — a reserved root slug
  * ("Search"), or a name with nothing slug-able in it. Those submissions park.
@@ -177,7 +198,7 @@ async function createAutoCity(
 ): Promise<string | null> {
   const id = randomUUID();
   const name = input.name.trim();
-  const region = input.region?.trim() || null;
+  const submittedRegion = input.region?.trim() || null;
 
   let slug: string;
   try {
@@ -186,22 +207,28 @@ async function createAutoCity(
       desired: name,
       kind: "city",
       entityId: id,
-      // Two towns of the same name are ambiguous and never reach here, so this
-      // only disambiguates against a non-city slug that took the name first.
-      ...(region === null ? {} : { disambiguator: region }),
+      // No disambiguator: the submitted region is not this city's region (see
+      // above), so using it here would bake a value we do not trust into the
+      // URL. A collision takes `name-2`.
     });
   } catch (error) {
     if (error instanceof SlugError) return null;
     throw error;
   }
 
-  const located = await geocodeCity({ name, region, country: siteConfig.country });
+  // Asked with the region the submitter gave, because a geocoder wants every
+  // hint it can get — but its answer is the only thing we keep from it.
+  const located = await geocodeCity({
+    name,
+    region: submittedRegion,
+    country: siteConfig.country,
+  });
 
   await tx.insert(cities).values({
     id,
     name,
     slug,
-    region,
+    region: null,
     country: siteConfig.country,
     lat: located.point?.lat ?? null,
     lng: located.point?.lng ?? null,
@@ -215,7 +242,9 @@ async function createAutoCity(
     action: AUTO_CITY_ACTION,
     entityType: "city",
     entityId: id,
-    meta: { name, region, slug, geocode: located.reason },
+    // `region: null` is the city's; `submittedRegion` is what the form sent and
+    // is the only record of it — an admin setting the real region works from it.
+    meta: { name, region: null, submittedRegion, slug, geocode: located.reason },
     ip: input.ip,
   });
 
