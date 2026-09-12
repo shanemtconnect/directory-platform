@@ -671,6 +671,62 @@ export async function markReminderSent(
   });
 }
 
+export interface ReminderContext {
+  readonly subscriptionId: string;
+  readonly listingName: string;
+  readonly listingPath: string;
+  readonly email: string | null;
+  readonly tier: TierName;
+  readonly interval: Interval;
+  readonly currentPeriodEnd: Date | null;
+  readonly cancelAtPeriodEnd: boolean;
+  readonly status: string;
+}
+
+/**
+ * Re-read when the queued reminder actually runs, rather than copied into the
+ * job payload. A subscription cancelled between the tick that queued the email
+ * and the tick that sends it must not still be reminded to renew.
+ */
+export async function reminderContext(
+  tx: TestDb,
+  viewer: Viewer,
+  subscriptionId: string,
+): Promise<ReminderContext | null> {
+  assertWorker(viewer);
+  if (!UUID.test(subscriptionId)) return null;
+  const [row] = await tx
+    .select({
+      subscriptionId: subscriptions.id,
+      listingName: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+      email: listings.email,
+      tier: subscriptions.tier,
+      interval: subscriptions.interval,
+      currentPeriodEnd: subscriptions.currentPeriodEnd,
+      cancelAtPeriodEnd: subscriptions.cancelAtPeriodEnd,
+      status: subscriptions.status,
+    })
+    .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(eq(subscriptions.id, subscriptionId))
+    .limit(1);
+  if (!row) return null;
+  return {
+    subscriptionId: row.subscriptionId,
+    listingName: row.listingName,
+    listingPath: `/${row.citySlug}/${row.listingSlug}`,
+    email: row.email,
+    tier: row.tier,
+    interval: row.interval,
+    currentPeriodEnd: row.currentPeriodEnd,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+    status: row.status,
+  };
+}
+
 export interface StaleSubscription {
   readonly id: string;
   readonly listingId: string;
