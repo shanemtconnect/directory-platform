@@ -4,7 +4,7 @@ import { withTestDb, type TestDb } from "@/test/db";
 import { enquiries, jobQueue } from "@/lib/db/schema";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
-import { makeScaffold, makeListing } from "@/test/factories";
+import { makeCity, makeScaffold, makeListing } from "@/test/factories";
 import { createEnquiry } from "@/lib/db/queries/enquiries";
 import { createSubmission } from "@/lib/db/queries/submissions";
 import type { SendResult } from "@/lib/email/sender";
@@ -297,13 +297,18 @@ describe("processNotifications — submissions", () => {
     });
   });
 
-  it("still tells the admin about a submission parked for an unknown town", async () => {
+  it("still tells the admin about a submission parked for a town it cannot place", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
+      // Two of them and no county given: unresolvable, so the payload parks
+      // instead of becoming a listing. An unheard-of town is created now.
+      await makeCity(tx, "Newport", "Isle of Wight");
+      await makeCity(tx, "Newport", "Pembrokeshire");
       const saved = await createSubmission(tx, PUBLIC_VIEWER, {
         ...submission,
         categoryId: ctx.primaryCategoryId,
-        city: "Nowhere-On-Sea",
+        city: "Newport",
+        region: null,
       });
       expect(saved.outcome).toBe("parked");
       await notifySubmission(tx, PUBLIC_VIEWER, saved);

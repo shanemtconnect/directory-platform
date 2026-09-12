@@ -1,5 +1,10 @@
 import { siteConfig } from "@/config/site.config";
+import { db } from "@/lib/db/client";
 import { navRoutes, type NavEntry } from "@/lib/features/navigation";
+import { listSwitcherCities, type SwitcherCity } from "@/lib/db/queries/cities";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { LocationSwitcher } from "@/components/location/LocationSwitcher";
+import { cityScopedHref } from "@/components/location/switcher-links";
 import { Container } from "./Container";
 
 /**
@@ -24,6 +29,34 @@ const PROMOTED = new Set(["/search", "/add-listing"]);
  * routes redirect there on their own when there is no session.
  */
 const SIGN_IN = { href: "/login", label: "Sign in" } as const;
+
+/**
+ * How many locations the header offers.
+ *
+ * The header is in every cached page in the site, so this list is paid for on
+ * every URL twice over — once in the desktop bar and once in the mobile panel.
+ * The busiest dozen is a shortcut; the full list is /cities, which is already
+ * in the nav, and is where a visitor who wants to browse should end up.
+ */
+const HEADER_CITIES = 12;
+
+/**
+ * The header cannot know which city page it is on — it renders above the route
+ * — so it offers locations without a current one, and PUBLIC_VIEWER for the
+ * same reason the footer does: the shell is ISR-cached, so anything rendered
+ * for an admin is written into the cache everyone else reads back.
+ *
+ * A failed query costs the switcher, never the page. /pricing and /login do not
+ * otherwise touch the database and are not worth a 500 for a nav control.
+ */
+async function loadCities(): Promise<SwitcherCity[]> {
+  try {
+    return await listSwitcherCities(db as never, PUBLIC_VIEWER, { limit: HEADER_CITIES });
+  } catch (error) {
+    console.error("header location switcher query failed", error);
+    return [];
+  }
+}
 
 function NavLinks({ routes, className }: { routes: NavEntry[]; className: string }) {
   return (
@@ -72,10 +105,14 @@ function SearchField({ id, className }: { id: string; className: string }) {
   );
 }
 
-export function SiteHeader() {
+export async function SiteHeader() {
   const routes = navRoutes();
   const inline = routes.filter((r) => !PROMOTED.has(r.href));
   const e = siteConfig.entity;
+  const cities = await loadCities();
+  // The header has no current city to name — it renders above the route — so
+  // the label has to carry the whole meaning on its own.
+  const switcherLabel = "Browse by location";
 
   return (
     // `relative` so the mobile panel below can anchor to the whole bar rather
@@ -95,6 +132,24 @@ export function SiteHeader() {
         <nav aria-label="Primary" className="hidden md:block">
           <NavLinks routes={inline} className="flex list-none items-center gap-1 text-sm" />
         </nav>
+
+        {/*
+          The compact switcher. Hidden below lg because the bar already carries
+          the nav, the search field and two CTAs at md; the mobile panel below
+          renders the same links for every width this one does not cover.
+
+          The open list is absolutely positioned so opening it drops a panel
+          over the page rather than growing the header and pushing the whole
+          document down — the same reason the mobile menu is positioned.
+        */}
+        <LocationSwitcher
+          label={switcherLabel}
+          cities={cities}
+          hrefFor={(city) => cityScopedHref(city.slug)}
+          className="hidden shrink-0 lg:block"
+          panelClassName="absolute right-0 z-50 mt-2 grid max-h-80 w-56 list-none grid-cols-1 gap-1 overflow-y-auto rounded-[var(--radius-token)] border border-line bg-surface p-3 text-sm shadow-lg"
+          testId="header-location-switcher"
+        />
 
         {/*
           Visible from md up so there is a search entry point at every width the
@@ -138,6 +193,13 @@ export function SiteHeader() {
             >
               {SIGN_IN.label}
             </a>
+            <LocationSwitcher
+              label={switcherLabel}
+              cities={cities}
+              hrefFor={(city) => cityScopedHref(city.slug)}
+              className="mt-3"
+              testId="mobile-location-switcher"
+            />
             <SearchField id="mobile-search" className="mt-3 flex items-center gap-2" />
             <a href="/add-listing" className="btn btn-primary mt-4 w-full text-sm">
               Add your {e.singular}

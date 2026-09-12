@@ -85,6 +85,11 @@ jobs:
         flags: ["off", "on"]
     name: e2e (flags ${{ matrix.flags }})
     services:
+      # Its own database, never the dev one: this suite writes, because
+      # e2e/location.spec.ts submits a listing through the real form and creates
+      # a city with it. Locally the same database is built by
+      # `corepack pnpm test:e2e:db` (scripts/e2e-db.sh) and is what
+      # playwright.config.ts defaults to; keep the name in step with both.
       postgres:
         image: postgres:16-alpine
         env:

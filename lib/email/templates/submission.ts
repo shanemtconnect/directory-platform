@@ -9,9 +9,10 @@ import { layout, type Block, type EmailContent } from "./layout";
 export interface SubmissionEmailData {
   listingName: string;
   /**
-   * Null when the submitted town matched nothing we hold, which is also what
-   * tells the reader the submission is sitting in the parked queue rather than
-   * as a pending listing.
+   * Null when the submitted town could not be placed — the name is one we hold
+   * in another region, or in more than one. That is also what tells the reader
+   * the submission is sitting in the parked queue rather than as a pending
+   * listing. A town we had never heard of is created, so it arrives named.
    */
   cityName: string | null;
   submitter: { name: string; email: string };
@@ -25,9 +26,9 @@ export function submissionToAdmin(data: SubmissionEmailData): EmailContent {
     { label: siteConfig.entity.Singular, value: data.listingName },
   ];
   if (data.cityName === null) {
-    // No matching town means no listing row was created; the payload is parked
-    // and needs a decision about the town before it can become anything.
-    blocks.push({ value: "The town given is not one we hold, so this is waiting in the parked queue." });
+    // An unplaceable town means no listing row was created; the payload is
+    // parked and needs a decision about the town before it can become anything.
+    blocks.push({ value: "The town given could not be matched to one of ours, so this is waiting in the parked queue." });
   } else {
     blocks.push({ label: "Town", value: data.cityName });
   }

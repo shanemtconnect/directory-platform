@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { auditLog, categories, cities, listings } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/import/guardrails";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
-import { allocateSlug } from "@/lib/routing/slugs";
+import { ROOT_SCOPE, SlugError, allocateSlug } from "@/lib/routing/slugs";
+import { geocodeCity } from "@/lib/geo/geocode";
+import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";
 import type { TierName } from "@/config/types";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
@@ -70,16 +72,19 @@ export type SubmissionResult =
   | { outcome: "unknown-category" };
 
 /**
- * Written to audit_log when the submitted town is not one we hold.
+ * Written to audit_log when the submitted town cannot be resolved to ONE city.
  *
- * There is no submissions table and `listings.city_id` is NOT NULL, so a
- * submission for an unknown town cannot become a listing row without creating
- * the city first — and creating cities from unauthenticated input is exactly
- * how a directory ends up with "Lodnon" and a thin, unindexable page for it.
- * Parking the payload keeps the submission durable and puts city creation
- * where it belongs: behind admin approval.
+ * A name we have never seen is now created (see `createAutoCity`). What is
+ * still parked is the case creating a city cannot answer: a name we already
+ * hold in a region other than the one typed — "Newport" with no county, or
+ * "Leeds, Kent". Guessing there files the listing under the wrong pillar page
+ * or mints a near-twin of a city we already have, and only an admin looking at
+ * the address can tell which. Parking keeps the submission durable meanwhile.
  */
 export const PARKED_SUBMISSION_ACTION = "listing_submission.pending_city";
+
+/** Written to audit_log when a submission brings a town we did not hold. */
+export const AUTO_CITY_ACTION = "city.auto_created";
 
 /** The selects on the form. Public taxonomy, so nothing is viewer-gated. */
 export async function submissionOptions(
@@ -105,35 +110,145 @@ export async function submissionOptions(
 }
 
 /**
- * Resolves the typed town to a city we already hold. Returns null — never a
- * new city — when there is no confident match.
+ * What the typed town is: one city we hold, a name we have never seen, or a
+ * question only an admin can answer.
  *
- * Two cities can share a name (Newport, Richmond), which is the entire reason
- * the form asks for a region. Ambiguity without a region resolves to null and
- * goes to admin rather than guessing a county and filing the listing under the
- * wrong pillar page.
+ * `new` is the permission to create. It is given ONLY when nothing we hold
+ * shares the name, because that is the one case where creating a city cannot
+ * collide with an existing pillar page. Everything else is `ambiguous`:
+ * two Newports and no county, or a Leeds in a county we do not have it in.
+ * The second of those looks like a new town and is far more often a mistyped
+ * county, so it goes to a human rather than minting a near-twin city that then
+ * splits a town's listings across two pages.
+ *
+ * The exception is a namesake that holds NO region — which is what an
+ * auto-created city is (see `createAutoCity`). The region a submitter sends for
+ * such a town is picked from a `<select>` of the regions we already hold, so it
+ * cannot be right and must not be read as a mismatch: doing so would park every
+ * submission after the first one for the same new town, for ever.
  */
+export type CityResolution =
+  | { kind: "found"; cityId: string }
+  | { kind: "ambiguous" }
+  | { kind: "new" };
+
 export async function resolveSubmittedCity(
   tx: TestDb,
   city: string,
   region: string | null,
-): Promise<string | null> {
+): Promise<CityResolution> {
   const wanted = city.trim().toLowerCase();
-  if (wanted === "") return null;
+  // An empty name is not a new city, it is no city at all.
+  if (wanted === "") return { kind: "ambiguous" };
 
   const rows = await tx
     .select({ id: cities.id, region: cities.region })
     .from(cities)
     .where(sql`lower(${cities.name}) = ${wanted}`);
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return { kind: "new" };
 
-  if (region !== null && region.trim() !== "") {
-    const wantedRegion = region.trim().toLowerCase();
+  const wantedRegion = region?.trim().toLowerCase() ?? "";
+  if (wantedRegion !== "") {
     const exact = rows.find((r) => r.region?.toLowerCase() === wantedRegion);
-    return exact?.id ?? null;
+    if (exact) return { kind: "found", cityId: exact.id };
   }
-  return rows.length === 1 ? (rows[0]?.id ?? null) : null;
+
+  // An earlier auto-created city, which holds no region by design. One is an
+  // answer; two would be a genuine question, and go to an admin like any other.
+  const regionless = rows.filter((r) => r.region === null);
+  if (regionless.length === 1) return { kind: "found", cityId: regionless[0]!.id };
+  if (regionless.length > 1) return { kind: "ambiguous" };
+
+  if (wantedRegion !== "") return { kind: "ambiguous" };
+  const only = rows.length === 1 ? rows[0] : undefined;
+  return only ? { kind: "found", cityId: only.id } : { kind: "ambiguous" };
+}
+
+/**
+ * Creates the city a submission brought with it, or returns null when the name
+ * cannot be a root slug.
+ *
+ * Published so the page renders — a submitter who is told their listing is
+ * filed in Otley should be able to see Otley — and `is_indexable = false` with
+ * no intro copy so it earns nothing: it is out of the sitemap, out of the
+ * footer, out of every internal-linking block, and carries `noindex` until it
+ * clears the gate on its own terms. Global constraint 9 is not bypassed here;
+ * it is simply not met yet, and `recomputeCityIndexability` is what will
+ * notice when it is.
+ *
+ * `lat`/`lng` are null rather than guessed, and so is `region`. The form's
+ * region `<select>` is built from the regions we already hold, so a submitter
+ * naming a town in a region we do not cover can only pick a wrong one —
+ * persisting it would feed that wrong value straight back into the select for
+ * everybody after them, and into the city's own page. What they picked is kept
+ * on the audit row as `submittedRegion` so an admin can set the real one.
+ *
+ * The cost is that the slug has no disambiguator left: a second auto city whose
+ * name slugifies the same takes `name-2`. That is the accepted trade — a
+ * numbered slug is visible and fixable, a wrong region is neither.
+ *
+ * Returns null for a name `allocateSlug` refuses — a reserved root slug
+ * ("Search"), or a name with nothing slug-able in it. Those submissions park.
+ * A SlugError thrown out of here would 500 the form for a typo.
+ */
+async function createAutoCity(
+  tx: TestDb,
+  input: { name: string; region: string | null; ip: string | null },
+): Promise<string | null> {
+  const id = randomUUID();
+  const name = input.name.trim();
+  const submittedRegion = input.region?.trim() || null;
+
+  let slug: string;
+  try {
+    slug = await allocateSlug(tx, {
+      parentScope: ROOT_SCOPE,
+      desired: name,
+      kind: "city",
+      entityId: id,
+      // No disambiguator: the submitted region is not this city's region (see
+      // above), so using it here would bake a value we do not trust into the
+      // URL. A collision takes `name-2`.
+    });
+  } catch (error) {
+    if (error instanceof SlugError) return null;
+    throw error;
+  }
+
+  // Asked with the region the submitter gave, because a geocoder wants every
+  // hint it can get — but its answer is the only thing we keep from it.
+  const located = await geocodeCity({
+    name,
+    region: submittedRegion,
+    country: siteConfig.country,
+  });
+
+  await tx.insert(cities).values({
+    id,
+    name,
+    slug,
+    region: null,
+    country: siteConfig.country,
+    lat: located.point?.lat ?? null,
+    lng: located.point?.lng ?? null,
+    isPublished: true,
+    isIndexable: false,
+    introHtml: null,
+    createdBy: "auto",
+  });
+
+  await tx.insert(auditLog).values({
+    action: AUTO_CITY_ACTION,
+    entityType: "city",
+    entityId: id,
+    // `region: null` is the city's; `submittedRegion` is what the form sent and
+    // is the only record of it — an admin setting the real region works from it.
+    meta: { name, region: null, submittedRegion, slug, geocode: located.reason },
+    ip: input.ip,
+  });
+
+  return id;
 }
 
 /**
@@ -217,7 +332,17 @@ export async function createSubmission(
     ip: input.ip,
   };
 
-  const cityId = await resolveSubmittedCity(tx, input.city, input.region);
+  // An unknown town is created rather than parked: a submission that names a
+  // place we do not cover is the cheapest signal there is that we should, and
+  // the new city earns nothing by existing (see createAutoCity).
+  const resolved = await resolveSubmittedCity(tx, input.city, input.region);
+  const cityId =
+    resolved.kind === "found"
+      ? resolved.cityId
+      : resolved.kind === "new"
+        ? await createAutoCity(tx, { name: input.city, region: input.region, ip: input.ip })
+        : null;
+
   if (cityId === null) {
     // ip is recorded once, on the audit row's own column.
     const { ip: _ip, ...payload } = input;
