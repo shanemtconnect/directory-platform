@@ -9,7 +9,7 @@ import { REMOVAL_SLA_WORKING_DAYS } from "@/lib/trust/working-days";
 
 export const metadata: Metadata = {
   title: "Request removal",
-  description: "Ask us to take a listing down. We action requests within five working days.",
+  description: `Ask us to take a listing down. We action requests within ${REMOVAL_SLA_WORKING_DAYS} working days.`,
   robots: { index: false, follow: true },
 };
 

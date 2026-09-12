@@ -101,7 +101,7 @@ describe("removalToAdmin", () => {
   it("carries who asked, on what footing, and the deadline", () => {
     expect(content.text).toContain("Alex Owner");
     expect(content.text).toContain("alex@example.co.uk");
-    expect(content.text).toContain("own the business");
+    expect(content.text).toContain(`own the ${siteConfig.entity.singular}`);
     expect(content.text).toContain("19 June 2026");
   });
 

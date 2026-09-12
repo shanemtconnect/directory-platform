@@ -56,7 +56,6 @@ export function RemovalForm({ listingId, listingName, turnstileSiteKey }: Remova
                 type="radio"
                 name="relationship"
                 value={relationship}
-                defaultChecked={relationship === "owner"}
               />{" "}
               {REMOVAL_RELATIONSHIP_LABELS[relationship]}
             </label>
