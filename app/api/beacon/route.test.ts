@@ -117,7 +117,7 @@ describe("POST /api/beacon", () => {
     const res = await post({ events });
 
     expect(res.status).toBe(204);
-    const { MAX_BEACON_EVENTS } = await import("./route");
+    const { MAX_BEACON_EVENTS } = await import("@/lib/stats/keys");
     expect(recordStats.mock.calls[0]![0]).toHaveLength(MAX_BEACON_EVENTS);
   });
 

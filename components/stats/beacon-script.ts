@@ -1,4 +1,4 @@
-import { MAX_BEACON_EVENTS } from "@/app/api/beacon/route";
+import { MAX_BEACON_EVENTS } from "@/lib/stats/keys";
 
 /**
  * The entire client side of the stats feature.

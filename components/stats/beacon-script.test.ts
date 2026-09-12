@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BEACON_SCRIPT } from "./beacon-script";
-import { MAX_BEACON_EVENTS } from "@/app/api/beacon/route";
+import { MAX_BEACON_EVENTS } from "@/lib/stats/keys";
 
 describe("BEACON_SCRIPT", () => {
   it("cannot break out of the <script> it is inlined into", () => {

@@ -40,6 +40,17 @@ export const METRIC_COLUMN: Record<StatMetric, string> = {
 export const BEACON_METRICS = ["view", "impression"] as const;
 export type BeaconMetric = (typeof BEACON_METRICS)[number];
 
+/**
+ * The most events one beacon may carry — one page of cards, well past the
+ * largest grid the site renders, and small enough that a forged batch buys
+ * almost nothing over a forged single.
+ *
+ * Lives here rather than in the route so the inline script and the endpoint
+ * that validates it cannot drift apart: a script that batches more than the
+ * endpoint accepts silently drops the tail of every page.
+ */
+export const MAX_BEACON_EVENTS = 100;
+
 export function isBeaconMetric(v: unknown): v is BeaconMetric {
   return typeof v === "string" && (BEACON_METRICS as readonly string[]).includes(v);
 }

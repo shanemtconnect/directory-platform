@@ -1,6 +1,6 @@
 import { siteOrigin } from "@/lib/site-env";
 import { isBotUserAgent } from "@/lib/stats/bots";
-import { isBeaconMetric, isUuid } from "@/lib/stats/keys";
+import { MAX_BEACON_EVENTS, isBeaconMetric, isUuid } from "@/lib/stats/keys";
 import { recordStats, type StatEvent } from "@/lib/stats/counters";
 import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 
@@ -23,12 +23,6 @@ import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
  */
 
 export const dynamic = "force-dynamic";
-
-/**
- * One page of cards. Well past the largest grid the site renders, and small
- * enough that a forged batch buys almost nothing over a forged single.
- */
-export const MAX_BEACON_EVENTS = 100;
 
 /** A legitimate beacon of 100 events is around 6 KB. */
 const MAX_BODY_BYTES = 16_384;
