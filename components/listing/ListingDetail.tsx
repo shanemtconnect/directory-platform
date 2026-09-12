@@ -6,11 +6,20 @@ import { displayedDescription } from "@/lib/listing/display";
 import { EnquiryForm } from "./EnquiryForm";
 import { features } from "@/lib/features/flags";
 import { SaveButton } from "@/components/shortlist/SaveButton";
+import { ReviewSummary } from "@/components/reviews/ReviewSummary";
+import type { ReviewSummary as Summary } from "@/lib/db/queries/reviews";
 
 interface Props {
   detail: Detail;
   related: Listing[];
   cityPath: string;
+  /**
+   * Null when the reviews module is off — the route never queries for it and
+   * the block below is tree-shaken with the flag. (Reviews module, Task 22.)
+   */
+  reviews?: Summary | null;
+  reviewsPath?: string;
+  leaveReviewPath?: string;
 }
 
 /**
@@ -18,7 +27,9 @@ interface Props {
  * and the enquiry form are on every tier including unclaimed listings — gating
  * contact details kills the traffic that makes a listing worth paying for.
  */
-export function ListingDetail({ detail, related, cityPath }: Props) {
+export function ListingDetail({
+  detail, related, cityPath, reviews = null, reviewsPath = "", leaveReviewPath = "",
+}: Props) {
   const { listing, city, category } = detail;
   const tier = siteConfig.tiers[listing.tier];
   const e = siteConfig.entity;
@@ -85,6 +96,19 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
               <h2 className="mt-0">Is this your {e.singular}?</h2>
               <p><a href={mailto(`Claim ${listing.name}`)}>Claim it free</a> to edit the details.</p>
             </section>
+          )}
+
+          {/* Reviews module (Task 22). Rendered only when the route passed a
+              summary, which it does only when the flag is on — the JSON-LD
+              aggregateRating is built from these same two numbers, so the
+              markup cannot assert a rating this block did not show. */}
+          {features.reviews && reviews !== null && (
+            <ReviewSummary
+              summary={reviews}
+              listingName={listing.name}
+              reviewsPath={reviewsPath}
+              leaveReviewPath={leaveReviewPath}
+            />
           )}
 
           {/* On EVERY listing, not just unclaimed ones. A claimed listing can carry

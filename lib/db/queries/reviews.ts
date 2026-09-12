@@ -373,7 +373,7 @@ export async function moderateReview(
 /* ------------------------------------------------------------------- replies */
 
 export type CreateReplyResult =
-  | { outcome: "created"; replyId: string }
+  | { outcome: "created"; replyId: string; listingPath: string }
   | { outcome: "not-owner" }
   | { outcome: "already-replied" }
   | { outcome: "unknown-review" };
@@ -395,9 +395,16 @@ export async function createReviewReply(
   if (!UUID.test(input.reviewId)) return { outcome: "unknown-review" };
 
   const [review] = await tx
-    .select({ id: reviews.id, listingId: reviews.listingId, ownerId: listings.ownerId })
+    .select({
+      id: reviews.id,
+      listingId: reviews.listingId,
+      ownerId: listings.ownerId,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+    })
     .from(reviews)
     .innerJoin(listings, eq(listings.id, reviews.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(and(eq(reviews.id, input.reviewId), eq(reviews.status, "published")))
     .limit(1);
   if (!review) return { outcome: "unknown-review" };
@@ -433,7 +440,11 @@ export async function createReviewReply(
     updatedAt: now(),
   });
 
-  return { outcome: "created", replyId: row.id };
+  return {
+    outcome: "created",
+    replyId: row.id,
+    listingPath: `/${review.citySlug}/${review.listingSlug}`,
+  };
 }
 
 /* --------------------------------------------------------------------- read */
@@ -523,6 +534,29 @@ export async function reviewSummary(
 
   const recent = await listPublishedReviews(tx, viewer, listingId, { page: 1, perPage: limit });
   return { average: Number(row.ratingAvg), count: total, recent };
+}
+
+/**
+ * The listing the review form is about.
+ *
+ * Published-only and projected to the three fields the form renders, so the
+ * page that collects a review can never quietly expose a pending listing or
+ * ship a description into the RSC payload of a form.
+ */
+export async function reviewTarget(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<{ id: string; name: string; path: string } | null> {
+  if (!UUID.test(listingId)) return null;
+  const [row] = await tx
+    .select({ id: listings.id, name: listings.name, slug: listings.slug, citySlug: cities.slug })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(and(eq(listings.id, listingId), publishedListings(viewer)))
+    .limit(1);
+  if (!row) return null;
+  return { id: row.id, name: row.name, path: `/${row.citySlug}/${row.slug}` };
 }
 
 /* ------------------------------------------------------------ notifications */
