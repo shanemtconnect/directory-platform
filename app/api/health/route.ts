@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { pingDatabase } from "@/lib/db/queries/health";
 import { probeRedis } from "@/lib/observability/redis";
-import { healthReport } from "@/lib/observability/health";
+import { memoizedHealthReport } from "@/lib/observability/health";
 import { currentBuildId } from "@/lib/observability/build-id";
 
 /**
@@ -26,9 +26,16 @@ export const revalidate = 0;
  * an attacker gains nothing from: two up/down booleans, the build id — already
  * visible in every `/_next/static/` URL the site serves — and a process uptime.
  * No version numbers, no hostnames, no configuration.
+ *
+ * Being unauthenticated is also why `memoizedHealthReport` (see
+ * `lib/observability/health.ts`) sits in front of the probes: this is the one
+ * route on the site anybody, including a scanner with no reason to be polite,
+ * can hit as fast as they like. `Cache-Control: no-store` below is unaffected
+ * — every request still gets a fresh HTTP response — only the database and
+ * Redis connection behind it is sometimes skipped.
  */
 export async function GET(): Promise<Response> {
-  const report = await healthReport({
+  const report = await memoizedHealthReport({
     // `getDb()` inside the probe, not at module scope: this module is evaluated
     // during `next build` to read the two exports above, and opening a pool
     // there would put a database back in the build's requirements.

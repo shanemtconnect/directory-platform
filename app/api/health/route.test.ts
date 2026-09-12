@@ -15,6 +15,11 @@ describe("GET /api/health", () => {
     pingDatabase.mockReset().mockResolvedValue(undefined);
     probeRedis.mockReset().mockResolvedValue("ok");
     getDb.mockClear();
+    // `./route` now probes through `memoizedHealthReport`, which keeps a
+    // module-scoped memo — one report per process, keyed on nothing. Without
+    // this reset, whichever test runs first would decide what every test
+    // after it sees for up to `HEALTH_MEMO_OK_TTL_MS`.
+    vi.resetModules();
   });
 
   it("does not open a database connection merely by being imported", async () => {

@@ -91,3 +91,94 @@ describe("healthReport", () => {
     expect(report.redis).toBe("fail");
   });
 });
+
+describe("memoizedHealthReport", () => {
+  // Each test gets its own module instance: the memo is module state — one
+  // report per process, keyed on nothing — so a test that populates it would
+  // otherwise decide what every test after it sees.
+  async function freshModule() {
+    vi.resetModules();
+    return import("./health");
+  }
+
+  it("probes once for two calls inside the healthy TTL", async () => {
+    const { memoizedHealthReport, HEALTH_MEMO_OK_TTL_MS } = await freshModule();
+    vi.useFakeTimers();
+    try {
+      const db = vi.fn(async () => undefined);
+      const p = probes({ db });
+
+      await memoizedHealthReport(p);
+      await vi.advanceTimersByTimeAsync(HEALTH_MEMO_OK_TTL_MS - 1);
+      const second = await memoizedHealthReport(p);
+
+      expect(db).toHaveBeenCalledTimes(1);
+      expect(second).toMatchObject({ ok: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("probes again once the healthy TTL has elapsed", async () => {
+    const { memoizedHealthReport, HEALTH_MEMO_OK_TTL_MS } = await freshModule();
+    vi.useFakeTimers();
+    try {
+      const db = vi.fn(async () => undefined);
+      const p = probes({ db });
+
+      await memoizedHealthReport(p);
+      await vi.advanceTimersByTimeAsync(HEALTH_MEMO_OK_TTL_MS + 1);
+      await memoizedHealthReport(p);
+
+      expect(db).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not memoise a failing report past the shorter failure TTL", async () => {
+    // A failing report is memoised for only a third of the healthy TTL: the
+    // memo exists to spare the database repeat load, not to slow down how
+    // fast an operator sees recovery once the database actually comes back.
+    const { memoizedHealthReport, HEALTH_MEMO_FAIL_TTL_MS, HEALTH_MEMO_OK_TTL_MS } =
+      await freshModule();
+    expect(HEALTH_MEMO_FAIL_TTL_MS).toBeLessThan(HEALTH_MEMO_OK_TTL_MS);
+
+    vi.useFakeTimers();
+    try {
+      const db = vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      });
+      const p = probes({ db });
+
+      const first = await memoizedHealthReport(p);
+      expect(first).toMatchObject({ ok: false });
+
+      await vi.advanceTimersByTimeAsync(HEALTH_MEMO_FAIL_TTL_MS - 1);
+      await memoizedHealthReport(p);
+      expect(db).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2);
+      await memoizedHealthReport(p);
+      expect(db).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not call Redis either while a report is memoised", async () => {
+    const { memoizedHealthReport } = await freshModule();
+    vi.useFakeTimers();
+    try {
+      const redis = vi.fn(async () => "ok" as const);
+      const p = probes({ redis });
+
+      await memoizedHealthReport(p);
+      await memoizedHealthReport(p);
+
+      expect(redis).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
