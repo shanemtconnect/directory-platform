@@ -111,6 +111,30 @@ describe("POST /api/beacon", () => {
     expect(recordStats).not.toHaveBeenCalled();
   });
 
+  it("rejects a declared Content-Length over the limit before reading the body", async () => {
+    // A well-formed, well-under-limit body — the only thing wrong is the
+    // header. If the route reads the body before checking this, it would
+    // reach `recordStats`; it must not.
+    const res = await post(
+      { listingId: LISTING, metric: "view" },
+      { "content-length": "999999" },
+    );
+
+    expect(res.status).toBe(413);
+    expect(recordStats).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body whose UTF-8 byte length exceeds the limit even when its UTF-16 length does not", async () => {
+    // Each "中" is one UTF-16 code unit (`.length` counts it once) but three
+    // UTF-8 bytes. 6000 of them is 6000 chars — comfortably under the 16 KB
+    // cap by a naive `.length` check — but 18,000 bytes on the wire.
+    const raw = "中".repeat(6000);
+    const res = await post(raw);
+
+    expect(res.status).toBe(413);
+    expect(recordStats).not.toHaveBeenCalled();
+  });
+
   it("caps how many events one beacon may carry", async () => {
     const events = Array.from({ length: 200 }, () => ({ listingId: LISTING, metric: "impression" }));
 

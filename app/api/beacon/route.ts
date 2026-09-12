@@ -48,6 +48,13 @@ function badRequest(): Response {
   });
 }
 
+function payloadTooLarge(): Response {
+  return new Response("Payload too large", {
+    status: 413,
+    headers: { ...NO_STORE, "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
 interface BeaconBody {
   listingId?: unknown;
   metric?: unknown;
@@ -95,16 +102,26 @@ export async function POST(request: Request): Promise<Response> {
     });
   }
 
+  // Checked before touching the body: a declared size over the limit is
+  // rejected without reading a byte of it, so an oversized POST costs this
+  // endpoint a header lookup rather than buffering the whole thing.
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return payloadTooLarge();
+  }
+
   // `request.text()` rather than `request.json()`: `navigator.sendBeacon`
   // sends a Blob whose content type the browser may rewrite to text/plain, and
   // a beacon that is silently dropped over a header is a metric that reads as
   // zero for the one browser that does it.
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
-    return new Response("Payload too large", {
-      status: 413,
-      headers: { ...NO_STORE, "Content-Type": "text/plain; charset=utf-8" },
-    });
+  // Byte length, not `raw.length`: a beacon carrying multi-byte characters
+  // (an owner's listing name echoed back, say) is longer in UTF-8 than in
+  // UTF-16 code units, and a Content-Length header a proxy stripped or a
+  // caller lied about must not be the only thing standing between this
+  // endpoint and an oversized body.
+  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) {
+    return payloadTooLarge();
   }
 
   let body: unknown;
