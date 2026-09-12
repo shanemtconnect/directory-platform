@@ -1,6 +1,7 @@
 import { enqueueJob } from "@/lib/db/queries/jobs";
 import type { EnquiryResult } from "@/lib/db/queries/enquiries";
 import type { SubmissionResult } from "@/lib/db/queries/submissions";
+import type { RemovalDecision, RemovalRequestResult, ReportResult } from "@/lib/db/queries/trust";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -20,9 +21,20 @@ import type { TestDb } from "@/test/db";
 
 export const NOTIFY_ENQUIRY = "notify.enquiry";
 export const NOTIFY_SUBMISSION = "notify.submission";
+export const NOTIFY_REPORT = "notify.report";
+export const NOTIFY_REMOVAL = "notify.removal";
+export const NOTIFY_REMOVAL_ACTIONED = "notify.removal-actioned";
+export const NOTIFY_REMOVAL_REJECTED = "notify.removal-rejected";
 
 /** The kinds worker/jobs/notify.ts claims. */
-export const NOTIFY_KINDS: string[] = [NOTIFY_ENQUIRY, NOTIFY_SUBMISSION];
+export const NOTIFY_KINDS: string[] = [
+  NOTIFY_ENQUIRY,
+  NOTIFY_SUBMISSION,
+  NOTIFY_REPORT,
+  NOTIFY_REMOVAL,
+  NOTIFY_REMOVAL_ACTIONED,
+  NOTIFY_REMOVAL_REJECTED,
+];
 
 /**
  * Job payloads are ids, never copies of the record. The worker re-reads the
@@ -57,4 +69,53 @@ export async function notifySubmission(
   const payload: SubmissionJobPayload =
     result.outcome === "created" ? { listingId: result.listingId } : { parkedId: result.parkedId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SUBMISSION, payload });
+}
+
+export type ReportJobPayload = { reportId: string };
+export type RemovalJobPayload = { removalRequestId: string };
+
+export async function notifyReport(
+  tx: TestDb,
+  viewer: Viewer,
+  result: ReportResult,
+): Promise<void> {
+  if (result.outcome !== "created") return;
+  const payload: ReportJobPayload = { reportId: result.reportId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REPORT, payload });
+}
+
+/**
+ * A removal request notifies two people: the admin who has five working days
+ * to act, and the requester, who otherwise has no way of knowing the form
+ * worked. Silence after a privacy request is what turns it into a complaint.
+ */
+export async function notifyRemoval(
+  tx: TestDb,
+  viewer: Viewer,
+  result: RemovalRequestResult,
+): Promise<void> {
+  if (result.outcome !== "created") return;
+  const payload: RemovalJobPayload = { removalRequestId: result.removalRequestId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REMOVAL, payload });
+}
+
+export type RemovalDecisionJobPayload = { removalRequestId: string };
+
+/**
+ * The reply every removal page promises: "we email you when it is done."
+ * Called from inside `actionRemovalRequest` itself, in the same transaction
+ * as the decision, rather than left to whatever calls it — Task 16's admin
+ * pages do not exist yet, and a promise this specific must not depend on
+ * every future caller remembering to keep it. Sent either way: a rejection is
+ * still an answer the requester was owed, not silence.
+ */
+export async function notifyRemovalDecision(
+  tx: TestDb,
+  viewer: Viewer,
+  removalRequestId: string,
+  decision: RemovalDecision,
+): Promise<void> {
+  const kind = decision === "actioned" ? NOTIFY_REMOVAL_ACTIONED : NOTIFY_REMOVAL_REJECTED;
+  const payload: RemovalDecisionJobPayload = { removalRequestId };
+  await enqueueJob(tx, viewer, { kind, payload });
 }

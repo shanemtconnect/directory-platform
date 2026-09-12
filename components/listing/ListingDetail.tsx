@@ -90,15 +90,16 @@ export function ListingDetail({ detail, related, cityPath }: Props) {
           {/* On EVERY listing, not just unclaimed ones. A claimed listing can carry
               a wrong address or belong to a business that has closed, and the
               person who spots it is the visitor, whatever the claim status says.
-              Both links are mailto: until /claim and /report ship — an advertised
-              route that 404s is worse than an inbox. */}
+              Both are real routes now, which is what /trust and /data-sources
+              have been promising: a form that files a row somebody has to
+              action beats an inbox nobody is accountable for. */}
           <section data-testid="correction-links" className="text-sm text-muted">
             <p>
               <a href="/data-sources">Where this information came from</a>
               {" · "}
-              <a href={mailto(`Report ${listing.name}`)}>Report incorrect information</a>
+              <a href={`/report/${listing.id}`}>Report incorrect information</a>
               {" · "}
-              <a href={mailto(`Remove ${listing.name}`)}>Request removal</a>
+              <a href={`/remove/${listing.id}`}>Request removal</a>
             </p>
           </section>
 
