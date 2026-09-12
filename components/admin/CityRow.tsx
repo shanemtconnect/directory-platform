@@ -46,8 +46,9 @@ export function CityRow({ city }: { city: AdminCity }) {
       </summary>
 
       <p className="mt-4 text-sm text-muted">
-        Indexing needs {threshold} published {siteConfig.entity.plural} and intro copy. It is
-        recomputed every time either changes — it is never set by hand.
+        {siteConfig.seo.requireIntroCopyToIndex
+          ? `Indexing needs ${threshold} published ${siteConfig.entity.plural} and intro copy. It is recomputed every time either changes — it is never set by hand.`
+          : `Indexing needs ${threshold} published ${siteConfig.entity.plural}. Intro copy is not required to index here. The gate is recomputed every time the count changes — it is never set by hand.`}
       </p>
 
       {city.introHtml !== null && (
@@ -70,6 +71,7 @@ export function CityRow({ city }: { city: AdminCity }) {
             id={`intro-${city.slug}`}
             name="intro"
             rows={5}
+            required
             placeholder="Plain text. Leave a blank line between paragraphs."
             className="max-w-full"
           />

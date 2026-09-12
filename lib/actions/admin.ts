@@ -40,11 +40,13 @@ function readId(form: FormData, field: string): string | null {
 /**
  * A decision changes what the public sees, and the pillar pages are ISR-cached.
  * Without this the listing is live in the database and absent from its city
- * page until the revalidate window happens to expire.
+ * page — and its category's pillar page within that city — until the
+ * revalidate window happens to expire.
  */
-function revalidateListing(citySlug: string, slug: string): void {
+function revalidateListing(citySlug: string, slug: string, categorySlug: string | null): void {
   revalidatePath(`/${citySlug}`);
   revalidatePath(`/${citySlug}/${slug}`);
+  if (categorySlug !== null) revalidatePath(`/${citySlug}/${categorySlug}`);
   revalidatePath("/admin/submissions");
 }
 
@@ -67,7 +69,9 @@ export async function approveSubmissionAction(form: FormData): Promise<void> {
     // status it is actually in, which is the answer to both.
     redirect(`/admin/submissions/${listingId}`);
   }
-  if (outcome.detail) revalidateListing(outcome.detail.citySlug, outcome.detail.slug);
+  if (outcome.detail) {
+    revalidateListing(outcome.detail.citySlug, outcome.detail.slug, outcome.detail.categorySlug);
+  }
   redirect("/admin/submissions");
 }
 
@@ -101,7 +105,9 @@ export async function rejectSubmissionAction(
   const failure = rejectionMessage(outcome.result);
   if (failure) return { status: "error", message: failure };
 
-  if (outcome.detail) revalidateListing(outcome.detail.citySlug, outcome.detail.slug);
+  if (outcome.detail) {
+    revalidateListing(outcome.detail.citySlug, outcome.detail.slug, outcome.detail.categorySlug);
+  }
   redirect("/admin/submissions");
 }
 

@@ -9,7 +9,7 @@
 const LINKS: { href: string; label: string }[] = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/submissions", label: "Submissions" },
-  { href: "/admin/cities", label: "Cities" },
+  { href: "/admin/cities", label: "Towns" },
   { href: "/admin/audit", label: "Audit log" },
 ];
 

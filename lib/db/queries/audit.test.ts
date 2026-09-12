@@ -1,28 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { withTestDb, type TestDb } from "@/test/db";
-import { auditLog, profiles, user } from "@/lib/db/schema";
-import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { withTestDb } from "@/test/db";
+import { auditLog, profiles } from "@/lib/db/schema";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { makeViewer } from "@/test/admin-fixtures";
 import { writeAudit } from "./audit";
-
-/**
- * `actor_id` is a uuid referencing profiles.id and Better Auth's user id is
- * text, so every test here needs a real `user` row to hang a profile off.
- */
-async function makeUser(tx: TestDb, suffix: string): Promise<Viewer & { userId: string }> {
-  const userId = `user_${suffix}`;
-  await tx.insert(user).values({
-    id: userId,
-    name: `Person ${suffix}`,
-    email: `${suffix}@example.test`,
-  });
-  return { role: "admin", userId };
-}
 
 describe("writeAudit", () => {
   it("records the action against the actor's profile id, not the auth user id", async () => {
     await withTestDb(async (tx) => {
-      const viewer = await makeUser(tx, "audit1");
+      const viewer = await makeViewer(tx);
 
       const id = await writeAudit(tx, viewer, {
         action: "submission.approved",
@@ -51,7 +38,7 @@ describe("writeAudit", () => {
 
   it("creates the profile on first sight so a new admin can act immediately", async () => {
     await withTestDb(async (tx) => {
-      const viewer = await makeUser(tx, "audit2");
+      const viewer = await makeViewer(tx);
       const before = await tx.select().from(profiles).where(eq(profiles.userId, viewer.userId));
       expect(before).toHaveLength(0);
 
@@ -72,7 +59,7 @@ describe("writeAudit", () => {
 
   it("reuses the profile rather than writing a second one", async () => {
     await withTestDb(async (tx) => {
-      const viewer = await makeUser(tx, "audit3");
+      const viewer = await makeViewer(tx);
       await writeAudit(tx, viewer, { action: "city.published" });
       await writeAudit(tx, viewer, { action: "city.unpublished" });
 

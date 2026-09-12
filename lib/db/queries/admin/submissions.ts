@@ -1,5 +1,5 @@
-import { eq, sql } from "drizzle-orm";
-import { categories, cities, listings } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { categories, cities, listings, slugs } from "@/lib/db/schema";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
 import { writeAudit } from "@/lib/db/queries/audit";
 import { notifyDecision } from "@/lib/email/notify";
@@ -128,6 +128,8 @@ export interface SubmissionDetail extends PendingSubmission {
   status: ListingStatus;
   citySlug: string;
   slug: string;
+  /** The category's per-city routing slug — `/${citySlug}/${categorySlug}` is its pillar page. */
+  categorySlug: string | null;
   addressLine1: string | null;
   postcode: string | null;
   phone: string | null;
@@ -156,6 +158,7 @@ export async function submissionDetail(
       cityName: cities.name,
       citySlug: cities.slug,
       categoryName: categories.name,
+      categorySlug: slugs.slug,
       addressLine1: listings.addressLine1,
       postcode: listings.postcode,
       phone: listings.phone,
@@ -169,6 +172,18 @@ export async function submissionDetail(
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .innerJoin(categories, eq(categories.id, listings.primaryCategoryId))
+    // The category's slug is per-city (a global category can route into many
+    // cities under different slugs), so the pillar page URL needs this join
+    // rather than `categories.slug` — left, not inner: a category that somehow
+    // never got routed into this city should not hide the rest of the detail.
+    .leftJoin(
+      slugs,
+      and(
+        eq(slugs.parentScope, sql`${listings.cityId}::text`),
+        eq(slugs.entityId, listings.primaryCategoryId),
+        eq(slugs.kind, "category"),
+      ),
+    )
     .where(eq(listings.id, listingId))
     .limit(1);
   if (!row) return null;
@@ -182,6 +197,7 @@ export async function submissionDetail(
     cityName: row.cityName,
     citySlug: row.citySlug,
     categoryName: row.categoryName,
+    categorySlug: row.categorySlug,
     addressLine1: row.addressLine1,
     postcode: row.postcode,
     phone: row.phone,
