@@ -728,7 +728,12 @@ export async function decideClaim(
     await promoteToOwner(tx, row.userId);
   }
 
-  await tx
+  // Guarded the same way the listings UPDATE above is: the status read at the
+  // top of this function is a check that can go stale by the time we get
+  // here, and a double-submitted decision (or two concurrent admins) that
+  // both pass that check must not both get to write it — one audit row and
+  // one email is the promise, not one per request.
+  const decided = await tx
     .update(claims)
     .set({
       status: input.decision,
@@ -742,7 +747,9 @@ export async function decideClaim(
       magicTokenExpiresAt: null,
       updatedAt: at,
     })
-    .where(eq(claims.id, row.id));
+    .where(and(eq(claims.id, row.id), eq(claims.status, "pending")))
+    .returning({ id: claims.id });
+  if (decided.length === 0) return { outcome: "already-decided" };
 
   await writeAudit(tx, {
     actorId: input.actorProfileId,

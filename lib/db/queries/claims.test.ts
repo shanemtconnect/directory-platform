@@ -323,6 +323,7 @@ describe("verifyClaimToken", () => {
       expect(approvals).toHaveLength(0);
     });
   });
+
 });
 
 describe("previewClaimToken", () => {
@@ -601,6 +602,26 @@ describe("decideClaim", () => {
         .from(auditLog)
         .where(eq(auditLog.action, "claim.approved"));
       expect(approvals).toHaveLength(0);
+    });
+  });
+
+  it("guards the claims write itself: two rejections produce one audit row and no more", async () => {
+    await withTestDb(async (tx) => {
+      const { claimId, admin } = await pending(tx);
+      const input = {
+        claimId, decision: "rejected" as const, reason: "No.", actorProfileId: admin.profileId, ip: null,
+      };
+      expect((await decideClaim(tx, admin.viewer, input)).outcome).toBe("decided");
+      expect((await decideClaim(tx, admin.viewer, input)).outcome).toBe("already-decided");
+
+      const [claim] = await tx.select().from(claims).where(eq(claims.id, claimId));
+      expect(claim?.status).toBe("rejected");
+
+      const rejections = await tx
+        .select({ action: auditLog.action })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.rejected"));
+      expect(rejections).toHaveLength(1);
     });
   });
 
