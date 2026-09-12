@@ -1,6 +1,6 @@
 import type { FeatureFlag, FeatureMap } from "./types";
 import { isSupportedCountry, COUNTRY_PROFILES, SUPPORTED_COUNTRIES } from "../lib/geo/countries";
-import { PLAN_ENV_VARS } from "../lib/billing/plans";
+import { siteConfig } from "./site.config";
 
 const isBlank = (v: string | undefined): boolean => v === undefined || v.trim() === "";
 
@@ -98,11 +98,34 @@ export const RUNTIME_ENV = [
  */
 export const BILLING_ENV_SWITCH = "PAYPAL_CLIENT_ID";
 
-export const BILLING_ENV = [
+const BILLING_INTERVALS = ["monthly", "annual"] as const;
+
+/**
+ * One plan id per billable tier and interval, derived from the tier prices.
+ *
+ * Derived HERE rather than imported from `lib/billing/plans.ts`, which is
+ * where the same list lives for the application. `next.config.ts` imports this
+ * file and Next compiles it with relative module resolution only, so anything
+ * this file reaches for must avoid the `@/` alias — and `lib/billing/plans.ts`
+ * is full of it. A build that cannot load next.config is a build that does not
+ * happen, which is a worse failure than one duplicated `flatMap`.
+ *
+ * The two lists are asserted equal in `lib/billing/plans.test.ts`, so they
+ * cannot drift apart in silence.
+ */
+export const PLAN_ENV_VARS: readonly string[] = Object.entries(siteConfig.tiers)
+  .filter(([, tier]) => tier.priceAnnual > 0 || tier.priceMonthly > 0)
+  .flatMap(([name]) =>
+    BILLING_INTERVALS.map((interval) =>
+      `PAYPAL_PLAN_${name.toUpperCase()}_${interval.toUpperCase()}`,
+    ),
+  );
+
+export const BILLING_ENV: readonly string[] = [
   "PAYPAL_CLIENT_SECRET",
   "PAYPAL_WEBHOOK_ID",
   ...PLAN_ENV_VARS,
-] as const;
+];
 
 /**
  * Not enforced yet. Each group moves into RUNTIME_ENV when the phase that reads

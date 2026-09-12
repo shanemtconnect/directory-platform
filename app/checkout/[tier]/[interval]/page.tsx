@@ -17,9 +17,10 @@ import { PlanSummary } from "@/components/billing/PlanSummary";
  * is no cache to lose by reading searchParams here.
  *
  * Three refusals, and none of them is a 500:
- *   - not signed in     -> the login page, with a way back
- *   - not the owner     -> a panel saying so
- *   - billing unset up  -> a panel saying so
+ *   - not signed in      -> the login page, with a way back
+ *   - not the owner      -> a panel saying so
+ *   - billing not set up -> a panel saying so, but only once ownership has
+ *                           been established
  * A tier or interval that is not a thing we sell is the only 404: those are
  * path segments, and a URL that names a plan which does not exist is not a
  * page.
@@ -51,19 +52,6 @@ export default async function CheckoutPage({
   const e = siteConfig.entity;
   const spec = siteConfig.tiers[tier];
 
-  if (!billingConfigured()) {
-    return (
-      <main>
-        <h1>Checkout</h1>
-        <p data-testid="billing-unavailable">
-          Subscriptions are not set up on this site yet, so there is nothing to pay for here.
-          Email <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a> and
-          we will sort it out with you directly.
-        </p>
-      </main>
-    );
-  }
-
   const raw = (await searchParams).listing;
   const listingId = Array.isArray(raw) ? raw[0] : raw;
 
@@ -83,6 +71,23 @@ export default async function CheckoutPage({
         </p>
         <p>
           <a href="/search">Find your {e.singular}</a> · <a href="/account">Your account</a>
+        </p>
+      </main>
+    );
+  }
+
+  // AFTER the ownership check, deliberately. Whether this site takes card
+  // payments is not something a stranger should be able to learn by pointing a
+  // URL at somebody else's listing — and an owner who cannot be charged still
+  // needs a different sentence from one who does not own the thing.
+  if (!billingConfigured()) {
+    return (
+      <main>
+        <h1>Checkout</h1>
+        <p data-testid="billing-unavailable">
+          Subscriptions are not set up on this site yet, so there is nothing to pay for here.
+          Email <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a> and
+          we will sort it out with you directly.
         </p>
       </main>
     );

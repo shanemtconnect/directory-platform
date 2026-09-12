@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { siteConfig } from "@/config/site.config";
+import { PLAN_ENV_VARS as ENV_GATE_VARS } from "@/config/validate";
 import {
   PAID_PLANS,
   minorUnits,
@@ -8,6 +9,7 @@ import {
   planIdFor,
   planNameFor,
   planRequestBody,
+  PLAN_ENV_VARS,
   firstPaidCycleSequence,
   tierForPlanId,
   trialDaysFor,
@@ -36,6 +38,15 @@ describe("PAID_PLANS", () => {
       .map(([name]) => name);
     expect(PAID_PLANS).toHaveLength(paidTiers.length * 2);
     expect(PAID_PLANS.map((p) => p.tier)).not.toContain("free");
+  });
+});
+
+describe("PLAN_ENV_VARS", () => {
+  it("is the same list the boot check enforces", () => {
+    // config/validate.ts derives its own copy, because next.config.ts compiles
+    // it with relative resolution and cannot reach lib/. This is the assertion
+    // that stops the two drifting apart.
+    expect([...PLAN_ENV_VARS].sort()).toEqual([...ENV_GATE_VARS].sort());
   });
 });
 

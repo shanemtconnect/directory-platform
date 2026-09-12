@@ -10,8 +10,8 @@ import {
   BILLING_ENV,
   BILLING_ENV_SWITCH,
   missingBillingEnv,
+  PLAN_ENV_VARS,
 } from "./validate";
-import { PLAN_ENV_VARS } from "../lib/billing/plans";
 import { siteConfig } from "./site.config";
 import { FEATURE_FLAGS, type FeatureFlag, type FeatureMap } from "./types";
 
