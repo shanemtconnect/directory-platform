@@ -2,6 +2,7 @@ import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { siteConfig } from "@/config/site.config";
 import { features } from "@/lib/features/flags";
 import { SaveButton } from "@/components/shortlist/SaveButton";
+import { StatsBeacon } from "@/components/stats/StatsBeacon";
 
 /**
  * Opening hours are rendered as data attributes and the open/closed state is
@@ -60,6 +61,10 @@ export function ListingCard({
           data-tz={listing.timezone ?? siteConfig.timezone}
         />
       )}
+
+      {/* One hidden marker per card. Every marker on the page is collected
+          into a single POST, so a grid of twenty costs one request. */}
+      <StatsBeacon listingId={listing.id} metric="impression" />
     </li>
   );
 }
