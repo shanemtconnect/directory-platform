@@ -6,13 +6,17 @@ import { db } from "@/lib/db/client";
 import { isEnabled } from "@/lib/features/flags";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { currentViewer } from "@/lib/auth/viewer";
-import { createReview, createReviewReply } from "@/lib/db/queries/reviews";
-import { notifyReviewSubmitted } from "@/lib/email/notify";
+import {
+  createReview, createReviewReply,
+  resendReviewVerification as resendVerificationToken,
+} from "@/lib/db/queries/reviews";
+import { notifyReviewResent, notifyReviewSubmitted } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
 import {
-  REVIEW_RATE_LIMIT, REVIEW_REPLY_RATE_LIMIT, limitPublicWrite, retryMessage,
+  REVIEW_RATE_LIMIT, REVIEW_REPLY_RATE_LIMIT, REVIEW_RESEND_RATE_LIMIT,
+  limitPublicWrite, retryMessage,
 } from "@/lib/spam/write-limit";
 import { validateReview } from "@/lib/reviews/validate";
 import { isUuid, stripCrlf, normaliseBody } from "@/lib/actions/validation";
@@ -173,4 +177,52 @@ export async function replyToReview(
       revalidatePath(result.listingPath);
       return { ok: true };
   }
+}
+
+/* ------------------------------------------------------------ resend link */
+
+export interface ResendState {
+  status: "idle" | "sent" | "error";
+  message?: string;
+}
+
+/**
+ * "Send me a new link", from the expired verification page.
+ *
+ * The dead token is the only input, and that is the point: it proves the same
+ * mailbox the first link went to, so nobody can type an address in here and
+ * have the site mail it. Nothing about the address is echoed back to the page
+ * either — the reply is the same sentence whatever happened, because a
+ * different answer for "that review was already confirmed" would turn the
+ * button into a way of asking whether a given person reviewed a given
+ * business.
+ *
+ * One an hour per connection. Generous enough for the person who genuinely
+ * lost the email and nowhere near enough to use as a mailer.
+ */
+export async function resendReviewVerification(
+  _prev: ResendState,
+  form: FormData,
+): Promise<ResendState> {
+  if (!isEnabled("reviews")) return { status: "error", message: OFF.message };
+
+  const token = stripCrlf(String(form.get("token") ?? "")).trim();
+
+  const requestHeaders = await headers();
+  const limit = await limitPublicWrite("review-resend", requestHeaders, REVIEW_RESEND_RATE_LIMIT);
+  if (!limit.allowed) return { status: "error", message: retryMessage(limit) };
+
+  if (token === "") return { status: "sent" };
+
+  await db.transaction(async (tx) => {
+    const handle = tx as unknown as TestDb;
+    const result = await resendVerificationToken(handle, PUBLIC_VIEWER, token);
+    // Enqueued with the new token, so a link that was minted is always a link
+    // that gets sent.
+    await notifyReviewResent(handle, PUBLIC_VIEWER, result);
+    return result;
+  });
+
+  // Deliberately the same answer for every outcome. See above.
+  return { status: "sent" };
 }

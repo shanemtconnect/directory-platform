@@ -46,6 +46,33 @@ function mintToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
+/**
+ * How long a verification link lives.
+ *
+ * A token that never expires is a standing permission to move a business's
+ * public rating, sitting in a mailbox forever: a review written and abandoned
+ * in March can be published in November by whoever ends up with that inbox,
+ * long after the thing being described stopped being true. Seven days is the
+ * span in which somebody who meant to confirm still will — after that the
+ * honest answer is to send a new link rather than honour an old one.
+ *
+ * Deliberately much longer than the claim link's thirty minutes: a claim hands
+ * over a business, and this only publishes an opinion about one.
+ */
+export const REVIEW_TOKEN_TTL_DAYS = 7;
+
+const TTL_MS = REVIEW_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * `sentAt` is null for an invite nobody can date. That is not "never expires":
+ * the only invite this module writes always carries one, so a null here is a
+ * row of unknown provenance and the safe reading is that it is too old.
+ */
+function isInviteExpired(sentAt: Date | null): boolean {
+  if (sentAt === null) return true;
+  return now().getTime() - sentAt.getTime() > TTL_MS;
+}
+
 /* ------------------------------------------------------------- projections */
 
 /**
@@ -212,6 +239,12 @@ export async function recomputeListingRating(tx: TestDb, listingId: string): Pro
 
 export type VerifyReviewResult =
   | { outcome: "unknown-token" }
+  /**
+   * The link was real and is too old. Distinct from `unknown-token` because
+   * the answer is different: there is a review sitting there waiting, and the
+   * page can offer to send a fresh link rather than a dead end.
+   */
+  | { outcome: "expired"; reviewId: string; listingId: string; path: string }
   | {
       outcome: "verified";
       reviewId: string;
@@ -246,6 +279,7 @@ export async function verifyReviewToken(
       id: reviewInvites.id,
       listingId: reviewInvites.listingId,
       sentTo: reviewInvites.sentTo,
+      sentAt: reviewInvites.sentAt,
       usedAt: reviewInvites.usedAt,
     })
     .from(reviewInvites)
@@ -291,6 +325,13 @@ export async function verifyReviewToken(
     };
   }
 
+  // After the repeat branch, never before it: somebody who confirmed in time
+  // and opens their own link again a month later should be told their review
+  // is up, not that they missed a deadline.
+  if (isInviteExpired(invite.sentAt)) {
+    return { outcome: "expired", reviewId: review.id, listingId: invite.listingId, path };
+  }
+
   const reason = flagReview({
     title: review.title,
     body: review.body,
@@ -318,6 +359,140 @@ export async function verifyReviewToken(
     status,
     flaggedReason: reason,
     repeat: false,
+  };
+}
+
+/* ------------------------------------------------ preview and re-send */
+
+export type ReviewTokenPreview =
+  | { outcome: "confirmable"; listingName: string; listingPath: string }
+  | { outcome: "expired"; listingName: string; listingPath: string }
+  | {
+      outcome: "already-confirmed";
+      listingName: string;
+      listingPath: string;
+      /** Published, or held for a moderator. The copy differs. */
+      status: "published" | "pending";
+    }
+  | { outcome: "unknown" };
+
+/** Everything the landing page needs, resolved from a token in one query. */
+async function inviteContext(tx: TestDb, token: string) {
+  if (token.trim() === "") return null;
+
+  const [invite] = await tx
+    .select({
+      id: reviewInvites.id,
+      listingId: reviewInvites.listingId,
+      sentTo: reviewInvites.sentTo,
+      sentAt: reviewInvites.sentAt,
+      usedAt: reviewInvites.usedAt,
+    })
+    .from(reviewInvites)
+    .where(eq(reviewInvites.token, token))
+    .limit(1);
+  if (!invite || invite.sentTo === null) return null;
+
+  const [row] = await tx
+    .select({
+      reviewId: reviews.id,
+      status: reviews.status,
+      emailVerifiedAt: reviews.emailVerifiedAt,
+      listingName: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(reviews)
+    .innerJoin(listings, eq(listings.id, reviews.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(and(eq(reviews.listingId, invite.listingId), eq(reviews.authorEmail, invite.sentTo)))
+    .limit(1);
+  if (!row) return null;
+
+  return { invite, review: row, path: `/${row.citySlug}/${row.listingSlug}` };
+}
+
+/**
+ * What the verification link's landing page shows, WITHOUT confirming anything.
+ *
+ * The link travels through a mailbox, and a mailbox is full of things that
+ * fetch every URL they see: security scanners that follow every link in a
+ * message, corporate gateways that rewrite and pre-fetch them, chat link
+ * previewers wherever the mail gets forwarded, the browser's own prefetcher.
+ * While the GET published the review, any one of them could put a rating on a
+ * business's page before a person had read the email — and "if you did not
+ * write this, ignore it and nothing will be published" was not true.
+ *
+ * So the token buys a sentence and a button, and the POST behind the button is
+ * what publishes. This function only reads.
+ */
+export async function previewReviewToken(
+  tx: TestDb,
+  _viewer: Viewer,
+  token: string,
+): Promise<ReviewTokenPreview> {
+  const ctx = await inviteContext(tx, token);
+  if (!ctx) return { outcome: "unknown" };
+
+  const listingName = ctx.review.listingName;
+  const listingPath = ctx.path;
+
+  if (ctx.invite.usedAt !== null) {
+    return {
+      outcome: "already-confirmed",
+      listingName,
+      listingPath,
+      status: ctx.review.status === "published" ? "published" : "pending",
+    };
+  }
+  if (isInviteExpired(ctx.invite.sentAt)) return { outcome: "expired", listingName, listingPath };
+  return { outcome: "confirmable", listingName, listingPath };
+}
+
+export type ResendReviewResult =
+  | { outcome: "sent"; reviewId: string; listingId: string; token: string; path: string }
+  | { outcome: "not-resendable" };
+
+/**
+ * A fresh link for a review whose link went stale.
+ *
+ * Without this the TTL would simply lose people: somebody writes a review,
+ * comes back to the email a fortnight later and is told the link is dead, with
+ * no way forward that does not involve writing the whole thing again (and the
+ * one-per-listing index refuses that anyway). The expired link is the
+ * credential — it proves the same mailbox — so nothing here takes an address
+ * as input and no address is ever echoed back to the page.
+ *
+ * The invite row is REWRITTEN rather than added to: exactly one link per review
+ * is live at any moment, so a resend genuinely retires the previous one instead
+ * of leaving a second working key behind.
+ *
+ * Only for a review still waiting on its first confirmation. Once
+ * `email_verified_at` is set the address is proved and re-sending would be a
+ * way to mail an arbitrary address on demand.
+ */
+export async function resendReviewVerification(
+  tx: TestDb,
+  _viewer: Viewer,
+  token: string,
+): Promise<ResendReviewResult> {
+  const ctx = await inviteContext(tx, token);
+  if (!ctx) return { outcome: "not-resendable" };
+  if (ctx.review.emailVerifiedAt !== null) return { outcome: "not-resendable" };
+  if (ctx.review.status !== "pending") return { outcome: "not-resendable" };
+
+  const fresh = mintToken();
+  await tx
+    .update(reviewInvites)
+    .set({ token: fresh, sentAt: now(), usedAt: null, updatedAt: now() })
+    .where(eq(reviewInvites.id, ctx.invite.id));
+
+  return {
+    outcome: "sent",
+    reviewId: ctx.review.reviewId,
+    listingId: ctx.invite.listingId,
+    token: fresh,
+    path: ctx.path,
   };
 }
 

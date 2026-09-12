@@ -1,7 +1,9 @@
 import { enqueueJob } from "@/lib/db/queries/jobs";
 import type { EnquiryResult } from "@/lib/db/queries/enquiries";
 import type { SubmissionResult } from "@/lib/db/queries/submissions";
-import type { CreateReviewResult, VerifyReviewResult } from "@/lib/db/queries/reviews";
+import type {
+  CreateReviewResult, ResendReviewResult, VerifyReviewResult,
+} from "@/lib/db/queries/reviews";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -102,4 +104,19 @@ export async function notifyReviewVerified(
   if (result.outcome !== "verified" || result.repeat) return;
   const payload: ReviewJobPayload = { reviewId: result.reviewId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_VERIFIED, payload });
+}
+
+/**
+ * A replacement verification link. Same job kind as the first one — the worker
+ * re-reads the review and picks up whatever token is live on the invite now —
+ * so there is no second template and no second handler to keep in step.
+ */
+export async function notifyReviewResent(
+  tx: TestDb,
+  viewer: Viewer,
+  result: ResendReviewResult,
+): Promise<void> {
+  if (result.outcome !== "sent") return;
+  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }

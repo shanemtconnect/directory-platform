@@ -16,7 +16,10 @@ import {
   reviewSummary,
   createReviewReply,
   reviewNotification,
+  previewReviewToken,
+  resendReviewVerification,
   REVIEWS_PER_PAGE,
+  REVIEW_TOKEN_TTL_DAYS,
 } from "./reviews";
 
 const GOOD_BODY =
@@ -247,6 +250,206 @@ describe("verifyReviewToken", () => {
       expect((await verifyReviewToken(tx, PUBLIC_VIEWER, "not-a-token")).outcome)
         .toBe("unknown-token");
       expect((await verifyReviewToken(tx, PUBLIC_VIEWER, "")).outcome).toBe("unknown-token");
+    });
+  });
+
+  describe("expiry", () => {
+    afterEach(() => { resetClock(); });
+
+    const SENT = new Date("2026-09-01T09:00:00Z");
+    const day = (n: number) => new Date(SENT.getTime() + n * 86_400_000);
+
+    async function invited(tx: TestDb) {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      setClock(SENT);
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      return { listingId, token: created.token, reviewId: created.reviewId };
+    }
+
+    it("still verifies inside the window", async () => {
+      await withTestDb(async (tx) => {
+        const { token } = await invited(tx);
+        setClock(day(REVIEW_TOKEN_TTL_DAYS - 1));
+        expect((await verifyReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("verified");
+      });
+    });
+
+    it("expires after the TTL and publishes nothing", async () => {
+      await withTestDb(async (tx) => {
+        const { token, listingId, reviewId } = await invited(tx);
+        setClock(day(REVIEW_TOKEN_TTL_DAYS + 1));
+
+        const result = await verifyReviewToken(tx, PUBLIC_VIEWER, token);
+        expect(result.outcome).toBe("expired");
+        if (result.outcome !== "expired") return;
+        expect(result.listingId).toBe(listingId);
+        expect(result.path).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
+
+        const [row] = await tx.select().from(reviews).where(eq(reviews.id, reviewId));
+        expect(row!.status).toBe("pending");
+        expect(row!.emailVerifiedAt).toBeNull();
+        const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+        expect(listing!.ratingCount).toBe(0);
+        // And the link is not burned — it stays expired rather than becoming a repeat.
+        const [invite] = await tx
+          .select().from(reviewInvites).where(eq(reviewInvites.token, token));
+        expect(invite!.usedAt).toBeNull();
+      });
+    });
+
+    it("an invite with no send date is treated as expired, not as valid forever", async () => {
+      await withTestDb(async (tx) => {
+        const { token } = await invited(tx);
+        await tx.update(reviewInvites).set({ sentAt: null })
+          .where(eq(reviewInvites.token, token));
+        expect((await verifyReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("expired");
+      });
+    });
+
+    it("an already-used link stays a repeat however old it is", async () => {
+      await withTestDb(async (tx) => {
+        const { token } = await invited(tx);
+        await verifyReviewToken(tx, PUBLIC_VIEWER, token);
+        setClock(day(REVIEW_TOKEN_TTL_DAYS + 30));
+
+        const again = await verifyReviewToken(tx, PUBLIC_VIEWER, token);
+        expect(again.outcome).toBe("verified");
+        if (again.outcome !== "verified") return;
+        expect(again.repeat).toBe(true);
+      });
+    });
+  });
+});
+
+describe("previewReviewToken", () => {
+  afterEach(() => { resetClock(); });
+
+  async function invited(tx: TestDb) {
+    const ctx = await makeScaffold(tx);
+    const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+    setClock(new Date("2026-09-01T09:00:00Z"));
+    const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+    if (created.outcome !== "created") throw new Error(created.outcome);
+    return { listingId, token: created.token, reviewId: created.reviewId };
+  }
+
+  it("names the listing and confirms nothing", async () => {
+    await withTestDb(async (tx) => {
+      const { token, listingId, reviewId } = await invited(tx);
+      const preview = await previewReviewToken(tx, PUBLIC_VIEWER, token);
+
+      expect(preview.outcome).toBe("confirmable");
+      if (preview.outcome !== "confirmable") return;
+      expect(preview.listingName).toBe("The Old Barn");
+      expect(preview.listingPath).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
+
+      // The whole point of finding 2: a link scanner opening this publishes nothing.
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, reviewId));
+      expect(row!.status).toBe("pending");
+      expect(row!.emailVerifiedAt).toBeNull();
+      const [invite] = await tx
+        .select().from(reviewInvites).where(eq(reviewInvites.token, token));
+      expect(invite!.usedAt).toBeNull();
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing!.ratingCount).toBe(0);
+    });
+  });
+
+  it("tells expired, already-confirmed and unknown apart", async () => {
+    await withTestDb(async (tx) => {
+      const { token } = await invited(tx);
+      setClock(new Date("2026-09-20T09:00:00Z"));
+      expect((await previewReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("expired");
+      expect((await previewReviewToken(tx, PUBLIC_VIEWER, "made-up")).outcome).toBe("unknown");
+      expect((await previewReviewToken(tx, PUBLIC_VIEWER, "")).outcome).toBe("unknown");
+    });
+  });
+
+  it("reports a spent link as already-confirmed, with somewhere to go", async () => {
+    await withTestDb(async (tx) => {
+      const { token } = await invited(tx);
+      await verifyReviewToken(tx, PUBLIC_VIEWER, token);
+
+      const preview = await previewReviewToken(tx, PUBLIC_VIEWER, token);
+      expect(preview.outcome).toBe("already-confirmed");
+      if (preview.outcome !== "already-confirmed") return;
+      expect(preview.status).toBe("published");
+      expect(preview.listingPath).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
+    });
+  });
+});
+
+describe("resendReviewVerification", () => {
+  afterEach(() => { resetClock(); });
+
+  const SENT = new Date("2026-09-01T09:00:00Z");
+
+  async function stale(tx: TestDb) {
+    const ctx = await makeScaffold(tx);
+    const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+    setClock(SENT);
+    const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+    if (created.outcome !== "created") throw new Error(created.outcome);
+    setClock(new Date(SENT.getTime() + (REVIEW_TOKEN_TTL_DAYS + 2) * 86_400_000));
+    return { listingId, token: created.token, reviewId: created.reviewId };
+  }
+
+  it("mints a fresh token that works, and kills the old one", async () => {
+    await withTestDb(async (tx) => {
+      const { token, reviewId } = await stale(tx);
+
+      const result = await resendReviewVerification(tx, PUBLIC_VIEWER, token);
+      expect(result.outcome).toBe("sent");
+      if (result.outcome !== "sent") return;
+      expect(result.reviewId).toBe(reviewId);
+      expect(result.token).not.toBe(token);
+
+      // The dead link is dead: it no longer resolves to anything at all.
+      expect((await verifyReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("unknown-token");
+      expect((await verifyReviewToken(tx, PUBLIC_VIEWER, result.token)).outcome).toBe("verified");
+    });
+  });
+
+  it("refuses once the review has already been confirmed", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const { created } = await published(tx, listingId);
+      if (created.outcome !== "created") return;
+
+      expect((await resendReviewVerification(tx, PUBLIC_VIEWER, created.token)).outcome)
+        .toBe("not-resendable");
+    });
+  });
+
+  it("refuses a token nobody issued", async () => {
+    await withTestDb(async (tx) => {
+      expect((await resendReviewVerification(tx, PUBLIC_VIEWER, "made-up")).outcome)
+        .toBe("not-resendable");
+      expect((await resendReviewVerification(tx, PUBLIC_VIEWER, "")).outcome)
+        .toBe("not-resendable");
+    });
+  });
+
+  it("is usable while the first link is still live, and only one link is ever live", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      setClock(SENT);
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") return;
+
+      const first = await resendReviewVerification(tx, PUBLIC_VIEWER, created.token);
+      if (first.outcome !== "sent") throw new Error(first.outcome);
+      const second = await resendReviewVerification(tx, PUBLIC_VIEWER, first.token);
+      if (second.outcome !== "sent") throw new Error(second.outcome);
+
+      const rows = await tx.select().from(reviewInvites)
+        .where(eq(reviewInvites.listingId, listingId));
+      expect(rows, "the invite is rewritten in place, not stacked up").toHaveLength(1);
+      expect(rows[0]!.token).toBe(second.token);
     });
   });
 });

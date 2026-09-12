@@ -42,6 +42,13 @@ export async function GET(
     return verified;
   });
 
+  if (result.outcome === "expired") {
+    // Nothing was published and the token was not burned. Finding 2's
+    // confirmation page replaces this handler and offers a fresh link; until
+    // then, say so rather than pretending the link worked.
+    return new NextResponse(null, { status: 410 });
+  }
+
   if (result.outcome === "unknown-token") {
     // A token nobody issued, or one that never matched a review. Not a
     // redirect: there is nowhere meaningful to send them.

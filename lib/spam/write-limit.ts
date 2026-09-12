@@ -111,3 +111,13 @@ export const REVIEW_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
  * catching up on a month of reviews in one sitting must not be cut off.
  */
 export const REVIEW_REPLY_RATE_LIMIT = { limit: 20, windowSeconds: 3600 } as const;
+
+/**
+ * One an hour, on the "send me a new confirmation link" button.
+ *
+ * The button takes an expired token and mails a fresh link to the address that
+ * token was issued to, so it is a way to make the site send mail — tight on
+ * purpose. One is enough for the person who actually lost the email, and not
+ * enough to use the button as a way to pester somebody else's inbox.
+ */
+export const REVIEW_RESEND_RATE_LIMIT = { limit: 1, windowSeconds: 3600 } as const;
