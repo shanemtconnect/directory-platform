@@ -10,7 +10,17 @@ import { PillarPage } from "@/components/pillar/PillarPage";
 import { ListingDetail } from "@/components/listing/ListingDetail";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-detail";
-import { listingSchema, pillarSchema, breadcrumbSchema, faqSchema } from "@/lib/schema/builders";
+import {
+  listingSchema, pillarSchema, breadcrumbSchema, faqSchema, reviewsPageSchema,
+  type RenderedReview,
+} from "@/lib/schema/builders";
+import { features } from "@/lib/features/flags";
+import { guardFeature } from "@/lib/features/guard";
+import {
+  reviewSummary, listPublishedReviews, countPublishedReviews, REVIEWS_PER_PAGE,
+  type PublicReview,
+} from "@/lib/db/queries/reviews";
+import { ReviewsPage } from "@/components/reviews/ReviewsPage";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
@@ -71,6 +81,23 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The reviews a page RENDERS, in the shape the JSON-LD builder takes.
+ *
+ * Built from the same array that is handed to the component, never from a
+ * separate query: markup that asserts a review the page did not show is the
+ * thing the whole module is careful about.
+ */
+function renderedReviews(reviews: PublicReview[]): RenderedReview[] {
+  return reviews.map((r) => ({
+    author: r.displayName ?? "Anonymous",
+    rating: r.rating,
+    title: r.title,
+    body: r.body,
+    published: r.createdAt,
+  }));
+}
+
 /** Strips any trailing /page/N so pagination links build from the clean path. */
 function pillarBasePath(segments: string[]): string {
   const rest =
@@ -106,6 +133,12 @@ export default async function CatchAllPage({ params }: Props) {
       const cityPath = `/${segments[0]}`;
       const path = `/${segments.join("/")}`;
 
+      // `features.reviews` is a build-time constant, so with the flag off this
+      // query, the block and the rating markup are all tree-shaken away.
+      const reviews = features.reviews
+        ? await reviewSummary(db as never, PUBLIC_VIEWER, result.listingId)
+        : null;
+
       return (
         <>
           <JsonLd
@@ -121,8 +154,15 @@ export default async function CatchAllPage({ params }: Props) {
               imageUrls: detail.images
                 .map((i) => absoluteMediaUrl(i.storagePath))
                 .filter((u): u is string => u !== null),
-              // No rating is passed: reviews land in Phase 6, and until the
-              // rating is visible on the page it must not be in the markup.
+              // The rating is passed ONLY when the page is rendering the
+              // summary block below it — same numbers, same query, one
+              // decision. A count of zero renders nothing and asserts nothing.
+              ...(reviews && reviews.count > 0 && reviews.average !== null
+                ? {
+                    rating: { value: reviews.average, count: reviews.count },
+                    reviews: renderedReviews(reviews.recent),
+                  }
+                : {}),
             })}
           />
           <JsonLd
@@ -132,7 +172,71 @@ export default async function CatchAllPage({ params }: Props) {
               { name: detail.listing.name, path },
             ])}
           />
-          <ListingDetail detail={detail} related={related} cityPath={cityPath} />
+          <ListingDetail
+            detail={detail}
+            related={related}
+            cityPath={cityPath}
+            reviews={reviews}
+            reviewsPath={`${path}/reviews`}
+            leaveReviewPath={`/leave-review/${detail.listing.id}`}
+          />
+        </>
+      );
+    }
+
+    case "listing-reviews": {
+      // First line, before any query: with the flag off this URL is a 404 and
+      // nothing below it exists.
+      guardFeature("reviews");
+
+      const detail = await getListingDetail(db as never, PUBLIC_VIEWER, result.listingId);
+      if (!detail) notFound();
+
+      const [rows, total] = await Promise.all([
+        listPublishedReviews(db as never, PUBLIC_VIEWER, result.listingId, { page: result.page }),
+        countPublishedReviews(db as never, PUBLIC_VIEWER, result.listingId),
+      ]);
+
+      const totalPages = Math.max(1, Math.ceil(total / REVIEWS_PER_PAGE));
+      // Same rule as the pillar pages: a page past the end has nothing on it
+      // and must 404 rather than render an empty, indexable page.
+      if (result.page > totalPages) notFound();
+
+      const cityPath = `/${segments[0]}`;
+      const listingPath = `/${segments[0]}/${segments[1]}`;
+      const basePath = pillarBasePath(segments);
+      const pagePath = result.page === 1 ? basePath : `${basePath}/page/${result.page}`;
+      const schema = reviewsPageSchema({
+        listingName: detail.listing.name,
+        listingPath,
+        path: pagePath,
+        reviews: renderedReviews(rows),
+      });
+
+      return (
+        <>
+          {schema && <JsonLd data={schema} />}
+          <JsonLd
+            data={breadcrumbSchema([
+              { name: "Home", path: "/" },
+              { name: detail.city.name, path: cityPath },
+              { name: detail.listing.name, path: listingPath },
+              { name: "Reviews", path: basePath },
+            ])}
+          />
+          <ReviewsPage
+            listingName={detail.listing.name}
+            listingPath={listingPath}
+            cityName={detail.city.name}
+            cityPath={cityPath}
+            reviews={rows}
+            total={total}
+            average={detail.listing.ratingAvg === null ? null : Number(detail.listing.ratingAvg)}
+            page={result.page}
+            totalPages={totalPages}
+            basePath={basePath}
+            leaveReviewPath={`/leave-review/${detail.listing.id}`}
+          />
         </>
       );
     }
@@ -248,6 +352,36 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description: shown ? metaDescription(shown) : undefined,
       alternates: { canonical: path },
       openGraph: pageOpenGraph({ title, url: path }),
+    };
+  }
+
+  if (result.kind === "listing-reviews") {
+    if (!features.reviews) return {};
+    const detail = await getListingDetail(db as never, PUBLIC_VIEWER, result.listingId);
+    if (!detail) return {};
+
+    const total = await countPublishedReviews(db as never, PUBLIC_VIEWER, result.listingId);
+    const basePath = `/${detail.city.slug}/${detail.listing.slug}/reviews`;
+    const onPageOne = result.page === 1;
+    const path = onPageOne ? basePath : `${basePath}/page/${result.page}`;
+    const title = onPageOne
+      ? `Reviews of ${detail.listing.name}`
+      : `Reviews of ${detail.listing.name} — page ${result.page}`;
+
+    return {
+      title,
+      description:
+        total > 0
+          ? metaDescription(
+              `Read ${total} verified ${total === 1 ? "review" : "reviews"} of ${detail.listing.name} in ${detail.city.name}.`,
+            )
+          : undefined,
+      alternates: { canonical: path },
+      openGraph: pageOpenGraph({ title, url: path }),
+      // A reviews page with no reviews on it has nothing to rank for and would
+      // be a thin duplicate of the listing page on every listing that has none
+      // — which, on a young directory, is most of them.
+      robots: total === 0 ? { index: false, follow: true } : undefined,
     };
   }
 

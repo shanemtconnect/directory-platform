@@ -2,6 +2,9 @@ import { enqueueJob } from "@/lib/db/queries/jobs";
 import type { EnquiryResult } from "@/lib/db/queries/enquiries";
 import type { SubmissionResult } from "@/lib/db/queries/submissions";
 import type { RemovalDecision, RemovalRequestResult, ReportResult } from "@/lib/db/queries/trust";
+import type {
+  CreateReviewResult, ResendReviewResult, VerifyReviewResult,
+} from "@/lib/db/queries/reviews";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -150,4 +153,63 @@ export async function notifyDecision(
   payload: DecisionJobPayload,
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind: NOTIFY_DECISION, payload });
+}
+
+/* ------------------------------------------------------ reviews (Task 22) */
+
+/**
+ * Appended rather than woven in: this file is shared by several modules
+ * landing in parallel, so each one adds its kinds at the end and pushes them
+ * onto `NOTIFY_KINDS` instead of editing the literal above — a line every
+ * module would otherwise be rewriting at once.
+ */
+export const NOTIFY_REVIEW_SUBMITTED = "notify.review.submitted";
+export const NOTIFY_REVIEW_VERIFIED = "notify.review.verified";
+
+NOTIFY_KINDS.push(NOTIFY_REVIEW_SUBMITTED, NOTIFY_REVIEW_VERIFIED);
+
+/** Ids, never copies: the worker re-reads the review when it runs. */
+export type ReviewJobPayload = { reviewId: string };
+
+/**
+ * The verification email. Enqueued inside the transaction that wrote the
+ * review, so a review row without a link to confirm it cannot exist.
+ */
+export async function notifyReviewSubmitted(
+  tx: TestDb,
+  viewer: Viewer,
+  result: CreateReviewResult,
+): Promise<void> {
+  if (result.outcome !== "created") return;
+  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
+}
+
+/**
+ * What happened after the click — published, or held for a moderator. Not sent
+ * on a repeat click: the owner should hear about a review once.
+ */
+export async function notifyReviewVerified(
+  tx: TestDb,
+  viewer: Viewer,
+  result: VerifyReviewResult,
+): Promise<void> {
+  if (result.outcome !== "verified" || result.repeat) return;
+  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_VERIFIED, payload });
+}
+
+/**
+ * A replacement verification link. Same job kind as the first one — the worker
+ * re-reads the review and picks up whatever token is live on the invite now —
+ * so there is no second template and no second handler to keep in step.
+ */
+export async function notifyReviewResent(
+  tx: TestDb,
+  viewer: Viewer,
+  result: ResendReviewResult,
+): Promise<void> {
+  if (result.outcome !== "sent") return;
+  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }

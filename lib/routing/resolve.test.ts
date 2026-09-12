@@ -399,3 +399,131 @@ describe("splitPagination bounds", () => {
       });
   });
 });
+
+/**
+ * The reviews sub-page is the only thing that hangs off a listing URL, and it
+ * has to obey every rule the rest of the resolver already does — case, /page/1,
+ * the page bound — without loosening the "a listing is exactly two segments"
+ * rule that keeps /[city]/[category]/[listing] a 404.
+ */
+describe("listing reviews sub-page", () => {
+  it("resolves /[city]/[listing]/reviews", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "The Barn", kind: "listing", entityId: listingId });
+      expect(await resolveRoute(tx, ["leeds", "the-barn", "reviews"], "niche-national"))
+        .toEqual({ kind: "listing-reviews", listingId, parentId: cityId, page: 1 });
+    });
+  });
+
+  it("paginates with /page/N like every other list on the site", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "The Barn", kind: "listing", entityId: listingId });
+      expect(await resolveRoute(tx, ["leeds", "the-barn", "reviews", "page", "3"], "niche-national"))
+        .toEqual({ kind: "listing-reviews", listingId, parentId: cityId, page: 3 });
+    });
+  });
+
+  it("301s /reviews/page/1 to the unpaginated reviews path", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "The Barn", kind: "listing", entityId: listingId });
+      expect(await resolveRoute(tx, ["leeds", "the-barn", "reviews", "page", "1"], "niche-national"))
+        .toEqual({ kind: "redirect", to: "/leeds/the-barn/reviews", status: 301 });
+    });
+  });
+
+  it("301s a mixed-case reviews path to lowercase", async () => {
+    await withTestDb(async (tx) => {
+      expect(await resolveRoute(tx, ["Leeds", "The-Barn", "Reviews"], "niche-national"))
+        .toEqual({ kind: "redirect", to: "/leeds/the-barn/reviews", status: 301 });
+    });
+  });
+
+  it("still bounds the page number", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "The Barn", kind: "listing", entityId: listingId });
+      expect(
+        await resolveRoute(
+          tx, ["leeds", "the-barn", "reviews", "page", String(MAX_PAGE_NUMBER + 1)], "niche-national",
+        ),
+      ).toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("does not hang a reviews page off a category", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), categoryId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "Barn Venues", kind: "category", entityId: categoryId });
+      expect(await resolveRoute(tx, ["leeds", "barn-venues", "reviews"], "niche-national"))
+        .toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("still honours a redirect row for a category reviews path", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), categoryId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "Barn Venues", kind: "category", entityId: categoryId });
+      // A category has no reviews page, but a path that once existed and was
+      // redirected must not lose its redirect just because the third segment
+      // happens to be the word the resolver reserves.
+      await tx.insert(redirects).values({
+        fromPath: "/leeds/barn-venues/reviews",
+        toPath: "/leeds/barn-venues",
+        statusCode: 301,
+      });
+      expect(await resolveRoute(tx, ["leeds", "barn-venues", "reviews"], "niche-national"))
+        .toEqual({ kind: "redirect", to: "/leeds/barn-venues", status: 301 });
+    });
+  });
+
+  it("keeps any other third segment a 404", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "The Barn", kind: "listing", entityId: listingId });
+      expect(await resolveRoute(tx, ["leeds", "the-barn", "photos"], "niche-national"))
+        .toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("leaves the plain listing URL unpaginated", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "The Barn", kind: "listing", entityId: listingId });
+      expect(await resolveRoute(tx, ["leeds", "the-barn", "page", "2"], "niche-national"))
+        .toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("works the same way under a vertical in local-multi-vertical mode", async () => {
+    await withTestDb(async (tx) => {
+      const verticalId = randomUUID(), listingId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Plumbers", kind: "vertical", entityId: verticalId });
+      await allocateSlug(tx, { parentScope: verticalId, desired: "Ace Plumbing", kind: "listing", entityId: listingId });
+      expect(await resolveRoute(tx, ["plumbers", "ace-plumbing", "reviews"], "local-multi-vertical"))
+        .toEqual({ kind: "listing-reviews", listingId, parentId: verticalId, page: 1 });
+    });
+  });
+
+  it("prefers an exact redirect row over resolving the reviews path", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await tx.insert(redirects).values({
+        fromPath: "/leeds/old-barn/reviews", toPath: "/leeds/the-barn/reviews", statusCode: 301,
+      });
+      expect(await resolveRoute(tx, ["leeds", "old-barn", "reviews"], "niche-national"))
+        .toEqual({ kind: "redirect", to: "/leeds/the-barn/reviews", status: 301 });
+    });
+  });
+});

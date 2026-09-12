@@ -108,3 +108,34 @@ export const AUTH_RATE_LIMIT = { limit: 20, windowSeconds: 600 } as const;
 export function retryMessage(result: RateLimitResult): string {
   return `Too many changes from this connection. Please try again in ${Math.ceil(result.retryAfterSeconds / 60)} minutes.`;
 }
+
+/**
+ * Three an hour, checked after validation. (Reviews module, Task 22.)
+ *
+ * A person reviewing several businesses they used for the same job is real —
+ * three is room for that and for a retry. It is deliberately tighter than the
+ * enquiry budget because a review moves a public rating and an enquiry does
+ * not, and because the address still has to be confirmed before anything is
+ * published: the rate limit is the cheap gate, the verification link is the
+ * real one.
+ */
+export const REVIEW_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
+ * Twenty an hour for an owner answering reviews.
+ *
+ * Replying is a signed-in, owner-only action with one reply allowed per
+ * review, so the ceiling exists to stop a loop, not a person: a business
+ * catching up on a month of reviews in one sitting must not be cut off.
+ */
+export const REVIEW_REPLY_RATE_LIMIT = { limit: 20, windowSeconds: 3600 } as const;
+
+/**
+ * One an hour, on the "send me a new confirmation link" button.
+ *
+ * The button takes an expired token and mails a fresh link to the address that
+ * token was issued to, so it is a way to make the site send mail — tight on
+ * purpose. One is enough for the person who actually lost the email, and not
+ * enough to use the button as a way to pester somebody else's inbox.
+ */
+export const REVIEW_RESEND_RATE_LIMIT = { limit: 1, windowSeconds: 3600 } as const;

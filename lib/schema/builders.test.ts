@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import {
   organisationSchema, websiteSchema, breadcrumbSchema,
-  listingSchema, pillarSchema, faqSchema, siteUrl,
+  listingSchema, pillarSchema, faqSchema, siteUrl, reviewsPageSchema,
 } from "./builders";
 import type { listings, cities, categories } from "@/lib/db/schema";
 
@@ -179,5 +179,87 @@ describe("organisation and website", () => {
 
   it("builds absolute URLs from NEXT_PUBLIC_SITE_URL with no double slash", () => {
     expect(siteUrl("/leeds")).toBe("https://example.test/leeds");
+  });
+});
+
+/**
+ * Review markup is the highest-risk structured data on the site: rich results
+ * that assert a rating nobody wrote are exactly what earns a manual action.
+ * The rule is the same one aggregateRating already follows — if it is not on
+ * the page it is not in the markup.
+ */
+describe("review markup", () => {
+  const written = [
+    {
+      author: "Sam P",
+      rating: 5,
+      title: "Did what they said",
+      body: "Straightforward from the first reply to the final invoice.",
+      published: new Date("2026-03-01T10:00:00Z"),
+    },
+    {
+      author: "Alex T",
+      rating: 3,
+      title: null,
+      body: "Fine, but slow to reply.",
+      published: new Date("2026-02-01T10:00:00Z"),
+    },
+  ];
+
+  it("emits nothing when no reviews are passed", () => {
+    expect(listingSchema(base).review).toBeUndefined();
+  });
+
+  it("emits nothing for an empty list rather than an empty array", () => {
+    expect(listingSchema({ ...base, reviews: [] }).review).toBeUndefined();
+  });
+
+  it("emits one Review node per review that is rendered", () => {
+    const out = listingSchema({
+      ...base, rating: { value: 4, count: 2 }, reviews: written,
+    });
+    expect(Array.isArray(out.review)).toBe(true);
+    expect(out.review).toHaveLength(2);
+    expect((out.review as unknown[])[0]).toEqual({
+      "@type": "Review",
+      author: { "@type": "Person", name: "Sam P" },
+      reviewRating: { "@type": "Rating", ratingValue: 5, bestRating: 5, worstRating: 1 },
+      name: "Did what they said",
+      reviewBody: "Straightforward from the first reply to the final invoice.",
+      datePublished: "2026-03-01",
+    });
+  });
+
+  it("omits a title that was never written rather than inventing one", () => {
+    const out = listingSchema({ ...base, reviews: [written[1]!] });
+    expect((out.review as Record<string, unknown>[])[0]).not.toHaveProperty("name");
+  });
+
+  it("does not emit a rating summary just because reviews were passed", () => {
+    expect(listingSchema({ ...base, reviews: written }).aggregateRating).toBeUndefined();
+  });
+
+  it("builds a standalone review page as a CollectionPage about the business", () => {
+    const out = reviewsPageSchema({
+      listingName: "The Old Barn",
+      listingPath: "/leeds/the-old-barn",
+      path: "/leeds/the-old-barn/reviews",
+      reviews: written,
+    });
+    expect(out).not.toBeNull();
+    if (out === null) return;
+    expect(out["@type"]).toBe("CollectionPage");
+    expect(out.url).toBe(siteUrl("/leeds/the-old-barn/reviews"));
+    expect(out.mainEntity).toMatchObject({ "@id": `${siteUrl("/leeds/the-old-barn")}#business` });
+    expect((out.mainEntity as { review: unknown[] }).review).toHaveLength(2);
+  });
+
+  it("returns null for a reviews page with nothing on it", () => {
+    expect(reviewsPageSchema({
+      listingName: "The Old Barn",
+      listingPath: "/leeds/the-old-barn",
+      path: "/leeds/the-old-barn/reviews",
+      reviews: [],
+    })).toBeNull();
   });
 });
