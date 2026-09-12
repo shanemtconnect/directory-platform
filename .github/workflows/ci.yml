@@ -67,6 +67,43 @@ jobs:
       - name: Build with all optional flags ON
         run: pnpm build:flags-on
 
+      # Optional, and silent when it isn't configured: most clones have no
+      # Sentry account yet (see README → Monitoring), and a build failing over
+      # a missing release-upload token would be exactly the outage Sentry was
+      # meant to help diagnose.
+      #
+      # @sentry/cli's own postinstall is disabled (`allowBuilds` in
+      # pnpm-workspace.yaml — it downloads a ~16 MB binary nothing here uses by
+      # default) but the CLI still runs: recent @sentry/cli ships the binary as
+      # a platform-specific optionalDependency (`@sentry/cli-linux-x64` on this
+      # runner) with no install script of its own, and `getPath()` finds it
+      # there. The disabled postinstall is only a fallback CDN downloader for
+      # platforms with no such package — confirmed locally with
+      # `node .../@sentry/cli/bin/sentry-cli --version` against this lockfile.
+      #
+      # `pnpm exec sentry-cli` does not find it: @sentry/cli is a transitive
+      # dependency of @sentry/nextjs (via @sentry/bundler-plugin-core), not a
+      # direct one, so pnpm's strict node_modules never links its bin to the
+      # project root. `find` locates it in the pnpm virtual store instead of
+      # adding @sentry/cli as a direct dependency just to expose a bin nothing
+      # else needs.
+      - name: Upload source maps to Sentry
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          set -euo pipefail
+          cli_dir=$(find node_modules/.pnpm -maxdepth 1 -iname '@sentry+cli@*' -print -quit)
+          if [ -z "$cli_dir" ]; then
+            echo "SENTRY_AUTH_TOKEN is set but @sentry/cli is not in node_modules/.pnpm — skipping source map upload" >&2
+            exit 1
+          fi
+          sentry_cli="$cli_dir/node_modules/@sentry/cli/bin/sentry-cli"
+          node "$sentry_cli" sourcemaps inject .next
+          node "$sentry_cli" sourcemaps upload --release="$GITHUB_SHA" .next
+
   # End-to-end smoke tests against a real production build and a seeded
   # database. Separate job, not a step on `test`: it needs seed data, a
   # browser, and a running server, none of which the unit job wants.
@@ -151,11 +188,17 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
 
-      - name: Migrate
-        run: pnpm db:migrate
-
-      - name: Seed
-        run: pnpm seed
+      # scripts/e2e-db.sh (added in Task 19) creates directory_e2e if it is not
+      # already there, migrates it and seeds it — the same script a developer
+      # runs locally via `pnpm test:e2e:db`, so CI and a laptop build the
+      # database the same way. `job.services.postgres.id` is the running
+      # postgres service container's id: the script drives it with `docker
+      # exec` (the same approach as scripts/reseed-dev.sh) rather than a local
+      # psql client, which this runner does not have.
+      - name: Create and seed directory_e2e
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: pnpm test:e2e:db
 
       # playwright.config.ts starts the server itself: build, assemble the
       # standalone bundle, then run node .next/standalone/server.js.
@@ -184,3 +227,14 @@ jobs:
           docker build --target runner \
             --build-arg NEXT_PUBLIC_SITE_URL=https://ci.example \
             -t directory-platform:ci .
+
+      # Same Dockerfile, different stage (worker/index.ts under tsx). It is a
+      # separate Coolify application in production (see README → Deploy) and
+      # nothing else in CI builds it, so a break here — a missing COPY, an
+      # import only the worker's dev-inclusive tree can resolve — is only
+      # otherwise discovered when a deploy fails.
+      - name: Build the worker image
+        run: |
+          docker build --target worker \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://ci.example \
+            -t directory-platform:ci-worker .
