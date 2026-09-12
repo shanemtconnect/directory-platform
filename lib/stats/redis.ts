@@ -79,10 +79,18 @@ function wrap(c: RedisClientType): StatsRedisClient {
       return { cursor: String(raw.cursor), keys: raw.keys ?? [] };
     },
     takeAll: async (keys) => {
-      const values = await Promise.all(keys.map((k) => c.getDel(k)));
+      // `allSettled`, not `all`: one GETDEL that rejects (a key SCAN handed us
+      // that something else already deleted and replaced, say) must not throw
+      // the whole pipeline away. The keys before and after it in the batch
+      // have already been taken out of Redis by the time any of this
+      // resolves — `all`'s reject-on-first-rejection would still lose those
+      // counts even though GETDEL itself deleted them.
+      const results = await Promise.allSettled(keys.map((k) => c.getDel(k)));
       const out = new Map<string, number>();
       keys.forEach((key, i) => {
-        const n = Number(values[i]);
+        const result = results[i]!;
+        if (result.status !== "fulfilled") return;
+        const n = Number(result.value);
         // A key that vanished between SCAN and GETDEL (expired, or taken by
         // another flusher) reads as null; a non-numeric one was not ours.
         if (Number.isSafeInteger(n) && n > 0) out.set(key, n);
