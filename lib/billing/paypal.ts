@@ -85,6 +85,19 @@ export function paypalApiBase(env: Env = process.env): string {
     : "https://api-m.sandbox.paypal.com";
 }
 
+/**
+ * Where a customer manages the card behind a subscription.
+ *
+ * PayPal keeps the payment method on the PayPal account, not on the
+ * subscription, so there is nothing for this site to collect or store — the
+ * honest "change payment method" link is PayPal's own automatic-payments page.
+ * A per-subscription `edit` link is used in preference when PayPal offers one.
+ */
+export function paypalManageAccountUrl(env: Env = process.env): string {
+  const host = clean(env.PAYPAL_ENV) === "live" ? "www.paypal.com" : "www.sandbox.paypal.com";
+  return `https://${host}/myaccount/autopay/`;
+}
+
 export function billingConfigured(env: Env = process.env): boolean {
   return clean(env.PAYPAL_CLIENT_ID) !== "" && clean(env.PAYPAL_CLIENT_SECRET) !== "";
 }

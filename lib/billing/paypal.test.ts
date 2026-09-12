@@ -3,6 +3,7 @@ import {
   billingConfigured,
   createPayPalClient,
   paypalApiBase,
+  paypalManageAccountUrl,
   webhookVerificationConfigured,
   type PayPalHttp,
 } from "./paypal";
@@ -55,6 +56,15 @@ describe("paypalApiBase", () => {
     expect(paypalApiBase({})).toContain("sandbox");
     expect(paypalApiBase({ PAYPAL_ENV: "sandbox" })).toContain("sandbox");
     expect(paypalApiBase({ PAYPAL_ENV: "live" })).toBe("https://api-m.paypal.com");
+  });
+});
+
+describe("paypalManageAccountUrl", () => {
+  it("points at the same PayPal the subscription lives on", () => {
+    expect(paypalManageAccountUrl({})).toContain("sandbox");
+    expect(paypalManageAccountUrl({ PAYPAL_ENV: "live" })).toBe(
+      "https://www.paypal.com/myaccount/autopay/",
+    );
   });
 });
 
