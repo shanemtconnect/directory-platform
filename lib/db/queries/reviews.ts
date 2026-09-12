@@ -519,15 +519,37 @@ export async function moderateReview(
   if (!UUID.test(reviewId)) return { outcome: "unknown-review" };
 
   const [review] = await tx
-    .select({ id: reviews.id, listingId: reviews.listingId, status: reviews.status })
+    .select({
+      id: reviews.id,
+      listingId: reviews.listingId,
+      status: reviews.status,
+      flaggedReason: reviews.flaggedReason,
+    })
     .from(reviews)
     .where(eq(reviews.id, reviewId))
     .limit(1);
   if (!review) return { outcome: "unknown-review" };
 
+  /*
+   * Publishing clears the reason.
+   *
+   * A published row still carrying "held because: too-short" contradicts
+   * itself, and two things read that column as current: the admin queue
+   * filters on it, so a rescued review keeps reappearing in the queue it was
+   * rescued from, and the decision emails print it. It is not lost — the
+   * override goes into the audit row below as `clearedFlag`, which is where a
+   * contested rating is argued from. Any other status keeps the reason: a
+   * rejected or disputed review is exactly the one whose reason matters.
+   */
+  const clearedFlag = input.status === "published" ? review.flaggedReason : null;
+
   await tx
     .update(reviews)
-    .set({ status: input.status, updatedAt: now() })
+    .set({
+      status: input.status,
+      ...(input.status === "published" ? { flaggedReason: null } : {}),
+      updatedAt: now(),
+    })
     .where(eq(reviews.id, reviewId));
 
   const actorId = await profileIdOf(tx, viewer);
@@ -536,7 +558,7 @@ export async function moderateReview(
     action: "review.moderate",
     entityType: "review",
     entityId: reviewId,
-    meta: { from: review.status, to: input.status, note: input.note ?? null },
+    meta: { from: review.status, to: input.status, note: input.note ?? null, clearedFlag },
     createdAt: now(),
     updatedAt: now(),
   });

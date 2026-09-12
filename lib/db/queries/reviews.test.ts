@@ -553,6 +553,44 @@ describe("moderateReview", () => {
     });
   });
 
+  it("clears the flag when an admin publishes a held review", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const { verified } = await published(tx, listingId, { body: "Fine." });
+      if (verified.outcome !== "verified") return;
+      expect(verified.flaggedReason).toBe("too-short");
+      const admin = await adminViewer(tx);
+
+      await moderateReview(tx, admin, verified.reviewId, { status: "published" });
+
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, verified.reviewId));
+      // A published review carrying "held because: too-short" is a row that
+      // contradicts itself — the admin queue filters on the reason, and the
+      // decision emails print it.
+      expect(row!.flaggedReason).toBeNull();
+
+      // The override is still on the record, where a contested rating is argued.
+      const [entry] = await tx
+        .select().from(auditLog).where(eq(auditLog.entityId, verified.reviewId));
+      expect((entry!.meta as Record<string, unknown>)["clearedFlag"]).toBe("too-short");
+    });
+  });
+
+  it("keeps the reason on a review that is not being published", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const { verified } = await published(tx, listingId, { body: "Fine." });
+      if (verified.outcome !== "verified") return;
+      const admin = await adminViewer(tx);
+
+      await moderateReview(tx, admin, verified.reviewId, { status: "rejected" });
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, verified.reviewId));
+      expect(row!.flaggedReason).toBe("too-short");
+    });
+  });
+
   it("un-publishing drops the review out of the aggregate", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);

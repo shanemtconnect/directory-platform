@@ -251,15 +251,18 @@ export async function resolveRoute(
 
   switch (child.kind) {
     case "category":
-      // A category has no reviews of its own; only a listing does.
-      if (reviews) return { kind: "not-found" };
+      // A category has no reviews of its own; only a listing does. A path that
+      // once existed still gets its redirect, though — an exact `redirects`
+      // row beats resolution everywhere else in this function, and the word in
+      // third position is no reason to make this the one place it does not.
+      if (reviews) return (await redirectFor(tx, path)) ?? { kind: "not-found" };
       return {
         kind: "pillar",
         page,
         scope: { type: "city-category", cityId: parentId, categoryId: child.entityId },
       };
     case "area":
-      if (reviews) return { kind: "not-found" };
+      if (reviews) return (await redirectFor(tx, path)) ?? { kind: "not-found" };
       return {
         kind: "pillar",
         page,

@@ -467,6 +467,24 @@ describe("listing reviews sub-page", () => {
     });
   });
 
+  it("still honours a redirect row for a category reviews path", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), categoryId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "Barn Venues", kind: "category", entityId: categoryId });
+      // A category has no reviews page, but a path that once existed and was
+      // redirected must not lose its redirect just because the third segment
+      // happens to be the word the resolver reserves.
+      await tx.insert(redirects).values({
+        fromPath: "/leeds/barn-venues/reviews",
+        toPath: "/leeds/barn-venues",
+        statusCode: 301,
+      });
+      expect(await resolveRoute(tx, ["leeds", "barn-venues", "reviews"], "niche-national"))
+        .toEqual({ kind: "redirect", to: "/leeds/barn-venues", status: 301 });
+    });
+  });
+
   it("keeps any other third segment a 404", async () => {
     await withTestDb(async (tx) => {
       const cityId = randomUUID(), listingId = randomUUID();
