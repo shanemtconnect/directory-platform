@@ -8,6 +8,8 @@ import type { PillarScope } from "./scope";
 export type RouteResolution =
   | { kind: "pillar"; scope: PillarScope; page: number }
   | { kind: "listing"; listingId: string; parentId: string }
+  /** /[city]/[listing]/reviews — the only sub-page a listing has. */
+  | { kind: "listing-reviews"; listingId: string; parentId: string; page: number }
   | { kind: "redirect"; to: string; status: number }
   | { kind: "not-found" };
 
@@ -167,6 +169,24 @@ export function normalisePathSegments(
   return { kind: "ok", segments: pagination.rest, lowered, page: pagination.page };
 }
 
+/**
+ * The one segment that may follow a listing slug.
+ *
+ * It is matched here rather than routed as its own file because the listing
+ * URL itself is resolved out of the slug registry — /[city]/[listing] is a
+ * catch-all, so /[city]/[listing]/reviews cannot be a static route without
+ * duplicating the whole lookup. Keeping it in the resolver is also what makes
+ * it inherit the page bound, the lowercase 301 and the /page/1 rule for free
+ * rather than reimplementing three canonicalisation rules on a fourth page.
+ *
+ * It is a literal, not a reserved slug: it only ever appears in third
+ * position, where nothing else can be, so a business called Reviews still gets
+ * /[city]/reviews. The flag check does NOT live here — the resolver has no
+ * business knowing about features, and app/[...segments] calls guardFeature so
+ * the route 404s with reviews off.
+ */
+export const REVIEWS_SEGMENT = "reviews";
+
 export async function resolveRoute(
   tx: TestDb,
   rawSegments: string[],
@@ -214,8 +234,13 @@ export async function resolveRoute(
     };
   }
 
+  // Exactly one three-segment shape exists, and only under a listing. Anything
+  // else three deep is still a 404 — /[city]/[category]/[listing] never was a
+  // URL and must not become one by way of this branch.
+  const reviews = segments.length === 3 && segments[2] === REVIEWS_SEGMENT;
+
   const second = segments[1];
-  if (segments.length > 2 || second === undefined) {
+  if (second === undefined || segments.length > (reviews ? 3 : 2)) {
     return (await redirectFor(tx, path)) ?? { kind: "not-found" };
   }
 
@@ -226,20 +251,24 @@ export async function resolveRoute(
 
   switch (child.kind) {
     case "category":
+      // A category has no reviews of its own; only a listing does.
+      if (reviews) return { kind: "not-found" };
       return {
         kind: "pillar",
         page,
         scope: { type: "city-category", cityId: parentId, categoryId: child.entityId },
       };
     case "area":
+      if (reviews) return { kind: "not-found" };
       return {
         kind: "pillar",
         page,
         scope: { type: "vertical-area", verticalId: parentId, areaId: child.entityId },
       };
     case "listing":
-      // A listing is one page. /listing/page/2 would serve the same detail page
-      // again under a second URL, so it is not a URL at all.
+      // The reviews sub-page IS a list, so it paginates; the detail page is
+      // one page, and /listing/page/2 would serve it again under a second URL.
+      if (reviews) return { kind: "listing-reviews", listingId: child.entityId, parentId, page };
       if (explicit) return { kind: "not-found" };
       return { kind: "listing", listingId: child.entityId, parentId };
     default:
