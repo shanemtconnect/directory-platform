@@ -102,6 +102,38 @@ site whose `robots.txt` says `Allow: /` while every response still says
 `noindex` — **flipping staging → production is a rebuild**, with
 `--build-arg SITE_ENV=production`.
 
+## Testing
+
+Three databases, on purpose — `corepack pnpm db:up` starts the one Postgres
+that holds all of them.
+
+| Database | Who owns it | Built by |
+| --- | --- | --- |
+| `directory_dev` | your `next dev` | `bash scripts/reseed-dev.sh` |
+| `directory_test` | the unit suite, one rolled-back transaction per test | `pnpm db:migrate` against it |
+| `directory_e2e` | Playwright | `corepack pnpm test:e2e:db` |
+
+```bash
+corepack pnpm test                     # units, TEST_DATABASE_URL
+corepack pnpm test:e2e:db              # create/migrate/seed directory_e2e
+corepack pnpm test:e2e                 # Playwright, against directory_e2e
+corepack pnpm test:e2e:db -- --reset   # start that database again from the seeds
+```
+
+The e2e suite **writes**. `e2e/location.spec.ts` submits a listing through the
+real form, which creates a city, a slug and a pending listing — that is the
+behaviour under test, and mocking it would prove nothing. So it gets its own
+database rather than scribbling on the one you are developing against, and the
+spec deletes what it created in an `afterAll` so repeat runs do not accumulate.
+`playwright.config.ts` defaults to `directory_e2e`; `DATABASE_URL` still wins,
+which is how CI points it at the service container.
+
+Two things to know before a local run: `E2E_PORT` overrides the default 3200,
+which matters because `reuseExistingServer` will otherwise hand your suite
+whatever is already listening there — another worktree's build, quietly testing
+somebody else's code. And the submission form is rate-limited to three per IP
+per hour; `redis-cli -n <db> FLUSHDB` clears it.
+
 ## Deploy
 
 The image builds two targets from one Dockerfile: `runner` (the app) and

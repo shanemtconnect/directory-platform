@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_DATABASE_URL } from "./e2e/database";
 
 /**
  * E2E smoke suite.
@@ -37,7 +38,11 @@ const START_STANDALONE = [
 
 /**
  * Defaults are the local dev stack from docker-compose.dev.yml, seeded with
- * 50 cities, 20 categories and 200 listings. CI supplies its own values.
+ * 50 cities, 20 categories and 200 listings — but its own database, NOT
+ * `directory_dev`. This suite writes: e2e/location.spec.ts submits a listing
+ * through the real form and creates a city with it. `bash scripts/e2e-db.sh`
+ * (`corepack pnpm test:e2e:db`) builds `directory_e2e`; DATABASE_URL still
+ * overrides, and CI supplies its own values.
  * NEXT_PUBLIC_SITE_URL is pinned to the test origin either way, because the
  * sitemap test asserts on the absolute URLs it produces.
  *
@@ -48,8 +53,7 @@ const START_STANDALONE = [
  * shell that exports its own would bind somewhere unreachable.
  */
 const SERVER_ENV: Record<string, string> = {
-  DATABASE_URL:
-    process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev",
+  DATABASE_URL: E2E_DATABASE_URL,
   REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6380",
   NEXT_PUBLIC_SITE_URL: BASE_URL,
   /**

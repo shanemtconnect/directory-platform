@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { withE2eDb } from "./database";
 
 /**
  * Auto city creation and the location switcher, end to end.
@@ -17,10 +18,38 @@ import { expect, test } from "@playwright/test";
  * Rate limit: three submissions per IP per hour. Running this file more than
  * three times inside an hour against the same Redis fails on the rate-limit
  * message, which is the app behaving correctly rather than a flake.
+ *
+ * What it writes, it removes again in afterAll — see below. The database this
+ * runs against is `directory_e2e` (scripts/e2e-db.sh), never `directory_dev`.
  */
 
 const NEW_TOWN = `Zedbury ${Date.now()}`;
 const NEW_TOWN_SLUG = NEW_TOWN.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+/**
+ * Everything the submission test created, removed again.
+ *
+ * Not because the rows are harmful — the town is noindexed and the listing is
+ * pending — but because they accumulate: a run a day leaves a year of Zedburys
+ * in the switcher's ORDER BY, in the admin queue and in every count a later
+ * assertion might make. Deleted by hand rather than by truncating, so the seed
+ * data the rest of the suite asserts on is untouched.
+ *
+ * Order matters: listings reference the city, and the slug registry holds both
+ * the city's root-scope row and the listing's row scoped to the city's id.
+ */
+test.afterAll(async () => {
+  await withE2eDb(async (sql) => {
+    const [city] = await sql`select id from cities where slug = ${NEW_TOWN_SLUG}`;
+    if (!city) return;
+    const cityId = city.id as string;
+    await sql`delete from listings where city_id = ${cityId}`;
+    await sql`delete from slugs where parent_scope = ${cityId} or entity_id = ${cityId}`;
+    await sql`delete from audit_log where entity_id = ${cityId}`;
+    await sql`delete from audit_log where meta->>'submittedCity' = ${NEW_TOWN}`;
+    await sql`delete from cities where id = ${cityId}`;
+  });
+});
 
 test.describe("a submission for a town we do not cover", () => {
   test("creates the town, renders it noindex, and keeps it out of the sitemap", async ({
