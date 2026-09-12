@@ -216,6 +216,8 @@ export async function confirmClaimDocument(input: {
     return { ok: false, message: GENERIC_ERROR };
   }
 
+  const ip = clientIp(await headers());
+
   const attached = await db.transaction(async (tx) => {
     const handle = tx as unknown as Db;
     const profile = await ensureProfile(handle, viewer);
@@ -223,6 +225,7 @@ export async function confirmClaimDocument(input: {
       claimId: input.claimId,
       profileId: profile.id,
       path: input.key,
+      ip,
     });
     if (ok) await notifyClaimSubmitted(handle, viewer, input.claimId);
     return ok;

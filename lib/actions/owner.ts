@@ -1,10 +1,12 @@
 "use server";
 
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { markEnquiryHandled, updateOwnerListing } from "@/lib/db/queries/owner";
 import { validateOwnerListing } from "@/lib/account/form";
+import { clientIp } from "@/lib/spam/client-ip";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -13,6 +15,10 @@ import type { Db } from "@/lib/db/client";
  * Neither takes an owner id. The scoping is inside the query, which resolves
  * the viewer's own profile — so a tampered listing id in a form post matches
  * nothing rather than matching somebody else's row.
+ *
+ * Both read the request address and hand it to the query, because global
+ * constraint 22 wants every audit row to say where the write came from and a
+ * server action is the only place that can see it.
  */
 
 export interface OwnerFormState {
@@ -32,8 +38,9 @@ export async function saveOwnerListing(
   const { values, errors } = validateOwnerListing(form);
   if (errors) return { status: "error", fieldErrors: errors };
 
+  const ip = clientIp(await headers());
   const result = await db.transaction(async (tx) =>
-    updateOwnerListing(tx as unknown as Db, viewer, listingId, values),
+    updateOwnerListing(tx as unknown as Db, viewer, listingId, values, ip),
   );
 
   if (result.outcome === "not-found") {
@@ -55,8 +62,9 @@ export async function markEnquiry(
   const viewer = await currentViewer();
   if (viewer.role === "public") return { ok: false };
 
+  const ip = clientIp(await headers());
   const ok = await db.transaction(async (tx) =>
-    markEnquiryHandled(tx as unknown as Db, viewer, enquiryId, action),
+    markEnquiryHandled(tx as unknown as Db, viewer, enquiryId, action, ip),
   );
   return { ok };
 }

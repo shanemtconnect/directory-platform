@@ -386,7 +386,7 @@ export async function startDocumentClaim(
 export async function attachClaimDocument(
   tx: Db,
   viewer: Viewer,
-  input: { claimId: string; profileId: string; path: string },
+  input: { claimId: string; profileId: string; path: string; ip: string | null },
 ): Promise<boolean> {
   assertSignedIn(viewer);
   if (!UUID.test(input.claimId)) return false;
@@ -402,10 +402,14 @@ export async function attachClaimDocument(
     .returning({ id: claims.id });
   if (updated.length === 0) return false;
 
+  // Global constraint 22. An identity document arriving is exactly the event
+  // an abuse investigation reads back later, and it is worth nothing without
+  // the address it came from.
   await writeAudit(tx, {
     actorId: input.profileId,
     action: "claim.document_uploaded",
     entityId: input.claimId,
+    ip: input.ip,
   });
   return true;
 }

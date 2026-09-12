@@ -307,8 +307,17 @@ describe("document claims", () => {
 
       const attached = await attachClaimDocument(tx, viewer, {
         claimId: started.claimId, profileId, path: `claims/${started.claimId}/proof.pdf`,
+        ip: "203.0.113.7",
       });
       expect(attached).toBe(true);
+
+      // Global constraint 22: an upload of somebody's identity document is
+      // recorded with the address it arrived from.
+      const uploads = await tx
+        .select({ actorId: auditLog.actorId, ip: auditLog.ip })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.document_uploaded"));
+      expect(uploads).toEqual([{ actorId: profileId, ip: "203.0.113.7" }]);
 
       const queue = await listPendingClaims(tx, ADMIN);
       expect(queue).toHaveLength(1);
@@ -328,6 +337,7 @@ describe("document claims", () => {
       const intruder = await makeUser(tx);
       const attached = await attachClaimDocument(tx, intruder.viewer, {
         claimId: started.claimId, profileId: intruder.profileId, path: "claims/x/proof.pdf",
+        ip: null,
       });
       expect(attached).toBe(false);
     });
@@ -351,7 +361,7 @@ describe("decideClaim", () => {
     });
     if (started.outcome !== "open") throw new Error("setup failed");
     await attachClaimDocument(tx, s.viewer, {
-      claimId: started.claimId, profileId: s.profileId, path: "claims/p/proof.pdf",
+      claimId: started.claimId, profileId: s.profileId, path: "claims/p/proof.pdf", ip: null,
     });
     const admin = await makeUser(tx, "admin");
     return { ...s, claimId: started.claimId, admin };
@@ -524,7 +534,7 @@ describe("the 30-day document purge", () => {
     });
     if (started.outcome !== "open") throw new Error("setup failed");
     await attachClaimDocument(tx, s.viewer, {
-      claimId: started.claimId, profileId: s.profileId, path: "claims/p/proof.pdf",
+      claimId: started.claimId, profileId: s.profileId, path: "claims/p/proof.pdf", ip: null,
     });
     const admin = await makeUser(tx, "admin");
     await decideClaim(tx, admin.viewer, {

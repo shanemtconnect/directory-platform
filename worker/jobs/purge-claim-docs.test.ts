@@ -53,7 +53,7 @@ async function decidedClaim(tx: TestDb, at: Date) {
   if (started.outcome !== "open") throw new Error("setup failed");
   const key = `claims/${started.claimId}/proof-abc.pdf`;
   await attachClaimDocument(tx, jo.viewer, {
-    claimId: started.claimId, profileId: jo.profileId, path: key,
+    claimId: started.claimId, profileId: jo.profileId, path: key, ip: null,
   });
   const admin = await person(tx, "admin");
   await decideClaim(tx, admin.viewer, {

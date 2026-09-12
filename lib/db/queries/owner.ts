@@ -37,6 +37,24 @@ function ownedByViewer(viewer: Exclude<Viewer, { role: "public" }>) {
   )`;
 }
 
+/**
+ * The viewer's own profile id, for `audit_log.actor_id`.
+ *
+ * Global constraint 21: the "who" column is a `profiles.id`, never the Better
+ * Auth user id, which is not a uuid and would not fit the column.
+ */
+async function actorProfileId(
+  tx: Db,
+  viewer: Exclude<Viewer, { role: "public" }>,
+): Promise<string | null> {
+  const [profile] = await tx
+    .select({ id: profiles.id })
+    .from(profiles)
+    .where(eq(profiles.userId, viewer.userId))
+    .limit(1);
+  return profile?.id ?? null;
+}
+
 export interface OwnerListing {
   id: string;
   name: string;
@@ -157,6 +175,8 @@ export async function updateOwnerListing(
   viewer: Viewer,
   listingId: string,
   patch: OwnerListingPatch,
+  /** The request address, for the audit row. `null` only off a request. */
+  ip: string | null,
 ): Promise<OwnerUpdateResult> {
   assertSignedIn(viewer);
   if (!UUID.test(listingId)) return { outcome: "not-found" };
@@ -177,20 +197,16 @@ export async function updateOwnerListing(
     })
     .where(and(eq(listings.id, listingId), ownedByViewer(viewer)));
 
-  // Global constraint 22: the audit row lands in the same transaction. The
-  // actor is the profile, not the Better Auth user id — `actor_id` is a uuid.
-  const [profile] = await tx
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.userId, viewer.userId))
-    .limit(1);
-
+  // Global constraint 22: the audit row lands in the same transaction, and it
+  // carries the address the edit came from. Without one the row can say what
+  // changed but not whether the session that changed it was the owner's.
   await tx.insert(auditLog).values({
-    actorId: profile?.id ?? null,
+    actorId: await actorProfileId(tx, viewer),
     action: "listing.edited",
     entityType: "listing",
     entityId: listingId,
     meta: { fields: Object.keys(patch) },
+    ip,
   });
 
   return { outcome: "saved", path: existing.path };
@@ -256,6 +272,8 @@ export async function markEnquiryHandled(
   viewer: Viewer,
   enquiryId: string,
   action: "read" | "replied",
+  /** The request address, for the audit row. `null` only off a request. */
+  ip: string | null,
 ): Promise<boolean> {
   assertSignedIn(viewer);
   if (!UUID.test(enquiryId)) return false;
@@ -290,8 +308,22 @@ export async function markEnquiryHandled(
     .set(set)
     .where(and(eq(enquiries.id, enquiryId), eq(enquiries.isSpam, false), owned))
     .returning({ id: enquiries.id });
+  if (updated.length === 0) return false;
 
-  return updated.length > 0;
+  // Global constraint 22. `responded_in_minutes` feeds the public "usually
+  // replies within N hours" figure, so marking an enquiry replied is a write
+  // that changes what the site tells strangers — it is audited like any other.
+  // Only on a real change: a no-op click is not an event.
+  await tx.insert(auditLog).values({
+    actorId: await actorProfileId(tx, viewer),
+    action: action === "read" ? "enquiry.marked_read" : "enquiry.marked_replied",
+    entityType: "enquiry",
+    entityId: enquiryId,
+    meta: null,
+    ip,
+  });
+
+  return true;
 }
 
 /** Unread enquiries across everything the viewer owns, for the dashboard. */

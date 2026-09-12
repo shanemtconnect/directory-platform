@@ -112,7 +112,7 @@ describe("updateOwnerListing", () => {
   it("saves the editable fields and writes an audit row", async () => {
     await withTestDb(async (tx) => {
       const jo = await owned(tx);
-      const result = await updateOwnerListing(tx, jo.viewer, jo.listingId, patch);
+      const result = await updateOwnerListing(tx, jo.viewer, jo.listingId, patch, "203.0.113.7");
       expect(result.outcome).toBe("saved");
 
       const [row] = await tx.select().from(listings).where(eq(listings.id, jo.listingId));
@@ -122,10 +122,14 @@ describe("updateOwnerListing", () => {
       expect(row?.openingHours).toEqual(patch.openingHours);
 
       const audits = await tx
-        .select({ action: auditLog.action, actorId: auditLog.actorId })
+        .select({ action: auditLog.action, actorId: auditLog.actorId, ip: auditLog.ip })
         .from(auditLog)
         .where(eq(auditLog.entityId, jo.listingId));
-      expect(audits).toEqual([{ action: "listing.edited", actorId: jo.profileId }]);
+      // Global constraint 22: who, what and from where. An audit row with no
+      // address cannot answer the only question anybody asks it afterwards.
+      expect(audits).toEqual([
+        { action: "listing.edited", actorId: jo.profileId, ip: "203.0.113.7" },
+      ]);
     });
   });
 
@@ -133,7 +137,7 @@ describe("updateOwnerListing", () => {
     await withTestDb(async (tx) => {
       const jo = await owned(tx, { description: "Untouched." });
       const stranger = await owner(tx);
-      const result = await updateOwnerListing(tx, stranger.viewer, jo.listingId, patch);
+      const result = await updateOwnerListing(tx, stranger.viewer, jo.listingId, patch, null);
       expect(result.outcome).toBe("not-found");
 
       const [row] = await tx.select().from(listings).where(eq(listings.id, jo.listingId));
@@ -150,7 +154,7 @@ describe("updateOwnerListing", () => {
       await updateOwnerListing(tx, jo.viewer, jo.listingId, {
         ...patch,
         ...({ status: "archived", tier: "premium", ownerId: randomUUID() } as unknown as object),
-      });
+      }, null);
       const [row] = await tx.select().from(listings).where(eq(listings.id, jo.listingId));
       expect(row?.status).toBe("published");
       expect(row?.tier).toBe("free");
@@ -221,7 +225,7 @@ describe("markEnquiryHandled", () => {
     await withTestDb(async (tx) => {
       setClock(new Date("2026-09-08T12:30:00Z"));
       const jo = await withEnquiry(tx);
-      expect(await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "read")).toBe(true);
+      expect(await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "read", null)).toBe(true);
       const [row] = await tx.select().from(enquiries).where(eq(enquiries.id, jo.enquiryId));
       expect(row?.readAt?.toISOString()).toBe("2026-09-08T12:30:00.000Z");
       expect(row?.repliedAt).toBeNull();
@@ -232,7 +236,7 @@ describe("markEnquiryHandled", () => {
     await withTestDb(async (tx) => {
       setClock(new Date("2026-09-08T14:00:00Z"));
       const jo = await withEnquiry(tx);
-      expect(await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied")).toBe(true);
+      expect(await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied", null)).toBe(true);
       const [row] = await tx.select().from(enquiries).where(eq(enquiries.id, jo.enquiryId));
       expect(row?.respondedInMinutes).toBe(120);
       // Replying implies reading it.
@@ -244,11 +248,38 @@ describe("markEnquiryHandled", () => {
     await withTestDb(async (tx) => {
       setClock(new Date("2026-09-08T14:00:00Z"));
       const jo = await withEnquiry(tx);
-      await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied");
+      await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied", null);
       setClock(new Date("2026-09-09T14:00:00Z"));
-      await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied");
+      await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied", null);
       const [row] = await tx.select().from(enquiries).where(eq(enquiries.id, jo.enquiryId));
       expect(row?.respondedInMinutes).toBe(120);
+    });
+  });
+
+  it("audits each handling, with the actor and the address it came from", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await withEnquiry(tx);
+      await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "read", "203.0.113.7");
+      await markEnquiryHandled(tx, jo.viewer, jo.enquiryId, "replied", "203.0.113.8");
+
+      const audits = await tx
+        .select({ action: auditLog.action, actorId: auditLog.actorId, ip: auditLog.ip })
+        .from(auditLog)
+        .where(eq(auditLog.entityId, jo.enquiryId));
+      expect(audits).toEqual([
+        { action: "enquiry.marked_read", actorId: jo.profileId, ip: "203.0.113.7" },
+        { action: "enquiry.marked_replied", actorId: jo.profileId, ip: "203.0.113.8" },
+      ]);
+    });
+  });
+
+  it("writes no audit row for an enquiry the viewer does not own", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await withEnquiry(tx);
+      const stranger = await owner(tx);
+      await markEnquiryHandled(tx, stranger.viewer, jo.enquiryId, "read", "203.0.113.9");
+      const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, jo.enquiryId));
+      expect(audits).toHaveLength(0);
     });
   });
 
@@ -256,7 +287,7 @@ describe("markEnquiryHandled", () => {
     await withTestDb(async (tx) => {
       const jo = await withEnquiry(tx);
       const stranger = await owner(tx);
-      expect(await markEnquiryHandled(tx, stranger.viewer, jo.enquiryId, "read")).toBe(false);
+      expect(await markEnquiryHandled(tx, stranger.viewer, jo.enquiryId, "read", null)).toBe(false);
       const [row] = await tx.select().from(enquiries).where(eq(enquiries.id, jo.enquiryId));
       expect(row?.readAt).toBeNull();
     });

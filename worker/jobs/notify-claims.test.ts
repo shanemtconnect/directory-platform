@@ -108,7 +108,7 @@ describe("notify.claimSubmitted", () => {
       });
       if (started.outcome !== "open") throw new Error("setup failed");
       await attachClaimDocument(tx, jo.viewer, {
-        claimId: started.claimId, profileId: jo.profileId, path: "claims/p/proof.pdf",
+        claimId: started.claimId, profileId: jo.profileId, path: "claims/p/proof.pdf", ip: null,
       });
       await notifyClaimSubmitted(tx, jo.viewer, started.claimId);
 
