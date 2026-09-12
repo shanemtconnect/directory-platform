@@ -191,7 +191,7 @@ describe("registerBacklink", () => {
       const [row] = await tx.select().from(badges).where(eq(badges.id, badgeId));
       expect(row).toMatchObject({ backlinkVerified: false, lastCheckedAt: null });
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      expect(listing?.rankBoost).toBe(0);
+      expect(listing?.backlinkBoost).toBe(0);
     });
   });
 
@@ -368,8 +368,8 @@ describe("recordBacklinkCheck", () => {
       expect(row?.backlinkVerified).toBe(true);
       expect(row?.lastCheckedAt?.toISOString()).toBe(at.toISOString());
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      // Idempotent: two passes do not stack to +10, and the cap is 5.
-      expect(listing?.rankBoost).toBe(BACKLINK_RANK_BOOST);
+      // Idempotent: the value is set, not added, so two passes are still +5.
+      expect(listing?.backlinkBoost).toBe(BACKLINK_RANK_BOOST);
     });
   });
 
@@ -387,7 +387,7 @@ describe("recordBacklinkCheck", () => {
       await recordBacklinkCheck(tx, ADMIN, { badgeId: badge!.id, verified: false });
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      expect(listing?.rankBoost).toBe(0);
+      expect(listing?.backlinkBoost).toBe(0);
       const [row] = await tx.select().from(badges).where(eq(badges.id, badge!.id));
       expect(row?.backlinkVerified).toBe(false);
       // Still stamped: a failed check is a check, or the job retries for ever.
@@ -395,10 +395,12 @@ describe("recordBacklinkCheck", () => {
     });
   });
 
-  it("never pushes rank_boost past the cap or below zero", async () => {
+  it("never touches rank_boost — that column is the admin's", async () => {
+    // The reason backlink_boost exists. A hand-set +40 used to come back as 5
+    // the first time a badge verified, and an admin's -10 was floored to 0.
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const listingId = await makeListing(tx, ctx, { rankBoost: 4 });
+      const listingId = await makeListing(tx, ctx, { rankBoost: 40 });
       const [badge] = await tx
         .insert(badges)
         .values({ listingId, backlinkUrl: "https://a.example/" })
@@ -406,11 +408,29 @@ describe("recordBacklinkCheck", () => {
 
       await recordBacklinkCheck(tx, ADMIN, { badgeId: badge!.id, verified: true });
       let [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      expect(listing?.rankBoost).toBe(BACKLINK_RANK_BOOST);
+      expect(listing?.rankBoost).toBe(40);
+      expect(listing?.backlinkBoost).toBe(BACKLINK_RANK_BOOST);
 
       await recordBacklinkCheck(tx, ADMIN, { badgeId: badge!.id, verified: false });
       [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      expect(listing?.rankBoost).toBe(0);
+      expect(listing?.rankBoost).toBe(40);
+      expect(listing?.backlinkBoost).toBe(0);
+    });
+  });
+
+  it("leaves an admin penalty negative rather than flooring it at zero", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { rankBoost: -10 });
+      const [badge] = await tx
+        .insert(badges)
+        .values({ listingId, backlinkUrl: "https://a.example/" })
+        .returning({ id: badges.id });
+
+      await recordBacklinkCheck(tx, ADMIN, { badgeId: badge!.id, verified: true });
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing?.rankBoost).toBe(-10);
+      expect(listing?.backlinkBoost).toBe(BACKLINK_RANK_BOOST);
     });
   });
 

@@ -1,4 +1,4 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { auditLog, badges, categories, cities, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { now } from "@/lib/clock";
@@ -67,11 +67,16 @@ export async function badgeListing(
 /**
  * What a verified backlink is worth in the ranking.
  *
- * `listings.tier` is billing's column and nothing else writes it (constraint
- * 31), so `rank_boost` is the only lever a badge has. Five is also the CAP:
- * the boost is applied as a clamped delta on the transition, so re-running the
- * job every week never stacks it, and losing the link takes back exactly what
- * it gave.
+ * It is written to `listings.backlink_boost`, NOT to `rank_boost`. Sharing
+ * `rank_boost` forced the reward to be a clamped delta (0..5) so a weekly job
+ * could not stack it — and that clamp was applied to the admin's own value,
+ * so a deliberate +40 came back as 5 and a -10 penalty was floored to 0 the
+ * first time a badge verified. This column has one writer and one meaning, so
+ * the value is simply SET rather than added: five when the link is there, zero
+ * when it is not, however many times the job runs. `lib/db/sort.ts` adds the
+ * two columns.
+ *
+ * `listings.tier` is billing's and nothing else writes it (constraint 31).
  */
 export const BACKLINK_RANK_BOOST = 5;
 
@@ -240,23 +245,20 @@ export async function badgesDueForCheck(
   return rows.map((r) => ({ ...r, backlinkUrl: r.backlinkUrl! }));
 }
 
-/** `least(greatest(rank_boost ± N, 0), BACKLINK_RANK_BOOST)` — the cap, in SQL. */
-function clampedBoost(delta: number): SQL {
-  return sql`least(greatest(${listings.rankBoost} + ${delta}, 0), ${BACKLINK_RANK_BOOST})`;
-}
-
 async function removeBacklinkBoost(tx: TestDb, listingId: string): Promise<void> {
   await tx
     .update(listings)
-    .set({ rankBoost: clampedBoost(-BACKLINK_RANK_BOOST) })
+    .set({ backlinkBoost: 0 })
     .where(eq(listings.id, listingId));
 }
 
 /**
  * Stamps the outcome of one backlink check.
  *
- * The boost moves only on a TRANSITION, which is what makes a weekly job safe:
- * a link verified for a year is still worth exactly +5, not +260.
+ * The boost is SET, not added, so re-running the job is a no-op: a link
+ * verified for a year is worth exactly +5, not +260. It still only writes on a
+ * transition, which keeps the listing row out of the update path on the
+ * overwhelmingly common "nothing changed" check.
  */
 export async function recordBacklinkCheck(
   tx: TestDb,
@@ -288,7 +290,7 @@ export async function recordBacklinkCheck(
   if (changed) {
     await tx
       .update(listings)
-      .set({ rankBoost: clampedBoost(opts.verified ? BACKLINK_RANK_BOOST : -BACKLINK_RANK_BOOST) })
+      .set({ backlinkBoost: opts.verified ? BACKLINK_RANK_BOOST : 0 })
       .where(eq(listings.id, badge.listingId));
   }
   return { changed };

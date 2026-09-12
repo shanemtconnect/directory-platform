@@ -47,14 +47,14 @@ describe("checkBadgeBacklinks", () => {
       expect(badge?.backlinkVerified).toBe(true);
       expect(badge?.lastCheckedAt).not.toBeNull();
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      expect(listing?.rankBoost).toBe(BACKLINK_RANK_BOOST);
+      expect(listing?.backlinkBoost).toBe(BACKLINK_RANK_BOOST);
     });
   });
 
   it("un-verifies and takes the boost back when the link is gone", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const listingId = await makeListing(tx, ctx, { name: "The Old Mill", rankBoost: 5 });
+      const listingId = await makeListing(tx, ctx, { name: "The Old Mill", backlinkBoost: 5 });
       await tx.insert(badges).values({
         listingId,
         backlinkUrl: "https://client.example/about",
@@ -69,7 +69,7 @@ describe("checkBadgeBacklinks", () => {
 
       expect(report).toMatchObject({ checked: 1, verified: 0, failed: 1 });
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
-      expect(listing?.rankBoost).toBe(0);
+      expect(listing?.backlinkBoost).toBe(0);
     });
   });
 
