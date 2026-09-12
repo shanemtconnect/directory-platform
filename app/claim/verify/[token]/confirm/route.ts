@@ -5,13 +5,12 @@ import { verifyClaimToken } from "@/lib/db/queries/claims";
 import type { Db } from "@/lib/db/client";
 
 /**
- * GET /claim/verify/<token> — the magic link coming back.
+ * POST /claim/verify/<token>/confirm — the button on the landing page.
  *
- * A GET that mutates, which is the one place that is right: the link is opened
- * from an email client, and an email client cannot POST. The token is a single
- * 256-bit secret that was sent to an address on the business's own domain, and
- * the listing goes to the profile that STARTED the claim rather than to
- * whoever clicked — so a forwarded link cannot redirect ownership.
+ * POST only, deliberately. This is the request that changes who owns a
+ * listing, and the one thing standing between a mail-security scanner and a
+ * completed takeover is that scanners issue GETs. There is no GET export here:
+ * anything that follows the URL without submitting the form gets a 405.
  *
  * Everything ends at /account. The link is usually opened in a different
  * browser from the one that started the claim, so the sign-in that /account
@@ -23,10 +22,11 @@ export const dynamic = "force-dynamic";
 
 function back(request: Request, outcome: string): Response {
   const url = new URL(`/account?claim=${outcome}`, request.url);
+  // 303, so the browser follows with a GET and the back button cannot resubmit.
   return Response.redirect(url, 303);
 }
 
-export async function GET(
+export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> },
 ): Promise<Response> {

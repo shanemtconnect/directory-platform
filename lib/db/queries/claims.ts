@@ -211,6 +211,56 @@ export async function startDomainClaim(
   return { outcome: "sent", claimId, token, email };
 }
 
+export type ClaimTokenPreview =
+  | { outcome: "confirmable"; listingName: string; listingPath: string }
+  | { outcome: "expired" }
+  | { outcome: "already-claimed" }
+  | { outcome: "unknown" };
+
+/**
+ * What the magic link's landing page shows, WITHOUT consuming the token.
+ *
+ * The link travels through a mailbox, and a mailbox is full of things that
+ * fetch every URL they see: scanners, link previewers, corporate mail
+ * gateways, a browser's prefetcher. If a GET completed the claim, any of them
+ * would hand the listing over before a person ever read the email. So the
+ * landing page only reads, and a POST from the button on it is what decides.
+ */
+export async function previewClaimToken(
+  tx: Db,
+  _viewer: Viewer,
+  token: string,
+): Promise<ClaimTokenPreview> {
+  if (token.trim() === "") return { outcome: "unknown" };
+
+  const [row] = await tx
+    .select({
+      status: claims.status,
+      expiresAt: claims.magicTokenExpiresAt,
+      listingName: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+      claimStatus: listings.claimStatus,
+      ownerId: listings.ownerId,
+    })
+    .from(claims)
+    .innerJoin(listings, eq(listings.id, claims.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(eq(claims.magicToken, token))
+    .limit(1);
+  if (!row) return { outcome: "unknown" };
+  if (row.status !== "pending") return { outcome: "unknown" };
+  if (isTokenExpired(row.expiresAt)) return { outcome: "expired" };
+  if (row.claimStatus !== "unclaimed" || row.ownerId !== null) {
+    return { outcome: "already-claimed" };
+  }
+  return {
+    outcome: "confirmable",
+    listingName: row.listingName,
+    listingPath: `/${row.citySlug}/${row.listingSlug}`,
+  };
+}
+
 export type VerifyResult =
   | { outcome: "approved"; claimId: string; listingId: string; listingName: string; path: string }
   | { outcome: "expired" }
@@ -218,7 +268,8 @@ export type VerifyResult =
   | { outcome: "unknown" };
 
 /**
- * The magic link coming back.
+ * The magic link coming back — from the POST behind the confirmation page,
+ * never from a GET. See `previewClaimToken` for why.
  *
  * No viewer gate, and that is the design: the link went to an address on the
  * business's own domain, and whoever opens it is very often not in the browser

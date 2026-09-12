@@ -60,6 +60,14 @@ describe("claimMagicLink", () => {
     expect(content.text).toContain("30 minutes");
   });
 
+  it("says that opening the link is not the last step", () => {
+    // The link no longer completes anything on its own — a mail scanner
+    // following it must not be able to hand the listing over — so the copy
+    // must not promise that opening it is all there is to do.
+    expect(content.text.toLowerCase()).toContain("confirm");
+    expect(content.text.toLowerCase()).not.toContain("nothing changes unless the link above is opened");
+  });
+
   it("says what to do if the claim was not theirs", () => {
     // The address belongs to the business, not necessarily to the claimant —
     // an unexpected link is the one signal that somebody is trying it on.

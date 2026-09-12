@@ -16,6 +16,7 @@ import {
   getClaimableListing,
   listPendingClaims,
   markClaimDocumentsPurged,
+  previewClaimToken,
   startDocumentClaim,
   startDomainClaim,
   verifyClaimToken,
@@ -289,6 +290,58 @@ describe("verifyClaimToken", () => {
         .from(auditLog)
         .where(eq(auditLog.action, "claim.approved"));
       expect(approvals).toHaveLength(1);
+    });
+  });
+});
+
+describe("previewClaimToken", () => {
+  async function requested(tx: TestDb) {
+    const s = await scene(tx);
+    const result = await startDomainClaim(tx, s.viewer, {
+      listingId: s.listingId, profileId: s.profileId,
+      businessEmail: "jo@oldmill.example",
+      claimantName: null, roleAtBusiness: null, ip: null, userAgent: null,
+    });
+    if (result.outcome !== "sent") throw new Error("setup failed");
+    return { ...s, token: result.token, claimId: result.claimId };
+  }
+
+  it("names the listing without claiming anything", async () => {
+    await withTestDb(async (tx) => {
+      const { token, listingId } = await requested(tx);
+      const preview = await previewClaimToken(tx, { role: "public" }, token);
+      expect(preview.outcome).toBe("confirmable");
+      if (preview.outcome !== "confirmable") return;
+      expect(preview.listingName).toBe("The Old Mill");
+
+      // The whole point: a link scanner opening this changes nothing.
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing?.claimStatus).toBe("unclaimed");
+      expect(listing?.ownerId).toBeNull();
+      const [claim] = await tx.select().from(claims).where(eq(claims.listingId, listingId));
+      expect(claim?.status).toBe("pending");
+      expect(await tx.select().from(auditLog).where(eq(auditLog.action, "claim.approved")))
+        .toHaveLength(0);
+    });
+  });
+
+  it("tells an expired link apart from one nobody issued", async () => {
+    await withTestDb(async (tx) => {
+      setClock(new Date("2026-09-08T12:00:00Z"));
+      const { token } = await requested(tx);
+      setClock(new Date("2026-09-08T12:31:00Z"));
+      expect((await previewClaimToken(tx, { role: "public" }, token)).outcome).toBe("expired");
+      expect((await previewClaimToken(tx, { role: "public" }, "made-up")).outcome).toBe("unknown");
+      expect((await previewClaimToken(tx, { role: "public" }, "")).outcome).toBe("unknown");
+    });
+  });
+
+  it("says so when the listing went to somebody else first", async () => {
+    await withTestDb(async (tx) => {
+      const { token, listingId } = await requested(tx);
+      await tx.update(listings).set({ claimStatus: "claimed" }).where(eq(listings.id, listingId));
+      expect((await previewClaimToken(tx, { role: "public" }, token)).outcome)
+        .toBe("already-claimed");
     });
   });
 });

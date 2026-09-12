@@ -30,13 +30,18 @@ export function claimMagicLink(data: ClaimMagicLinkData): EmailContent {
         `Somebody asked to manage the ${siteConfig.entity.singular} listing for ` +
         `${data.listingName} on ${siteConfig.name}, using this email address.`,
     },
-    { label: "Confirm the claim", value: "Open this link", href: data.verifyUrl },
-    { value: `The link works once and expires in ${data.expiresInMinutes} minutes.` },
+    { label: "Confirm the claim", value: "Open this link and press Confirm", href: data.verifyUrl },
+    {
+      value:
+        `The link works once and expires in ${data.expiresInMinutes} minutes. ` +
+        "Opening it only shows you what is being asked for — nothing changes " +
+        "until you press Confirm.",
+    },
     { label: siteConfig.entity.Singular, value: data.listingName, href: data.listingUrl },
     {
       value:
-        "If you did not ask for this, ignore this email — nothing changes unless " +
-        "the link above is opened.",
+        "If you did not ask for this, ignore this email. Nobody takes the listing " +
+        "unless somebody opens the link and confirms.",
     },
   ];
   return { subject, ...layout({ subject, heading: "Confirm your claim", blocks }) };

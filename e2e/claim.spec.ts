@@ -125,7 +125,20 @@ test.describe("claiming a listing", () => {
     `;
     expect(claim?.magic_token, "the claim must carry a magic token").toBeTruthy();
 
+    // Opening the link shows what is being asked for and nothing more — a mail
+    // scanner following it must not be able to complete the claim.
     await page.goto(`/claim/verify/${claim!.magic_token}`);
+    const confirm = page.locator('[data-testid="claim-confirm"]');
+    await expect(confirm).toBeVisible();
+    await expect(confirm).toContainText(target.name);
+
+    const [stillOpen] = await sql<{ status: string }[]>`
+      select status from claims
+      where listing_id = ${target.id} and business_email = ${BUSINESS_EMAIL}
+    `;
+    expect(stillOpen?.status, "a GET on the magic link must not claim anything").toBe("pending");
+
+    await confirm.locator('button[type="submit"]').click();
     await page.waitForURL(/\/account/, { timeout: 30_000 });
     await expect(page.locator('[data-testid="claim-outcome"]')).toContainText("yours");
 
