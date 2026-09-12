@@ -53,9 +53,18 @@ describe("matchesListingDomain", () => {
     expect(matchesListingDomain("https://www.example.co.uk", "jo@example.co.uk")).toBe(true);
   });
 
-  it("matches a subdomain in either direction", () => {
+  it("matches a mail domain that sits under the listing's own domain", () => {
     expect(matchesListingDomain("https://example.com", "jo@mail.example.com")).toBe(true);
-    expect(matchesListingDomain("https://bookings.example.com", "jo@example.com")).toBe(true);
+  });
+
+  it("refuses the parent direction, because shared hosting is not ownership", () => {
+    // The listing is a tenant of a platform. Anyone at the platform's apex
+    // would otherwise be able to take over every tenant's page.
+    expect(matchesListingDomain("https://jane.wixsite.com/jane-cakes", "mallory@wixsite.com")).toBe(false);
+    expect(matchesListingDomain("https://sites.google.com/view/jane-cakes", "mallory@google.com")).toBe(false);
+    // Same rule with nothing shared about it: a subdomain does not vouch for
+    // its parent, only the other way round.
+    expect(matchesListingDomain("https://bookings.example.com", "jo@example.com")).toBe(false);
   });
 
   it("never matches on a free-mail domain, even when the website is one", () => {

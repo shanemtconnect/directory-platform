@@ -108,9 +108,17 @@ export function isFreeMailDomain(domain: string): boolean {
 /**
  * Whether an address is on the listing's own domain.
  *
- * Either direction of subdomain counts: a business whose site is at
- * bookings.example.com is still reached at jo@example.com, and one at
- * example.com may run its mail from mail.example.com.
+ * One direction only. A mailbox UNDER the listing's domain counts — a business
+ * at example.com may run its mail from mail.example.com — but a mailbox at the
+ * PARENT of the listing's domain does not. That second direction reads as
+ * ownership only if you assume every subdomain belongs to whoever holds the
+ * apex, and on shared hosting it does not: `jane.wixsite.com` and
+ * `sites.google.com/view/...` are tenants, and anyone with a mailbox at the
+ * platform's apex would be handed every tenant's listing.
+ *
+ * The cost is a business whose site is at bookings.example.com and whose mail
+ * is at example.com. That is the document rung's job, and a manual review is a
+ * far smaller price than a takeover.
  */
 export function matchesListingDomain(
   website: string | null | undefined,
@@ -121,5 +129,5 @@ export function matchesListingDomain(
   if (site === null || mail === null) return false;
   if (isFreeMailDomain(site) || isFreeMailDomain(mail)) return false;
   if (site === mail) return true;
-  return site.endsWith(`.${mail}`) || mail.endsWith(`.${site}`);
+  return mail.endsWith(`.${site}`);
 }
