@@ -3,8 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth/client";
+import { DEFAULT_NEXT } from "@/lib/auth/next";
 
-export function LoginForm() {
+/**
+ * `next` arrives already validated by the page (lib/auth/next.ts). It is never
+ * read from `location.search` here: a client component reading the parameter
+ * itself would be a second, unvalidated route to the same redirect.
+ */
+export function LoginForm({ next = DEFAULT_NEXT }: { next?: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -20,7 +26,7 @@ export function LoginForm() {
     // Deliberately vague: distinguishing "no such account" from "wrong
     // password" tells an attacker which addresses are registered.
     if (error) return setError("That email address and password don't match.");
-    router.push("/account");
+    router.push(next);
     router.refresh();
   }
 
@@ -38,6 +44,9 @@ export function LoginForm() {
       <button type="submit" disabled={pending} className="btn btn-primary w-full">
         {pending ? "Signing in…" : "Sign in"}
       </button>
+      <p className="mt-3 text-sm">
+        <a href="/forgot-password" data-testid="forgot-password-link">Forgotten your password?</a>
+      </p>
     </form>
   );
 }

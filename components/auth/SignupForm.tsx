@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signUp } from "@/lib/auth/client";
+import { DEFAULT_NEXT } from "@/lib/auth/next";
 
 const MIN_PASSWORD = 10;
 
-export function SignupForm() {
+/** `next` is validated by the page before it reaches here — see LoginForm. */
+export function SignupForm({ next = DEFAULT_NEXT }: { next?: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -25,7 +27,7 @@ export function SignupForm() {
     });
     setPending(false);
     if (error) return setError(error.message ?? "We couldn't create that account.");
-    router.push("/account");
+    router.push(next);
     router.refresh();
   }
 
