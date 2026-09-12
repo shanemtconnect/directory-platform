@@ -11,8 +11,18 @@ const CITY = "/richmond-north-yorkshire";
  * reason views are counted from the browser rather than in the render.
  */
 
+/**
+ * Database 7, never database 0: this worktree's, per the wave plan, and
+ * `redis.ts`'s own comment that this server also holds the page cache. A bare
+ * fallback with no db index connects to database 0 — the one live traffic's
+ * ISR cache runs on — so a developer who forgets to export REDIS_URL before
+ * running this suite locally must not end up scanning and asserting against
+ * that instead of an isolated test database.
+ */
+const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380/7";
+
 async function redis() {
-  const client = createClient({ url: process.env.REDIS_URL ?? "redis://localhost:6380" });
+  const client = createClient({ url: REDIS_URL });
   client.on("error", () => {});
   await client.connect();
   return client;
@@ -38,6 +48,37 @@ async function counts(listingId: string): Promise<Record<string, number>> {
   }
 }
 
+/**
+ * The suite drives a real production build against real Redis, so every run
+ * leaves counters behind. `flushDb` would be the one-line fix, but this
+ * database is not this suite's alone to clear — the vitest specs in
+ * `lib/stats/` and `worker/jobs/` share it, possibly concurrently. So this
+ * tracks exactly the listing ids this run touched (discovered dynamically, or
+ * the fixed one the /api/beacon tests post directly) and on teardown deletes
+ * only `stats:<that id>:*` — never a bare `stats:*` scan, which would also
+ * catch counters another suite left mid-flight.
+ */
+const touchedListingIds = new Set<string>();
+
+test.afterAll(async () => {
+  if (touchedListingIds.size === 0) return;
+  const client = await redis();
+  try {
+    const keys: string[] = [];
+    for (const listingId of touchedListingIds) {
+      let cursor = "0";
+      do {
+        const page = await client.scan(cursor, { MATCH: `stats:${listingId}:*`, COUNT: 500 });
+        cursor = String(page.cursor);
+        keys.push(...page.keys);
+      } while (cursor !== "0");
+    }
+    if (keys.length > 0) await client.del(keys);
+  } finally {
+    await client.quit();
+  }
+});
+
 test.describe("the view beacon", () => {
   test("a listing page posts one beacon and the count lands in Redis", async ({ page }) => {
     await page.goto(CITY);
@@ -48,6 +89,7 @@ test.describe("the view beacon", () => {
     await expect(marker).toHaveCount(1);
     const listingId = (await marker.getAttribute("data-dp-listing"))!;
     expect(listingId).toMatch(/^[0-9a-f-]{36}$/);
+    touchedListingIds.add(listingId);
 
     // The count is asynchronous by design — sendBeacon does not block the
     // page — so this waits for the number rather than asserting immediately.
@@ -91,6 +133,7 @@ test.describe("the view beacon", () => {
     const ids = await page.locator("[data-dp-listing]").evaluateAll((nodes) =>
       [...new Set(nodes.map((n) => n.getAttribute("data-dp-listing")))]);
     expect(ids.length).toBeGreaterThanOrEqual(cards);
+    for (const id of ids) touchedListingIds.add(id!);
 
     // One request for the whole page, not one per card.
     await expect.poll(() => posts, { timeout: 10_000 }).toBe(1);
@@ -106,6 +149,7 @@ test.describe("the view beacon", () => {
 
 test.describe("/api/beacon", () => {
   const LISTING = "11111111-1111-4111-8111-111111111111";
+  touchedListingIds.add(LISTING);
   const BROWSER =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 

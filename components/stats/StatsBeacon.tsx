@@ -54,6 +54,11 @@ export function StatsBeacon({ listingId, metric = "view" }: StatsBeaconProps) {
       {claimScript() && (
         // The only inline script on the site. See beacon-script.ts for what is
         // in it and why it is not a client component.
+        //
+        // No nonce today because there is no CSP to satisfy. If one is ever
+        // added, this inline script needs a per-request nonce (or a hash
+        // source) threaded through here, or the CSP will silently block the
+        // beacon and views/impressions will stop counting.
         <script dangerouslySetInnerHTML={{ __html: BEACON_SCRIPT }} />
       )}
     </>
