@@ -41,6 +41,8 @@ interface Target {
 
 let sql: ReturnType<typeof postgres>;
 let target: Target;
+/** The claim row this spec opened, so the cleanup can name exactly its own. */
+let claimId: string | null = null;
 
 test.beforeAll(async () => {
   sql = postgres(DATABASE_URL, { max: 2 });
@@ -81,8 +83,13 @@ test.afterAll(async () => {
     `;
     await sql`delete from claims where listing_id = ${target.id} and business_email = ${BUSINESS_EMAIL}`;
   }
+  // Only the jobs THIS run enqueued. A `kind like 'notify.claim%'` sweep would
+  // quietly bin a developer's or another spec's pending claim emails on the
+  // shared dev database.
+  if (claimId !== null) {
+    await sql`delete from job_queue where payload->>'claimId' = ${claimId}`;
+  }
   // Deleting the user cascades to its profile and session rows.
-  await sql`delete from job_queue where kind like 'notify.claim%' and status = 'pending'`;
   await sql`delete from "user" where email = ${ACCOUNT_EMAIL}`;
   await sql.end({ timeout: 5 });
 });
@@ -118,12 +125,13 @@ test.describe("claiming a listing", () => {
 
     // The token never reaches the browser — it is mailed to the business's own
     // domain — so the test reads it the way the recipient's inbox would.
-    const [claim] = await sql<{ magic_token: string }[]>`
-      select magic_token from claims
+    const [claim] = await sql<{ id: string; magic_token: string }[]>`
+      select id, magic_token from claims
       where listing_id = ${target.id} and business_email = ${BUSINESS_EMAIL}
       order by created_at desc limit 1
     `;
     expect(claim?.magic_token, "the claim must carry a magic token").toBeTruthy();
+    claimId = claim!.id;
 
     // Opening the link shows what is being asked for and nothing more — a mail
     // scanner following it must not be able to complete the claim.

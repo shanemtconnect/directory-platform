@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
-import { jobQueue, profiles, user } from "@/lib/db/schema";
+import { claims, jobQueue, profiles, user } from "@/lib/db/schema";
 import { makeListing, makeScaffold } from "@/test/factories";
 import type { SendResult } from "@/lib/email/sender";
+import { resetClock } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 
 const sendEmail = vi.fn<(m: Record<string, unknown>) => Promise<SendResult>>();
@@ -17,7 +18,7 @@ const {
   notifyClaimDecided, notifyClaimLink, notifyClaimSubmitted, NOTIFY_KINDS,
 } = await import("@/lib/email/notify");
 const {
-  attachClaimDocument, decideClaim, startDocumentClaim, startDomainClaim,
+  attachClaimDocument, decideClaim, startDocumentClaim, startDomainClaim, verifyClaimToken,
 } = await import("@/lib/db/queries/claims");
 const { processNotifications } = await import("./notify");
 
@@ -31,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env = { ...ENV };
+  resetClock();
 });
 
 function sentTo(): string[] {
@@ -79,6 +81,53 @@ describe("notify.claimLink", () => {
       // Never the admin: the link IS the credential.
       expect(sentTo()).toEqual(["jo@oldmill.example"]);
       expect(bodies()).toContain(`https://example.co.uk/claim/verify/${started.token}`);
+    });
+  });
+
+  it("completes without sending when the claim has already been decided", async () => {
+    await withTestDb(async (tx) => {
+      const listingId = await listing(tx);
+      const jo = await claimant(tx);
+      const started = await startDomainClaim(tx, jo.viewer, {
+        listingId, profileId: jo.profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+      await notifyClaimLink(tx, jo.viewer, started.claimId);
+      // A resend, or a worker that was behind: by the time the job runs the
+      // claim is settled. Mailing a live-looking link at that point is at best
+      // confusing and at worst a credential nobody needs any more.
+      await verifyClaimToken(tx, { role: "public" }, started.token);
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sendEmail).not.toHaveBeenCalled();
+      const [job] = await tx.select().from(jobQueue);
+      expect(job?.status, "and the job is finished, not retried for ever").toBe("done");
+    });
+  });
+
+  it("completes without sending when the token has expired", async () => {
+    await withTestDb(async (tx) => {
+      const listingId = await listing(tx);
+      const jo = await claimant(tx);
+      const started = await startDomainClaim(tx, jo.viewer, {
+        listingId, profileId: jo.profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+      await notifyClaimLink(tx, jo.viewer, started.claimId);
+      // Aged in the row rather than on the clock: `job_queue.run_after` is a
+      // database default, so winding the application clock back past it would
+      // make the job not due yet and nothing would run at all.
+      await tx
+        .update(claims)
+        .set({ magicTokenExpiresAt: new Date("2020-01-01T00:00:00Z") })
+        .where(eq(claims.id, started.claimId));
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sendEmail).not.toHaveBeenCalled();
+      const [job] = await tx.select().from(jobQueue);
+      expect(job?.status).toBe("done");
     });
   });
 

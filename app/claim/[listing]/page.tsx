@@ -4,7 +4,7 @@ import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { getClaimableListing } from "@/lib/db/queries/claims";
-import { domainOfWebsite } from "@/lib/claims/domain";
+import { claimableDomain } from "@/lib/claims/domain";
 import { claimDocsConfigured } from "@/lib/media/claim-docs";
 import { DomainClaimForm } from "@/components/claim/DomainClaimForm";
 import { DocumentClaimForm } from "@/components/claim/DocumentClaimForm";
@@ -41,7 +41,9 @@ export default async function ClaimPage({ params }: Props) {
   if (!listing) notFound();
 
   const e = siteConfig.entity;
-  const domain = domainOfWebsite(listing.website);
+  // Null when the listing advertises no domain, or advertises a free-mail
+  // one — the rung would refuse every address typed into it.
+  const domain = claimableDomain(listing.website);
 
   if (listing.claimStatus !== "unclaimed") {
     return (
@@ -73,7 +75,7 @@ export default async function ClaimPage({ params }: Props) {
 
         {domain === null ? (
           <p data-testid="claim-no-domain">
-            This listing has no website on file, so we cannot confirm you by email.
+            We cannot confirm you by email for this listing.
             {claimDocsConfigured()
               ? " Send a document instead and someone will check it."
               : ` Email ${siteConfig.supportEmail} and we will sort it out with you.`}

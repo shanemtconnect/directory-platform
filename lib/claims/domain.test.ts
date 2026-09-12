@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  claimableDomain,
   domainOfEmail,
   domainOfWebsite,
   isFreeMailDomain,
@@ -82,5 +83,23 @@ describe("matchesListingDomain", () => {
   it("is false when either side is missing", () => {
     expect(matchesListingDomain(null, "jo@example.com")).toBe(false);
     expect(matchesListingDomain("https://example.com", "")).toBe(false);
+  });
+});
+
+describe("claimableDomain", () => {
+  it("is the listing's domain when the rung can actually decide anything", () => {
+    expect(claimableDomain("https://www.example.co.uk/about")).toBe("example.co.uk");
+  });
+
+  it("is null for a free-mail domain, because the rung would refuse every address", () => {
+    // A listing whose `website` column holds a Gmail address must not be shown
+    // a box that can only ever say no.
+    expect(claimableDomain("https://gmail.com")).toBeNull();
+    expect(claimableDomain("mail.proton.me")).toBeNull();
+  });
+
+  it("is null when there is no domain at all", () => {
+    expect(claimableDomain(null)).toBeNull();
+    expect(claimableDomain("javascript:alert(1)")).toBeNull();
   });
 });

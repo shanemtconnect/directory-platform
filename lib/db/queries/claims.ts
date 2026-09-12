@@ -312,10 +312,9 @@ export async function verifyClaimToken(
     path,
   };
 
-  // Idempotent BEFORE the expiry check. People click the link twice, and the
-  // second click landing on "this link has expired" after the first one worked
-  // is a support ticket about a claim that is perfectly fine.
-  if (row.status === "approved" && row.ownerId === row.userId) return approved;
+  // Approving burns the token, so a row found by it is all but always still
+  // pending; anything else is a claim that moved under us between the select
+  // and here, and the safe answer is the one that says nothing about it.
   if (row.status !== "pending") return { outcome: "unknown" };
   if (isTokenExpired(row.expiresAt)) return { outcome: "expired" };
 
@@ -345,6 +344,11 @@ export async function verifyClaimToken(
       status: "approved",
       emailVerifiedAt: at,
       decidedAt: at,
+      // Spent in the same statement that approves. The link is sitting in a
+      // mailbox, in whatever it was forwarded into, and possibly in a log; it
+      // has done its work and is worth nothing to anybody who finds it later.
+      magicToken: null,
+      magicTokenExpiresAt: null,
       updatedAt: at,
     })
     .where(eq(claims.id, row.id));
@@ -699,6 +703,11 @@ export async function decideClaim(
       decidedBy: input.actorProfileId,
       decidedAt: at,
       rejectionReason: input.decision === "rejected" ? reason : null,
+      // A decided claim has no live link, whichever way it went. A claimant
+      // whose document was rejected must not still hold a magic link that
+      // would approve the same claim from the other rung.
+      magicToken: null,
+      magicTokenExpiresAt: null,
       updatedAt: at,
     })
     .where(eq(claims.id, row.id));
@@ -731,6 +740,7 @@ export interface ClaimNotification {
   /** The signed-in account's address, which is where a decision is sent. */
   accountEmail: string | null;
   magicToken: string | null;
+  magicTokenExpiresAt: Date | null;
   status: "pending" | "approved" | "rejected" | "withdrawn";
   rejectionReason: string | null;
   evidenceType: "domain_email" | "phone_otp" | "document" | "id_document" | null;
@@ -758,6 +768,7 @@ export async function claimNotification(
       claimantName: claims.claimantName,
       businessEmail: claims.businessEmail,
       magicToken: claims.magicToken,
+      magicTokenExpiresAt: claims.magicTokenExpiresAt,
       status: claims.status,
       rejectionReason: claims.rejectionReason,
       evidenceType: claims.evidenceType,
@@ -790,6 +801,7 @@ export async function claimNotification(
     businessEmail: row.businessEmail,
     accountEmail,
     magicToken: row.magicToken,
+    magicTokenExpiresAt: row.magicTokenExpiresAt,
     status: row.status,
     rejectionReason: row.rejectionReason,
     evidenceType: row.evidenceType,
@@ -803,7 +815,13 @@ export interface PurgeableClaim {
 }
 
 /**
- * Claims decided more than the retention window ago that still hold documents.
+ * Claims that still hold documents and are past the retention window.
+ *
+ * Past on EITHER clock. `decided_at` is the promise the claim page makes, but
+ * a claim nobody ever decided has no `decided_at` at all — and an abandoned
+ * document claim is precisely the row whose utility bill would otherwise sit
+ * in the bucket for ever, unseen by the one job meant to clear it. So an
+ * undecided claim ages out on `created_at` instead.
  *
  * The cutoff is computed from `now()` rather than in SQL with `interval` so a
  * test can move the clock instead of waiting a month.
@@ -823,12 +841,13 @@ export async function claimsWithPurgeableDocuments(
     })
     .from(claims)
     .where(and(
-      isNotNull(claims.decidedAt),
-      lte(claims.decidedAt, cutoff),
+      // `lte` on a null column is null, not true, so an undecided claim simply
+      // falls through to the created_at arm.
+      or(lte(claims.decidedAt, cutoff), lte(claims.createdAt, cutoff)),
       isNull(claims.documentsPurgedAt),
       or(isNotNull(claims.proofDocumentPath), isNotNull(claims.idDocumentPath)),
     ))
-    .orderBy(asc(claims.decidedAt));
+    .orderBy(asc(claims.createdAt));
 
   return rows.map((r) => ({
     id: r.id,

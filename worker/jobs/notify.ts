@@ -20,7 +20,7 @@ import {
   claimApproved, claimMagicLink, claimRejected, claimToAdmin,
 } from "@/lib/email/templates/claim";
 import { claimNotification } from "@/lib/db/queries/claims";
-import { MAGIC_TOKEN_TTL_MINUTES } from "@/lib/claims/token";
+import { MAGIC_TOKEN_TTL_MINUTES, isTokenExpired } from "@/lib/claims/token";
 import {
   NOTIFY_CLAIM_DECIDED,
   NOTIFY_CLAIM_LINK,
@@ -180,6 +180,12 @@ async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<strin
   const listing = { listingName: claim.listingName, listingUrl: siteUrl(claim.listingPath) };
 
   if (kind === NOTIFY_CLAIM_LINK) {
+    // Nothing to send, and nothing to retry. A claim that has been decided
+    // since the job was enqueued — approved from the other rung, rejected,
+    // withdrawn — or whose token has aged out while the worker was behind, has
+    // no live credential. Retrying would bury the log and then fail the job;
+    // mailing a spent link would send somebody to a dead page. Complete.
+    if (claim.status !== "pending" || isTokenExpired(claim.magicTokenExpiresAt)) return;
     if (claim.magicToken === null || claim.businessEmail === null) {
       throw new Retryable("The claim has no live magic link to send");
     }

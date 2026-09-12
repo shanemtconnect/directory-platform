@@ -131,3 +131,18 @@ export function matchesListingDomain(
   if (site === mail) return true;
   return mail.endsWith(`.${site}`);
 }
+
+/**
+ * The domain to offer the email rung for, or null to hide the rung.
+ *
+ * `domainOfWebsite` says what the listing advertises; this says whether the
+ * ladder can decide anything from it. A listing whose `website` column holds a
+ * free-mail address has a domain, but `matchesListingDomain` refuses every
+ * address against it — so showing the box would be an invitation to fail, with
+ * a mismatch message that reads as if the claimant got it wrong.
+ */
+export function claimableDomain(website: string | null | undefined): string | null {
+  const domain = domainOfWebsite(website);
+  if (domain === null || isFreeMailDomain(domain)) return null;
+  return domain;
+}

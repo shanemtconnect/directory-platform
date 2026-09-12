@@ -196,12 +196,19 @@ describe("verifyClaimToken", () => {
     });
   });
 
-  it("is idempotent, so a second click on the same link still reads as success", async () => {
+  it("burns the token as it approves, so the link cannot be used again", async () => {
     await withTestDb(async (tx) => {
-      const { token } = await requested(tx);
-      await verifyClaimToken(tx, { role: "public" }, token);
+      const { token, profileId } = await requested(tx);
+      expect((await verifyClaimToken(tx, { role: "public" }, token)).outcome).toBe("approved");
+
+      const [claim] = await tx.select().from(claims).where(eq(claims.userId, profileId));
+      expect(claim?.magicToken, "a spent credential is not kept").toBeNull();
+      expect(claim?.magicTokenExpiresAt).toBeNull();
+
+      // The link is in a mailbox, in a forward, possibly in a chat log. Once
+      // it has done its work it is worth nothing to anybody who finds it.
       const again = await verifyClaimToken(tx, { role: "public" }, token);
-      expect(again.outcome).toBe("approved");
+      expect(again.outcome).toBe("unknown");
       const approvals = await tx
         .select({ action: auditLog.action })
         .from(auditLog)
@@ -437,6 +444,8 @@ describe("decideClaim", () => {
       expect(claim?.status).toBe("approved");
       expect(claim?.decidedBy).toBe(admin.profileId);
       expect(claim?.decidedAt).not.toBeNull();
+      expect(claim?.magicToken, "an admin decision spends the link too").toBeNull();
+      expect(claim?.magicTokenExpiresAt).toBeNull();
 
       const actions = await tx.select({ action: auditLog.action }).from(auditLog);
       expect(actions.map((a) => a.action)).toContain("claim.approved");
@@ -596,6 +605,33 @@ describe("the 30-day document purge", () => {
     });
     return { ...s, claimId: started.claimId, admin };
   }
+
+  it("purges an undecided claim once it is older than the window", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scene(tx);
+      const started = await startDocumentClaim(tx, s.viewer, {
+        listingId: s.listingId, profileId: s.profileId,
+        claimantName: null, roleAtBusiness: null, evidenceNotes: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "open") throw new Error("setup failed");
+      await attachClaimDocument(tx, s.viewer, {
+        claimId: started.claimId, profileId: s.profileId, path: "claims/p/proof.pdf", ip: null,
+      });
+      // Nobody ever decided it. On `decided_at` alone the utility bill would
+      // sit in the bucket for ever, which is the promise broken quietly.
+      await tx
+        .update(claims)
+        .set({ createdAt: new Date("2026-01-01T00:00:00Z") })
+        .where(eq(claims.id, started.claimId));
+
+      setClock(new Date("2026-01-20T00:00:00Z"));
+      expect(await claimsWithPurgeableDocuments(tx, ADMIN)).toHaveLength(0);
+      setClock(new Date("2026-02-05T00:00:00Z"));
+      const due = await claimsWithPurgeableDocuments(tx, ADMIN);
+      expect(due).toHaveLength(1);
+      expect(due[0]?.paths).toEqual(["claims/p/proof.pdf"]);
+    });
+  });
 
   it("ignores a claim decided inside the retention window and picks it up after", async () => {
     await withTestDb(async (tx) => {
