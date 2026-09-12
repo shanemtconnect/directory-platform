@@ -240,6 +240,51 @@ describe("createOutreachCampaign", () => {
       ).rejects.toThrow(/FORBIDDEN/);
     });
   });
+
+  it("refuses to store the same magic token twice, in the database itself", async () => {
+    // The token is a bearer credential: whoever holds it can open a claim on
+    // the listing it names. A duplicate would hand one person's link the
+    // other's listing, and the generator being good is not a guarantee — the
+    // index is.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const one = await makeListing(tx, ctx, { name: "One", email: "a@a.example" });
+      const two = await makeListing(tx, ctx, { name: "Two", email: "b@b.example" });
+
+      await createOutreachCampaign(tx, ADMIN, {
+        name: "first", segment: {},
+        messages: [{ listingId: one, toAddress: "a@a.example", magicToken: "collide" }],
+      });
+      await expect(
+        createOutreachCampaign(tx, ADMIN, {
+          name: "second", segment: {},
+          messages: [{ listingId: two, toAddress: "b@b.example", magicToken: "collide" }],
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
+  it("still allows many messages with no token at all", async () => {
+    // Unique on a nullable column: Postgres does not compare NULLs, so a
+    // channel that carries no magic link is unaffected.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const one = await makeListing(tx, ctx, { name: "One", email: "a@a.example" });
+      const two = await makeListing(tx, ctx, { name: "Two", email: "b@b.example" });
+      const campaignId = await createOutreachCampaign(tx, ADMIN, {
+        name: "no tokens", segment: {},
+        messages: [
+          { listingId: one, toAddress: "a@a.example", magicToken: null },
+          { listingId: two, toAddress: "b@b.example", magicToken: null },
+        ],
+      });
+      const rows = await tx
+        .select()
+        .from(campaignMessages)
+        .where(eq(campaignMessages.campaignId, campaignId));
+      expect(rows).toHaveLength(2);
+    });
+  });
 });
 
 describe("recordOutreachClick", () => {

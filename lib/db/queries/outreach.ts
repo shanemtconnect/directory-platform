@@ -119,7 +119,8 @@ export async function outreachCandidates(
 export interface OutreachMessageInput {
   listingId: string;
   toAddress: string;
-  magicToken: string;
+  /** Null for a channel that carries no magic link. Unique when present. */
+  magicToken: string | null;
 }
 
 export interface CreateOutreachCampaignInput {
