@@ -238,7 +238,7 @@ describe("the admin queues", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      await actionReport(tx, admin, filed.reportId, "dismissed");
+      await actionReport(tx, admin, filed.reportId, "dismissed", { ip: null });
       expect(await listOpenReports(tx, admin)).toHaveLength(0);
     });
   });
@@ -255,7 +255,9 @@ describe("actionReport", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      const result = await actionReport(tx, admin, filed.reportId, "actioned");
+      const result = await actionReport(tx, admin, filed.reportId, "actioned", {
+        ip: "203.0.113.5",
+      });
       expect(result.outcome).toBe("updated");
 
       const [row] = await tx.select().from(reports).where(eq(reports.id, filed.reportId));
@@ -265,6 +267,8 @@ describe("actionReport", () => {
       expect(audit).toHaveLength(1);
       expect(audit[0]?.action).toBe("report.actioned");
       expect(audit[0]?.actorId).not.toBeNull();
+      // The moderator's own IP, for the audit trail — global constraint 22.
+      expect(audit[0]?.ip).toBe("203.0.113.5");
     });
   });
 
@@ -277,7 +281,7 @@ describe("actionReport", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      expect((await actionReport(tx, USER, filed.reportId, "actioned")).outcome).toBe("forbidden");
+      expect((await actionReport(tx, USER, filed.reportId, "actioned", { ip: null })).outcome).toBe("forbidden");
       const [row] = await tx.select().from(reports).where(eq(reports.id, filed.reportId));
       expect(row?.status).toBe("open");
     });
@@ -293,8 +297,8 @@ describe("actionReport", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      await actionReport(tx, admin, filed.reportId, "dismissed");
-      const again = await actionReport(tx, admin, filed.reportId, "actioned");
+      await actionReport(tx, admin, filed.reportId, "dismissed", { ip: null });
+      const again = await actionReport(tx, admin, filed.reportId, "actioned", { ip: null });
       expect(again.outcome).toBe("not-open");
 
       const [row] = await tx.select().from(reports).where(eq(reports.id, filed.reportId));
@@ -305,8 +309,8 @@ describe("actionReport", () => {
   it("reports an unknown id rather than erroring", async () => {
     await withTestDb(async (tx) => {
       const admin = await makeAdmin(tx);
-      expect((await actionReport(tx, admin, randomUUID(), "actioned")).outcome).toBe("unknown");
-      expect((await actionReport(tx, admin, "not-a-uuid", "actioned")).outcome).toBe("unknown");
+      expect((await actionReport(tx, admin, randomUUID(), "actioned", { ip: null })).outcome).toBe("unknown");
+      expect((await actionReport(tx, admin, "not-a-uuid", "actioned", { ip: null })).outcome).toBe("unknown");
     });
   });
 });
@@ -332,7 +336,9 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned");
+      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", {
+        ip: "203.0.113.9",
+      });
       expect(result.outcome).toBe("updated");
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
@@ -380,6 +386,7 @@ describe("actionRemovalRequest", () => {
         .where(eq(auditLog.entityId, filed.removalRequestId));
       expect(audit).toHaveLength(1);
       expect(audit[0]?.action).toBe("removal_request.actioned");
+      expect(audit[0]?.ip).toBe("203.0.113.9");
 
       // The copy on every removal page promises an email "when it is done" —
       // enqueued in the same transaction as the decision, not left for a
@@ -405,7 +412,7 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, "rejected");
+      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, "rejected", { ip: null });
       expect(result.outcome).toBe("updated");
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
@@ -435,7 +442,7 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      expect((await actionRemovalRequest(tx, USER, filed.removalRequestId, "actioned")).outcome)
+      expect((await actionRemovalRequest(tx, USER, filed.removalRequestId, "actioned", { ip: null })).outcome)
         .toBe("forbidden");
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
@@ -460,8 +467,8 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned");
-      const again = await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned");
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", { ip: null });
+      const again = await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", { ip: null });
       expect(again.outcome).toBe("not-open");
       // One decision, one suppression. A double click must not file two.
       expect(await tx.select().from(suppressions)).toHaveLength(1);
@@ -560,7 +567,7 @@ describe("the notification read models", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned");
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", { ip: null });
 
       const data = await removalDecisionNotification(tx, admin, filed.removalRequestId);
       expect(data).toMatchObject({

@@ -71,6 +71,14 @@ async function writeAudit(
     entityType: string;
     entityId: string;
     meta: Record<string, unknown>;
+    /**
+     * The moderator's own IP (global constraint 22), not the reporter's or
+     * requester's — that one, if we hold it at all, sits on the row the
+     * decision is about. Null rather than defaulted: an admin action taken
+     * from somewhere the caller could not read a proxy header is a fact
+     * worth keeping, not a reason to write a placeholder.
+     */
+    ip: string | null;
   },
 ): Promise<void> {
   await tx.insert(auditLog).values(input);
@@ -326,6 +334,7 @@ export async function actionReport(
   viewer: Viewer,
   reportId: string,
   decision: ReportDecision,
+  opts: { ip: string | null },
 ): Promise<DecisionResult> {
   if (!isAdmin(viewer)) return { outcome: "forbidden" };
   if (!UUID.test(reportId)) return { outcome: "unknown" };
@@ -351,6 +360,7 @@ export async function actionReport(
     entityType: "report",
     entityId: reportId,
     meta: { listingId: row.listingId },
+    ip: opts.ip,
   });
 
   return { outcome: "updated", id: reportId };
@@ -373,6 +383,7 @@ export async function actionRemovalRequest(
   viewer: Viewer,
   removalRequestId: string,
   decision: RemovalDecision,
+  opts: { ip: string | null },
 ): Promise<DecisionResult> {
   if (!isAdmin(viewer)) return { outcome: "forbidden" };
   if (!UUID.test(removalRequestId)) return { outcome: "unknown" };
@@ -441,6 +452,7 @@ export async function actionRemovalRequest(
     entityType: "removal_request",
     entityId: removalRequestId,
     meta: { listingId: row.listingId, suppressionId },
+    ip: opts.ip,
   });
 
   // Enqueued here, not left to the caller: every removal page promises "we

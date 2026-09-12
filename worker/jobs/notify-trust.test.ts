@@ -95,7 +95,7 @@ async function queuedRemovalDecision(tx: TestDb, decision: "actioned" | "rejecte
     ip: null,
   });
   if (filed.outcome !== "created") throw new Error("setup failed");
-  await actionRemovalRequest(tx, admin, filed.removalRequestId, decision);
+  await actionRemovalRequest(tx, admin, filed.removalRequestId, decision, { ip: null });
   return filed;
 }
 
