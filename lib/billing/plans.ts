@@ -98,6 +98,20 @@ export function planAmount(tier: TierName, interval: Interval): PayPalAmount {
   return { value: (minor / 100).toFixed(2), currency_code: siteConfig.currency };
 }
 
+/**
+ * Which billing cycle a first-cycle coupon discounts.
+ *
+ * `scripts/paypal-setup.ts` builds every plan with the same shape: an optional
+ * free TRIAL cycle, then a REGULAR cycle of exactly one iteration at full
+ * price, then an open-ended REGULAR cycle at full price. That middle cycle is
+ * the only reason a percentage off the FIRST payment can be expressed as a
+ * PayPal plan override at all — overriding a single open-ended cycle would
+ * discount every renewal for ever.
+ */
+export function firstPaidCycleSequence(tier: TierName): number {
+  return trialDaysFor(tier) > 0 ? 2 : 1;
+}
+
 export function trialDaysFor(tier: TierName): number {
   return tierSpec(tier).trialDays;
 }
