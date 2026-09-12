@@ -1,13 +1,24 @@
 import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
-import { campaigns, campaignMessages, coupons, unsubscribes } from "@/lib/db/schema";
+import {
+  auditLog, campaigns, campaignMessages, coupons, profiles, unsubscribes, user,
+} from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { buildOutreachBatch } from "./batch";
 import { outreachCsv, OUTREACH_CSV_HEADER } from "./csv";
 
 const ADMIN: Viewer = { role: "admin", userId: "00000000-0000-4000-8000-00000000adm1" };
+
+/** A profiles row, without dragging Better Auth's tables into the assertion. */
+async function makeProfile(tx: Parameters<typeof buildOutreachBatch>[0]): Promise<string> {
+  const userId = `u-${randomUUID()}`;
+  await tx.insert(user).values({ id: userId, name: "Operator", email: `${userId}@example.com` });
+  const [row] = await tx.insert(profiles).values({ userId }).returning({ id: profiles.id });
+  return row!.id;
+}
 
 describe("buildOutreachBatch", () => {
   it("produces one row per candidate, each with its own token and coupon", async () => {
@@ -39,6 +50,32 @@ describe("buildOutreachBatch", () => {
         expect(batch.rows.some((r) => r.magicUrl.endsWith(message.magicToken!))).toBe(true);
       }
       expect(await tx.select().from(coupons).where(eq(coupons.batchId, batch.batchId!))).toHaveLength(3);
+    });
+  });
+
+  it("records the actor on the audit row and on every coupon", async () => {
+    // `--actor` exists so a batch has a name against it: who pulled this list
+    // of addresses, and who minted these discount codes.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const actorProfileId = await makeProfile(tx);
+      for (let i = 0; i < 2; i++) {
+        await makeListing(tx, ctx, { name: `Place ${i}`, email: `p${i}@example.com` });
+      }
+
+      const batch = await buildOutreachBatch(tx, ADMIN, {
+        segment: {}, limit: 50, couponPercent: 50, actorProfileId,
+      });
+
+      const [entry] = await tx
+        .select()
+        .from(auditLog)
+        .where(eq(auditLog.entityId, batch.campaignId!));
+      expect(entry?.actorId).toBe(actorProfileId);
+
+      const minted = await tx.select().from(coupons).where(eq(coupons.batchId, batch.batchId!));
+      expect(minted).toHaveLength(2);
+      for (const coupon of minted) expect(coupon.createdBy).toBe(actorProfileId);
     });
   });
 

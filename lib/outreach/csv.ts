@@ -23,9 +23,14 @@ export const OUTREACH_CSV_HEADER = "email,business_name,magic_url,coupon_code";
  * formula. The names in this file come from an import feed, so "=HYPERLINK(...)"
  * is a live payload aimed at whoever opens the export. Prefixing an apostrophe
  * is the standard neutraliser; the cell still reads correctly.
+ *
+ * `\s*` before the class, not just the class: a spreadsheet trims the cell
+ * before it decides what the cell is, so "  =HYPERLINK(...)" is every bit as
+ * live as "=HYPERLINK(...)" — and a guard anchored at the very first
+ * character never sees it.
  */
 function escapeCell(value: string): string {
-  const risky = /^[=+\-@\t\r]/.test(value);
+  const risky = /^\s*[=+\-@\t\r]/.test(value);
   const guarded = risky ? `'${value}` : value;
   // A guarded cell is always quoted too: unquoted, the leading apostrophe is
   // ambiguous enough that some importers strip it and hand the formula back.

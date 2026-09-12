@@ -41,4 +41,24 @@ describe("outreachCsv", () => {
     expect(csv.split("\r\n")).toHaveLength(4); // header, two rows, trailing empty
     expect(csv.endsWith("\r\n")).toBe(true);
   });
+
+  it("neutralises a formula hiding behind leading whitespace", () => {
+    // Spreadsheets trim the cell before deciding what it is, so " =HYPERLINK()"
+    // is every bit as live as "=HYPERLINK()" — and a guard anchored at the
+    // very first character never sees it.
+    const out = outreachCsv([
+      { address: "a@a.example", businessName: "  =HYPERLINK(\"http://evil\")", magicUrl: "u", couponCode: "C" },
+    ]);
+    expect(out).toContain(`"'  =HYPERLINK`);
+  });
+
+  it.each(["\t=cmd", " +1+1", "\r-2-2", "  @SUM(A1)"])(
+    "guards %j whatever whitespace precedes it",
+    (name) => {
+      const out = outreachCsv([
+        { address: "a@a.example", businessName: name, magicUrl: "u", couponCode: "C" },
+      ]);
+      expect(out).toContain(`"'${name}`);
+    },
+  );
 });

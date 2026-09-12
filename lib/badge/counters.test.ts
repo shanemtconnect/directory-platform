@@ -5,6 +5,8 @@ import {
   recordBadgeClick,
   drainBadgeCounters,
   closeBadgeCounters,
+  drainHash,
+  FLUSH_TEMP_TTL_MS,
 } from "./counters";
 
 /**
@@ -64,5 +66,43 @@ describe("badge counters", () => {
     await expect(recordBadgeImpression(randomUUID())).resolves.toBeUndefined();
     await expect(recordBadgeClick(randomUUID())).resolves.toBeUndefined();
     await expect(drainBadgeCounters()).resolves.toEqual([]);
+  });
+});
+
+describe("drainHash", () => {
+  /** Just the four commands drainHash uses, recording the order it used them. */
+  function fakeClient(overrides: Record<string, unknown> = {}) {
+    const calls: string[] = [];
+    const client = {
+      rename: async () => { calls.push("rename"); },
+      pExpire: async (_key: string, ms: number) => { calls.push(`pExpire:${ms}`); },
+      hGetAll: async () => { calls.push("hGetAll"); return {}; },
+      del: async () => { calls.push("del"); },
+      ...overrides,
+    };
+    return { calls, client: client as never };
+  }
+
+  it("puts a TTL on the temp key before reading it", async () => {
+    const { calls, client } = fakeClient();
+    await drainHash(client, "badge:test");
+    expect(calls).toEqual(["rename", `pExpire:${FLUSH_TEMP_TTL_MS}`, "hGetAll", "del"]);
+  });
+
+  it("leaves the TTL behind when the read fails, so nothing leaks for ever", async () => {
+    // The del in the finally is the normal cleanup; if the worker is killed
+    // between the rename and the del there is nothing to run it, and Redis is
+    // not persisted here, so the expiry is the only thing that reclaims it.
+    const { calls, client } = fakeClient({
+      hGetAll: async () => { throw new Error("connection reset"); },
+      del: async () => { throw new Error("connection reset"); },
+    });
+    await expect(drainHash(client, "badge:test")).rejects.toThrow();
+    expect(calls).toContain(`pExpire:${FLUSH_TEMP_TTL_MS}`);
+  });
+
+  it("returns nothing when the hash does not exist", async () => {
+    const { client } = fakeClient({ rename: async () => { throw new Error("no such key"); } });
+    expect(await drainHash(client, "badge:test")).toEqual({});
   });
 });

@@ -11,6 +11,7 @@ describe("parseOutreachArgs", () => {
       couponPercent: 50,
       out: null,
       name: null,
+      actorProfileId: null,
       dryRun: false,
     });
   });
@@ -56,6 +57,22 @@ describe("parseOutreachArgs", () => {
 
   it("caps the limit, so one typo cannot email the whole database", () => {
     expect(() => parseOutreachArgs(["--coupon-percent", "50", "--limit", "100000"])).toThrow(/limit/i);
+  });
+
+  it("takes an --actor profile id and defaults it to null", () => {
+    expect(parseOutreachArgs(["--coupon-percent", "50"]).actorProfileId).toBeNull();
+    const id = "3f2b0c9e-1111-4222-8333-444455556666";
+    expect(parseOutreachArgs(["--coupon-percent", "50", "--actor", id]).actorProfileId).toBe(id);
+    expect(parseOutreachArgs(["--coupon-percent", "50", `--actor=${id}`]).actorProfileId).toBe(id);
+  });
+
+  it("refuses an --actor that is not a uuid", () => {
+    // It goes into audit_log.actor_id and coupons.created_by, both uuid
+    // columns. A typo should be a usage error, not a constraint violation
+    // three statements into a transaction.
+    for (const bad of ["me", "admin@example.com", "3f2b0c9e-1111-4222-8333"]) {
+      expect(() => parseOutreachArgs(["--coupon-percent", "50", "--actor", bad])).toThrow(/actor/i);
+    }
   });
 
   it("refuses a flag it does not know", () => {

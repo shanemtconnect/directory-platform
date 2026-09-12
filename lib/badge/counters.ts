@@ -82,6 +82,18 @@ export async function recordBadgeClick(listingId: string): Promise<void> {
 }
 
 /**
+ * How long an orphaned flush key is allowed to sit in Redis.
+ *
+ * The `del` in the `finally` is the normal cleanup and handles a thrown read.
+ * It does not handle the worker being killed between the RENAME and the DEL —
+ * nothing runs, and the counts sit in a key with a pid and a timestamp in its
+ * name that nobody will ever look for again. Ten minutes is far longer than a
+ * flush (which runs every minute) and short enough that a crash loop cannot
+ * accumulate them.
+ */
+export const FLUSH_TEMP_TTL_MS = 600_000;
+
+/**
  * Takes the pending counts and leaves the hashes empty.
  *
  * RENAME then read, rather than HGETALL then DEL: between those two commands
@@ -89,14 +101,23 @@ export async function recordBadgeClick(listingId: string): Promise<void> {
  * is atomic, so a hit landing mid-flush starts a fresh hash instead of
  * vanishing. RENAME on a missing key is an error, which is simply "nothing
  * happened this minute".
+ *
+ * Exported for its own tests — a fake client is the only way to assert the
+ * command ORDER, and the order is the whole point.
  */
-async function drainHash(c: RedisClientType, hash: string): Promise<Record<string, string>> {
+export async function drainHash(
+  c: RedisClientType,
+  hash: string,
+): Promise<Record<string, string>> {
   const temp = `${hash}:flush:${process.pid}:${Date.now()}`;
   try {
     await c.rename(hash, temp);
   } catch {
     return {};
   }
+  // Before the read, not after: the window this covers is the one where we do
+  // not get to run any more code.
+  await c.pExpire(temp, FLUSH_TEMP_TTL_MS).catch(() => {});
   try {
     return await c.hGetAll(temp);
   } finally {

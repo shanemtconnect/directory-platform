@@ -199,6 +199,22 @@ const TARGETS = ["https://dir.example/leeds/the-old-mill", "https://dir.example/
 const PAGE = "https://client.example/about";
 
 describe("hasBacklink", () => {
+  it("counts a rel=nofollow anchor — the owner displayed the badge and linked it", () => {
+    expect(
+      hasBacklink(`<a href="${TARGETS[0]}" rel="nofollow noopener">us</a>`, PAGE, TARGETS),
+    ).toBe(true);
+  });
+
+  it("counts the tracked snippet's anchor too, nofollow and all", () => {
+    expect(
+      hasBacklink(
+        `<a href="${TARGETS[0]}" title="x" rel="noopener nofollow"><img src="/b.svg"></a>`,
+        PAGE,
+        TARGETS,
+      ),
+    ).toBe(true);
+  });
+
   it("finds an anchor to the canonical listing URL", () => {
     const html = `<p>see <a href="https://dir.example/leeds/the-old-mill">our page</a></p>`;
     expect(hasBacklink(html, PAGE, TARGETS)).toBe(true);

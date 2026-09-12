@@ -27,7 +27,11 @@ async function aPublishedListing(
   expect(page.ok()).toBe(true);
   const html = await page.text();
   const id = /\/badge\/([0-9a-f-]{36})/.exec(html)?.[1] ?? null;
-  return { path, id: id ?? "" };
+  // A FAILURE, not a skip. A listing page that stopped rendering a badge URL
+  // is the badge feature being broken — which is precisely what this spec
+  // exists to catch, and a skipped test reports it as a green run.
+  expect(id, `${path} renders a /badge/{id} URL`).not.toBeNull();
+  return { path, id: id! };
 }
 
 test.describe("badge", () => {
@@ -59,7 +63,6 @@ test.describe("badge", () => {
 
   test("the click endpoint 302s to the listing with its utm tags", async ({ request }) => {
     const { id } = await aPublishedListing(request);
-    test.skip(id === "", "no listing id rendered on the page");
 
     const res = await request.get(`/api/badge-click?id=${id}`, { maxRedirects: 0 });
 

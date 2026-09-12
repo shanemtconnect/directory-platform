@@ -15,6 +15,11 @@ export interface OutreachArgs {
   /** File to write the CSV to. Null means stdout. */
   out: string | null;
   name: string | null;
+  /**
+   * `profiles.id` of the operator running this. Recorded on the audit row and
+   * on every coupon's `created_by`, so a batch has a name against it.
+   */
+  actorProfileId: string | null;
   /** Build the batch, print the CSV, roll it all back. */
   dryRun: boolean;
 }
@@ -35,9 +40,13 @@ export const OUTREACH_USAGE = [
   `  --limit N             How many listings (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`,
   "  --coupon-percent N    Discount on the single-use codes. Required.",
   "  --name NAME           Campaign name (default: the segment and today's date).",
+  "  --actor UUID          profiles.id of whoever is running this. Recorded on",
+  "                        the audit row and on every coupon.",
   "  --out FILE            Write the CSV here (default: stdout).",
   "  --dry-run             Build it, print the CSV, roll the whole thing back.",
 ].join("\n");
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function integer(label: string, raw: string): number {
   if (!/^-?\d+$/.test(raw.trim())) throw new Error(`--${label} must be a whole number, got "${raw}"`);
@@ -50,6 +59,7 @@ export function parseOutreachArgs(argv: readonly string[]): OutreachArgs {
   let couponPercent: number | null = null;
   let out: string | null = null;
   let name: string | null = null;
+  let actorProfileId: string | null = null;
   let dryRun = false;
 
   const values = [...argv];
@@ -72,6 +82,15 @@ export function parseOutreachArgs(argv: readonly string[]): OutreachArgs {
       case "coupon-percent": couponPercent = integer("coupon-percent", take()); break;
       case "out": out = take(); break;
       case "name": name = take(); break;
+      case "actor": {
+        const raw = take().trim();
+        // It lands in audit_log.actor_id and coupons.created_by, both uuid
+        // columns. Caught here rather than as a constraint violation three
+        // statements into the transaction.
+        if (!UUID.test(raw)) throw new Error(`--actor must be a profiles.id (uuid), got "${raw}"`);
+        actorProfileId = raw;
+        break;
+      }
       case "dry-run": dryRun = true; break;
       default: throw new Error(`Unknown flag "--${flag}"\n\n${OUTREACH_USAGE}`);
     }
@@ -88,5 +107,13 @@ export function parseOutreachArgs(argv: readonly string[]): OutreachArgs {
     throw new Error(`--limit must be between 1 and ${MAX_LIMIT}, got ${resolved}`);
   }
 
-  return { segment: parseSegment(segments), limit: resolved, couponPercent, out, name, dryRun };
+  return {
+    segment: parseSegment(segments),
+    limit: resolved,
+    couponPercent,
+    out,
+    name,
+    actorProfileId,
+    dryRun,
+  };
 }

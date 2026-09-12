@@ -61,6 +61,9 @@ try {
         limit: args.limit,
         couponPercent: args.couponPercent,
         name: args.name ?? undefined,
+        // Null when --actor was not given. Nobody is invented: an audit row
+        // with a made-up actor is worse than one that says "a shell".
+        actorProfileId: args.actorProfileId,
       });
       csv = outreachCsv(batch.rows);
       summary =

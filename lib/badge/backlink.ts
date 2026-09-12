@@ -278,6 +278,17 @@ const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
  * badge IMAGE's `src` (which is on our domain and appears on every single
  * embed, so every embed would verify without one real link) and it counts the
  * URL printed as plain text. Only an anchor is a backlink.
+ *
+ * `rel` is deliberately NOT inspected, so a `rel="nofollow"` anchor COUNTS.
+ * The badge asks an owner to display a mark and link it to their listing, and
+ * they have done exactly that; whether their CMS, their security policy or
+ * their own judgement adds nofollow is not something they always control and
+ * is not what the +5 is for. Rewarding only dofollow links would also make
+ * this a paid-link scheme in all but name — we would be handing out ranking
+ * in exchange for a specific link attribute, which is the thing search
+ * engines penalise. And we offer a nofollow variant of the snippet ourselves
+ * (see `badgeTrackedSnippetHtml`); refusing to count what we hand out would
+ * be indefensible.
  */
 export function hasBacklink(html: string, pageUrl: string, targets: string[]): boolean {
   const wanted = new Set<string>();
