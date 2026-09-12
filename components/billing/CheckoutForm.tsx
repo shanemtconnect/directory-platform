@@ -11,6 +11,8 @@ export interface CheckoutFormProps {
   interval: string;
   /** Shown on the button, e.g. "Continue to PayPal". */
   providerLabel: string;
+  /** Prefilled from `?coupon=`, so an outreach link carries its own code. */
+  defaultCoupon?: string;
 }
 
 /**
@@ -21,7 +23,13 @@ export interface CheckoutFormProps {
  * and the action re-checks ownership of the listing regardless, because a
  * hidden field is only a suggestion.
  */
-export function CheckoutForm({ listingId, tier, interval, providerLabel }: CheckoutFormProps) {
+export function CheckoutForm({
+  listingId,
+  tier,
+  interval,
+  providerLabel,
+  defaultCoupon,
+}: CheckoutFormProps) {
   const [state, action, pending] = useActionState(startCheckoutAction, initial);
 
   return (
@@ -36,6 +44,7 @@ export function CheckoutForm({ listingId, tier, interval, providerLabel }: Check
           id="coupon"
           name="coupon"
           maxLength={64}
+          defaultValue={defaultCoupon}
           autoComplete="off"
           spellCheck={false}
           aria-invalid={Boolean(state.couponError)}

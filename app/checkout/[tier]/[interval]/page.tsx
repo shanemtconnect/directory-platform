@@ -5,6 +5,9 @@ import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { ensureProfile } from "@/lib/auth/profile";
 import { listingForCheckout } from "@/lib/db/queries/billing";
+import { previewCoupon } from "@/lib/db/queries/coupons";
+import { applyDiscount, discountSummary } from "@/lib/billing/coupons";
+import { planAmount } from "@/lib/billing/plans";
 import { billingConfigured } from "@/lib/billing/paypal";
 import { parseBillingInterval, parseTier } from "@/lib/billing/plans";
 import { CheckoutForm } from "@/components/billing/CheckoutForm";
@@ -52,8 +55,10 @@ export default async function CheckoutPage({
   const e = siteConfig.entity;
   const spec = siteConfig.tiers[tier];
 
-  const raw = (await searchParams).listing;
+  const query = await searchParams;
+  const raw = query.listing;
   const listingId = Array.isArray(raw) ? raw[0] : raw;
+  const rawCoupon = Array.isArray(query.coupon) ? query.coupon[0] : query.coupon;
 
   const profile = await ensureProfile(db, viewer);
   const listing =
@@ -93,6 +98,26 @@ export default async function CheckoutPage({
     );
   }
 
+  /**
+   * A code on the URL is how an outreach email carries its own offer. It is
+   * previewed, never spent: the redemption that counts against
+   * `max_redemptions` happens inside the checkout transaction, under a row
+   * lock. An invalid code here is simply not shown, and the field still holds
+   * it so the person can correct it and see why.
+   */
+  let discount: { code: string; firstPayment: number; summary: string } | undefined;
+  if (rawCoupon !== undefined && rawCoupon.trim() !== "") {
+    const preview = await previewCoupon(db, viewer, { code: rawCoupon, tier, interval });
+    if (preview.outcome === "ok") {
+      const net = applyDiscount(planAmount(tier, interval), preview.coupon);
+      discount = {
+        code: preview.coupon.code,
+        firstPayment: Number(net.value),
+        summary: discountSummary(preview.coupon),
+      };
+    }
+  }
+
   return (
     <main data-testid="checkout-page">
       <h1>Checkout</h1>
@@ -103,12 +128,14 @@ export default async function CheckoutPage({
         locale={siteConfig.locale}
         currency={siteConfig.currency}
         subjectName={listing.name}
+        discount={discount}
       />
       <CheckoutForm
         listingId={listing.id}
         tier={tier}
         interval={interval}
         providerLabel="Continue to PayPal"
+        defaultCoupon={rawCoupon}
       />
       <p className="text-sm text-muted">
         Paying does not by itself put the Verified badge on your {e.singular}. The{" "}

@@ -12,14 +12,12 @@ import { getPayPalClient } from "@/lib/billing/paypal";
 import { couponRejectionMessage } from "@/lib/billing/coupons";
 import { parseBillingInterval, parseTier } from "@/lib/billing/plans";
 import { startCheckout } from "@/lib/billing/subscriptions";
-import { previewCoupon } from "@/lib/db/queries/coupons";
 import { requestCancellation, subscriptionForOwner } from "@/lib/db/queries/billing";
 import { isUuid } from "@/lib/actions/validation";
 import type { TestDb } from "@/test/db";
 
 /**
- * The two things an owner can do with money, and one preview that does not
- * touch it.
+ * The two things an owner can do with money.
  *
  * Every one of them re-derives the viewer and the profile here. The layout
  * gate on /account is not a security boundary for an action (global constraint
@@ -31,9 +29,6 @@ import type { TestDb } from "@/test/db";
  * budget here is somebody else's API quota as well as our database.
  */
 const CHECKOUT_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as const;
-
-/** Thirty an hour: typing a code wrong is normal, guessing codes is not. */
-const COUPON_RATE_LIMIT = { limit: 30, windowSeconds: 3600 } as const;
 
 export interface CheckoutState {
   status: "idle" | "error";
@@ -120,37 +115,6 @@ export async function startCheckoutAction(
   // Outside the try: `redirect` works by throwing, and catching it here would
   // turn a successful checkout into the generic error above.
   redirect(result.approveUrl!);
-}
-
-export interface CouponState {
-  status: "idle" | "ok" | "error";
-  message?: string;
-}
-
-/** Checks a code without spending it, so the page can price the first payment. */
-export async function checkCouponAction(
-  _prev: CouponState,
-  form: FormData,
-): Promise<CouponState> {
-  const viewer = await currentViewer();
-  if (viewer.role === "public") return { status: "error", message: "Please sign in first." };
-
-  const code = String(form.get("coupon") ?? "").trim();
-  if (code === "") return { status: "idle" };
-
-  const tier = parseTier(String(form.get("tier") ?? ""));
-  const interval = parseBillingInterval(String(form.get("interval") ?? ""));
-  if (tier === null || interval === null) return { status: "error", message: "" };
-
-  const limit = await limitPublicWrite("billing-coupon", await headers(), COUPON_RATE_LIMIT);
-  if (!limit.allowed) {
-    return { status: "error", message: "Too many attempts. Please try again later." };
-  }
-
-  const result = await previewCoupon(db, viewer, { code, tier, interval });
-  return result.outcome === "ok"
-    ? { status: "ok", message: `Code ${result.coupon.code} applied.` }
-    : { status: "error", message: couponRejectionMessage(result.reason) };
 }
 
 export interface CancelState {
