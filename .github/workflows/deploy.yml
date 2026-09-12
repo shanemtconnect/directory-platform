@@ -1,0 +1,71 @@
+name: Deploy
+
+# Two ways in:
+#
+#   1. `workflow_run` — automatic, after `CI` (ci.yml) finishes on `main`.
+#      GitHub Actions has no cross-workflow `needs:`, so this is the only way
+#      to gate a deploy on a *different* workflow file's result. The `if:`
+#      below checks `conclusion == 'success'` itself; a failed or cancelled CI
+#      run still fires this event, it just does not pass the gate.
+#   2. `workflow_dispatch` — manual, with a branch to deploy. This is the
+#      escape hatch (redeploying an old commit, deploying a hotfix branch
+#      before it is even on `main`) and deliberately does NOT wait for CI —
+#      the person running it is the gate.
+#
+# Neither builds anything: Coolify is git-connected and builds the image
+# itself from the pushed commit when `scripts/deploy-coolify.sh` tells it to
+# deploy. This workflow's job is the trigger, the wait, and the proof it came
+# up — not the build.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to deploy (Coolify redeploys whatever HEAD of this branch is set as its own source — this only picks which ref this workflow's own smoke test checks out)"
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_sha }}
+
+      # See docs/CLONING.md → Deploy on Coolify, and README → Deploy, for
+      # where each of these four comes from. None of them are ever printed:
+      # deploy-coolify.sh logs the deployment_uuid Coolify hands back, not the
+      # token that requested it.
+      #
+      # scripts/deploy-coolify.sh does the POST-then-poll for both apps and
+      # exits non-zero if either fails or times out, which fails this step and
+      # the smoke test below never runs.
+      - name: Deploy web + worker on Coolify
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          ./scripts/deploy-coolify.sh \
+            web:${{ secrets.COOLIFY_WEB_UUID }} \
+            worker:${{ secrets.COOLIFY_WORKER_UUID }}
+
+      # A deployment Coolify calls "finished" is a container that started, not
+      # one that is actually serving — this is the check that closes that gap.
+      # SITE_URL is a repository VARIABLE (Settings → Actions → Variables),
+      # not a secret: it is the site's own public URL, the same value as
+      # NEXT_PUBLIC_SITE_URL.
+      - name: Smoke test
+        run: ./scripts/smoke.sh "${{ vars.SITE_URL }}"

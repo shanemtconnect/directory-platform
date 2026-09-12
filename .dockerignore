@@ -12,8 +12,13 @@ node_modules
 .superpowers
 docs
 e2e
+test
 test-results
 playwright-report
 seeds/**/*.md
 *.log
 coverage
+
+# The worker stage COPYs the whole scripts/ directory (it needs seed-cli.ts
+# etc. at runtime) — but not its own dry-run test harnesses.
+scripts/*.test.sh
