@@ -42,6 +42,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1127.0",
     "@fortedigital/nextjs-cache-handler": "^3.3.0",
     "@redis/client": "^6.2.1",
+    "@sentry/nextjs": "^10.74.0",
     "@tailwindcss/postcss": "^4.3.3",
     "better-auth": "^1.7.3",
     "drizzle-orm": "0.45.2",

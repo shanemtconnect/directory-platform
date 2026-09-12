@@ -245,6 +245,91 @@ and `docker-entrypoint.sh` merges each new build's assets in beside the old
 ones. It grows by one build's static output per deploy and is never pruned;
 sweep it by hand when it matters.
 
+## Monitoring
+
+Four optional environment variables, none of them ever enforced, all listed as
+`OBSERVABILITY_ENV_OPTIONAL` in `config/validate.ts`. A clone with none of them
+set boots and serves exactly as it would with all four — a boot that failed over
+a missing monitoring URL would be precisely the outage the monitoring was bought
+to detect.
+
+| Variable | Read at | Read by |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SENTRY_DSN` | **build** | `instrumentation-client.ts` — browser errors |
+| `SENTRY_DSN` | boot | `instrumentation.ts` — server errors; falls back to the public DSN |
+| `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` | **build** | `app/layout.tsx` — the analytics script's `data-domain` |
+| `UPTIME_PUSH_URL` | boot, **worker only** | `worker/index.ts` — the heartbeat push |
+
+The two `NEXT_PUBLIC_` ones are inlined into the client bundle by `next build`.
+Setting either at boot does nothing at all; adding Sentry or Plausible to a
+running site is a **rebuild**, with `--build-arg`, exactly like `SITE_ENV`.
+
+### `GET /api/health`
+
+```json
+{"ok":true,"db":"ok","redis":"ok","build":"SioK72al0l6Phr302EJBd","uptimeSeconds":12}
+```
+
+`200` when `db` is `ok`, `503` (with `Retry-After: 5`) when it is not. No
+authentication — an orchestrator cannot present a credential, and the body is
+two up/down flags, a build id already visible in every `/_next/static/` URL, and
+a process uptime.
+
+**Redis is reported but does not gate the status.** `cache-handler.mjs` falls
+back to a per-process LRU when Redis is unreachable, so the site is slower, not
+broken; failing the health check on it would drain every replica at once and
+turn a degradation into an outage. Alert on `redis` separately if you care.
+`absent` means `REDIS_URL` was never set, which cannot happen in a deployed
+container (it is in `RUNTIME_ENV`) but does happen in `next dev`.
+
+`force-dynamic` and `revalidate = 0` keep the route out of the ISR cache
+handler. Without them a health check could be served from Redis — answering
+`200` long after the database behind it had gone.
+
+**Coolify:** set the web service's health check path to `/api/health`. The image
+carries its own `HEALTHCHECK` on the same endpoint (`node -e` with a global
+`fetch`, 30s interval, 60s start period for `MIGRATE_ON_BOOT` migrations), but
+Coolify runs its check independently — configure both.
+
+The worker stage declares `HEALTHCHECK NONE`. It inherits `FROM runner` and
+serves no HTTP, so an inherited check would mark a perfectly healthy worker
+unhealthy forever.
+
+### The worker heartbeat
+
+Every five minutes, on its own `cron.schedule` rather than through the job
+`schedule()` helper — that one takes an advisory lock (a second worker's beat
+would report "skipped", which is a heartbeat lying about the one thing it
+exists to prove) and writes a `job_runs` row per run, inflating the counts the
+line reports.
+
+```
+[worker] heartbeat queue pending=3 failed=0 done=912 · runs/5m ok=12 failed=0
+```
+
+**Its absence is the alert.** The worker listens on no port, so nothing can pull
+a check out of it, and a worker that has quietly stopped scheduling looks
+exactly like a worker with no work to do.
+
+To alert on that absence, create an **Uptime Kuma push monitor** and set
+`UPTIME_PUSH_URL` to its push URL on the worker service only:
+
+```
+UPTIME_PUSH_URL=https://uptime.example.com/api/push/<token>
+```
+
+Set the monitor's **heartbeat interval to 330 seconds or more** — one beat plus
+a margin. Kuma defaults to 60, which alarms between two perfectly healthy beats.
+
+`status=up` and `msg=<the heartbeat line>` are appended unless the URL you
+configure already carries them, so the monitor's last message is the queue depth
+at the last beat. Any endpoint that answers 200 to a GET works the same way.
+
+The push is **skipped, deliberately, when the job counts cannot be read** — a
+worker whose database has gone is still a running process, and pushing "up" from
+it would hold the monitor green while no job ever runs. The log line is still
+written, with the reason, so `docker logs` explains the silence.
+
 ## Layout
 
 ```

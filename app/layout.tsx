@@ -9,6 +9,7 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { organisationSchema, websiteSchema } from "@/lib/schema/builders";
 import { SiteHeader } from "@/components/layout/SiteHeader";
 import { SiteFooter } from "@/components/layout/SiteFooter";
+import { plausibleDomain, PLAUSIBLE_SCRIPT_SRC } from "@/lib/observability/plausible";
 
 export const metadata: Metadata = {
   /**
@@ -39,6 +40,12 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  // Absent unless NEXT_PUBLIC_PLAUSIBLE_DOMAIN is set at BUILD time. Plausible
+  // sets no cookies and stores no personal data, so this needs no consent
+  // banner — see lib/observability/plausible.ts before replacing it with
+  // anything that does.
+  const analyticsDomain = plausibleDomain();
+
   return (
     /*
      * The font vars go on last so the loaded families win.
@@ -52,6 +59,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       style={{ ...themeStyleVars(siteConfig.theme), ...fontStyleVars(siteConfig.theme) }}
     >
       <body>
+        {analyticsDomain === undefined ? null : (
+          <script defer data-domain={analyticsDomain} src={PLAUSIBLE_SCRIPT_SRC} />
+        )}
         {/* Global identity nodes, emitted once. Page-level nodes reference these by @id. */}
         <JsonLd data={organisationSchema()} />
         <JsonLd data={websiteSchema()} />

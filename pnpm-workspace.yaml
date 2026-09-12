@@ -7,4 +7,12 @@
 # answer for, which broke a clean `pnpm install --frozen-lockfile` in CI and in
 # the Docker build alike.
 allowBuilds:
+  # @sentry/cli's postinstall downloads a ~16 MB native binary whose only job is
+  # uploading source maps, which happens inside `withSentryConfig()` — and this
+  # repo deliberately does not use it (see lib/observability/sentry.ts). Nothing
+  # in the app, the worker or the Docker build ever executes the binary, so
+  # fetching it would add 16 MB to every install and every image layer to sit
+  # unused. Stack traces stay minified in Sentry as a result; that is the trade,
+  # and it is reversible by adding the wizard's build plugin later.
+  '@sentry/cli': false
   esbuild: false

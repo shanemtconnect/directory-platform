@@ -4,6 +4,8 @@ import { db, type Db } from "@/lib/db/client";
 import { jobRuns } from "@/lib/db/schema";
 import { withAdvisoryLock } from "./lock";
 import { now } from "@/lib/clock";
+import { jobCounts } from "@/lib/db/queries/health";
+import { HEARTBEAT_CRON, pushUptime, runHeartbeat } from "@/lib/observability/heartbeat";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -68,5 +70,31 @@ schedule("notify", "*/30 * * * * *", async (tx) => {
   const { processNotifications } = await import("./jobs/notify");
   await processNotifications(tx);
 });
+
+/**
+ * Proof of life, every five minutes.
+ *
+ * NOT via `schedule()` above, for two reasons. It would take the advisory lock,
+ * so a second worker's heartbeat would report "skipped" — and a heartbeat that
+ * goes quiet because another process holds a lock is a heartbeat that lies
+ * about the thing it exists to prove. It would also write a `job_runs` row per
+ * beat, inflating the very counts it reports.
+ *
+ * The web container has `/api/health` for this; the worker listens on no port,
+ * so a pull check cannot reach it and its absence is the only available signal.
+ * `UPTIME_PUSH_URL` (optional) forwards each beat to a push monitor — see the
+ * README's Monitoring section for the interval to set on it.
+ */
+cron.schedule(HEARTBEAT_CRON, async () => {
+  const result = await runHeartbeat({
+    counts: (since) => jobCounts(db, since),
+    log: (line) => console.log(`[worker] ${line}`),
+    error: (line) => console.error(`[worker] ${line}`),
+    push: (message) => pushUptime(message),
+    nowMs: Date.now,
+  });
+  if (result === "failed") console.warn("[worker] uptime push failed");
+});
+console.log(`[worker] scheduled heartbeat (${HEARTBEAT_CRON})`);
 
 console.log("[worker] started");

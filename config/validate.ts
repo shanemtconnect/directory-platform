@@ -53,6 +53,42 @@ export const BUILD_ENV = ["NEXT_PUBLIC_SITE_URL"] as const;
 export const BUILD_ENV_OPTIONAL = ["NEXT_PUBLIC_MAPTILER_KEY", "NEXT_PUBLIC_MEDIA_URL"] as const;
 
 /**
+ * Monitoring. All four optional, none of them warned about, and the complete
+ * list of what this platform reads for observability.
+ *
+ *   NEXT_PUBLIC_SENTRY_DSN       — browser error reporting. BUILD-time: it is
+ *                                  inlined into the client bundle, so setting
+ *                                  it at boot does nothing (instrumentation-client.ts).
+ *   SENTRY_DSN                   — server error reporting (instrumentation.ts).
+ *                                  Runtime. Falls back to the public one, so a
+ *                                  site with a single DSN in a single variable
+ *                                  still reports server errors.
+ *   NEXT_PUBLIC_PLAUSIBLE_DOMAIN — the analytics script's data-domain. BUILD-time,
+ *                                  same reason. Unset means no script at all,
+ *                                  which is also how a clone opts out.
+ *   UPTIME_PUSH_URL              — an Uptime Kuma push monitor the worker GETs
+ *                                  on each five-minute heartbeat. Runtime. The
+ *                                  web container is watched by /api/health
+ *                                  instead, a pull check needing no variable.
+ *
+ * Deliberately NOT in BUILD_ENV_OPTIONAL above, which is the list `validateEnv`
+ * prints a build warning for. That warning exists because a missing MapTiler
+ * key silently disables a feature somebody paid for and expects to see. Nobody
+ * expects to see an error tracker, most clones will never buy one, and a
+ * warning printed on every build of every site is a warning nobody reads by the
+ * time it matters.
+ *
+ * Nothing here is ever enforced. A boot that failed over a missing monitoring
+ * URL would be precisely the outage the monitoring was bought to detect.
+ */
+export const OBSERVABILITY_ENV_OPTIONAL = [
+  "NEXT_PUBLIC_SENTRY_DSN",
+  "SENTRY_DSN",
+  "NEXT_PUBLIC_PLAUSIBLE_DOMAIN",
+  "UPTIME_PUSH_URL",
+] as const;
+
+/**
  * Required to boot. Deliberately short: only the variables whose features are
  * actually wired today. Refusing to start over a key nothing reads yet is an
  * outage the code chose to have.

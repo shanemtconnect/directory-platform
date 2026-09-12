@@ -127,6 +127,26 @@ COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
+
+# `node -e`, not curl or wget: this image is node:24-alpine plus the standalone
+# server and nothing else, and adding a package to the runner just to ask it a
+# question is a package to patch forever. Node 24 has a global fetch.
+#
+# The exit code follows the endpoint's status, which is 503 when the database is
+# unreachable — so a container that is listening but cannot serve is marked
+# unhealthy instead of being left in the load balancer answering 500s. That is
+# the whole point; a TCP check on the port cannot tell the difference.
+#
+# start-period 60s because docker-entrypoint.sh may run migrations before the
+# server starts (MIGRATE_ON_BOOT), and a failure during the start period is not
+# counted against the retries.
+#
+# Coolify: set the health check path to /api/health on the web service. It does
+# not read this instruction — it runs its own check — so the two are configured
+# separately and should agree.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]
 
@@ -136,6 +156,11 @@ CMD ["node", "server.js"]
 # and only tsx resolves the tsconfig `paths` alias. It comes from the full
 # (dev-inclusive) dependency tree, which also replaces the runner's prod-only one.
 FROM runner AS worker
+# Inherited from `runner` otherwise, and the worker serves no HTTP: every check
+# would fail and the container would sit permanently unhealthy while working
+# perfectly. Its liveness signal is the five-minute heartbeat in worker/index.ts
+# — watch that with UPTIME_PUSH_URL or a log alert, not with a port check.
+HEALTHCHECK NONE
 RUN rm -rf node_modules
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/worker ./worker

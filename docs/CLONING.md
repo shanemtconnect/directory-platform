@@ -183,8 +183,30 @@ above — setting them at boot does nothing.
 **Worker** — the same image, different entrypoint. Set `WORKER_ENABLED=true` on
 that container only.
 
-**Optional** — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEOCODING_API_KEY`,
-`SENTRY_DSN`.
+**Optional** — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEOCODING_API_KEY`.
+
+**Monitoring** — all four optional, none ever enforced, listed together as
+`OBSERVABILITY_ENV_OPTIONAL` in `config/validate.ts`. A site with none of them
+set boots, serves and reports nothing, which is the right default for a clone
+that has not bought an error tracker yet.
+
+| Variable | When | Note |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SENTRY_DSN` | **build** | Browser errors. Inlined into the client bundle — setting it at boot does nothing. |
+| `SENTRY_DSN` | boot | Server errors. Falls back to the public DSN above, so one DSN in one variable covers both. |
+| `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` | **build** | The bare hostname registered in Plausible (`example.co.uk`), never a URL. Unset ⇒ no analytics script at all. |
+| `UPTIME_PUSH_URL` | boot, **worker only** | An Uptime Kuma push monitor URL. The worker GETs it every five minutes. |
+
+Plausible sets no cookies and stores no personal data, so it needs **no consent
+banner** and no entry in the privacy policy's cookie table. That is the reason
+it is the analytics script here. Anything you replace it with that does set a
+cookie needs a consent gate built in front of it first, and a privacy policy
+change — do not swap it casually.
+
+Sentry runs with `sendDefaultPii: false` and `tracesSampleRate: 0.1`. PII
+scrubbing is not optional: enquiry form bodies carry a member of the public's
+name, email address and message, and the privacy policy does not say those go
+to a third-party error tracker.
 
 **`SITE_ENV`** — **a build arg, not a runtime variable.** Only the literal
 `production` is production; anything else — `staging`, a typo, an empty value,
@@ -237,7 +259,14 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
    already in the image. `scripts/verify-image.sh` runs it inside the built
    image on every check.
 6. **Second application** from the same repo for the worker: Dockerfile target
-   `worker`, `WORKER_ENABLED=true`, no domain, no health check on a port.
+   `worker`, `WORKER_ENABLED=true`, no domain, no health check on a port. The
+   worker serves no HTTP, so the image declares `HEALTHCHECK NONE` for that
+   stage — watch its five-minute heartbeat instead (README → Monitoring).
+6b. **Health check on the web service:** set the path to `/api/health`. It
+   answers 200 only when the database is reachable, so a container that is
+   listening but cannot serve is drained instead of left answering 500s. The
+   image also carries its own `HEALTHCHECK` on the same endpoint; Coolify runs
+   its check independently, so configure both and keep them agreeing.
 7. **Redis** must be reachable at `REDIS_URL`. The ISR cache handler is
    Redis-backed and guards against connecting during `next build`; without the
    guard the build hangs silently, and without Redis each replica keeps its own
