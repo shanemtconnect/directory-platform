@@ -1,5 +1,6 @@
 import { drainStats } from "@/lib/stats/counters";
 import { applyStatDeltas } from "@/lib/db/queries/stats";
+import { ADMIN_VIEWER } from "@/worker/viewer";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -21,5 +22,5 @@ import type { Db } from "@/lib/db/client";
 export async function flushStats(tx: Db): Promise<number> {
   const deltas = await drainStats();
   if (deltas.length === 0) return 0;
-  return applyStatDeltas(tx, deltas);
+  return applyStatDeltas(tx, ADMIN_VIEWER, deltas);
 }

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { listingStatsDaily, listings, profiles, user } from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
 import { resetClock, setClock } from "@/lib/clock";
 import { siteConfig } from "@/config/site.config";
 import { withTestDb, type TestDb } from "@/test/db";
@@ -245,13 +246,39 @@ describe("listingStats — the rows", () => {
   });
 });
 
+describe("applyStatDeltas — who may write it", () => {
+  it("refuses a public viewer rather than writing the batch", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+
+      await expect(applyStatDeltas(tx, PUBLIC_VIEWER, [{
+        listingId, day: "2026-09-12",
+        views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
+      }])).rejects.toThrow("FORBIDDEN");
+
+      expect(await tx.select().from(listingStatsDaily)
+        .where(eq(listingStatsDaily.listingId, listingId))).toHaveLength(0);
+    });
+  });
+
+  it("refuses a signed-in owner too — this is the worker's write, not theirs", async () => {
+    await withTestDb(async (tx) => {
+      const owner = await makeOwner(tx);
+      const viewer: Viewer = { role: "owner", userId: owner.userId };
+
+      await expect(applyStatDeltas(tx, viewer, [])).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});
+
 describe("applyStatDeltas", () => {
   it("inserts a new day's counts", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const listingId = await makeListing(tx, ctx);
 
-      const written = await applyStatDeltas(tx, [{
+      const written = await applyStatDeltas(tx, ADMIN_VIEWER, [{
         listingId, day: "2026-09-12",
         views: 3, impressions: 30, enquiries: 1, shortlistAdds: 2, badgeClicks: 0,
       }]);
@@ -274,8 +301,8 @@ describe("applyStatDeltas", () => {
         views: 3, impressions: 30, enquiries: 1, shortlistAdds: 0, badgeClicks: 0,
       };
 
-      await applyStatDeltas(tx, [delta]);
-      await applyStatDeltas(tx, [delta]);
+      await applyStatDeltas(tx, ADMIN_VIEWER, [delta]);
+      await applyStatDeltas(tx, ADMIN_VIEWER, [delta]);
 
       const [row] = await tx.select().from(listingStatsDaily)
         .where(eq(listingStatsDaily.listingId, listingId));
@@ -288,7 +315,7 @@ describe("applyStatDeltas", () => {
       const ctx = await makeScaffold(tx);
       const listingId = await makeListing(tx, ctx);
 
-      const written = await applyStatDeltas(tx, [
+      const written = await applyStatDeltas(tx, ADMIN_VIEWER, [
         { listingId: randomUUID(), day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
         { listingId, day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
       ]);
@@ -302,7 +329,7 @@ describe("applyStatDeltas", () => {
 
   it("is a no-op for an empty batch", async () => {
     await withTestDb(async (tx) => {
-      expect(await applyStatDeltas(tx, [])).toBe(0);
+      expect(await applyStatDeltas(tx, ADMIN_VIEWER, [])).toBe(0);
     });
   });
 
@@ -311,7 +338,7 @@ describe("applyStatDeltas", () => {
       const ctx = await makeScaffold(tx);
       const listingId = await makeListing(tx, ctx);
 
-      const written = await applyStatDeltas(tx, [{
+      const written = await applyStatDeltas(tx, ADMIN_VIEWER, [{
         listingId, day: "2026-09-12",
         views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
       }]);
@@ -324,7 +351,7 @@ describe("applyStatDeltas", () => {
 
   it("refuses a malformed listing id or day rather than putting it in the statement", async () => {
     await withTestDb(async (tx) => {
-      const written = await applyStatDeltas(tx, [
+      const written = await applyStatDeltas(tx, ADMIN_VIEWER, [
         { listingId: "1); drop table listings; --", day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
         { listingId: randomUUID(), day: "not-a-day", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
       ]);

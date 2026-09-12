@@ -1,6 +1,6 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { listingStatsDaily, listings, profiles } from "@/lib/db/schema";
-import type { Viewer } from "@/lib/db/viewer";
+import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 import type { TierName } from "@/config/types";
 import { siteConfig } from "@/config/site.config";
@@ -60,6 +60,17 @@ export interface ListingStatsResult {
  * `listing_stats_daily`.
  */
 export const MAX_STATS_WINDOW_DAYS = 730;
+
+/**
+ * `applyStatDeltas` folds a Redis drain straight into `listing_stats_daily`,
+ * bypassing every visibility filter the read side applies — exactly what the
+ * worker's flush needs, and exactly what a public or owner viewer must never
+ * be able to trigger. See `lib/db/queries/jobs.ts` for the same gate on the
+ * job queue.
+ */
+function assertWorker(viewer: Viewer): void {
+  if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
+}
 
 function zeroDay(day: string): StatsDay {
   return { day, views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
@@ -177,7 +188,13 @@ export async function listingStats(
  *
  * @returns how many (listing, day) rows were written.
  */
-export async function applyStatDeltas(tx: TestDb, deltas: StatDelta[]): Promise<number> {
+export async function applyStatDeltas(
+  tx: TestDb,
+  viewer: Viewer,
+  deltas: StatDelta[],
+): Promise<number> {
+  assertWorker(viewer);
+
   const valid = deltas.filter((d) =>
     isUuid(d.listingId)
     && isDayKey(d.day)
