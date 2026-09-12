@@ -6,6 +6,7 @@ import {
 import { publicListingColumns, publishedListings } from "@/lib/db/queries/listings";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
+import { recordStat } from "@/lib/stats/counters";
 
 /**
  * Shortlists — the logged-out path is the point.
@@ -251,7 +252,11 @@ export async function addListingToShortlist(
     returning id
   `)) as unknown as unknown[];
 
-  if (inserted.length > 0) return { ok: true };
+  if (inserted.length > 0) {
+    // The owner ROI counter, in Redis — a save is never a row write here.
+    await recordStat(listingId, "shortlist_add");
+    return { ok: true };
+  }
 
   // Nothing was written. Work out which of the three reasons it was, so the UI
   // can say "your list is full" rather than a generic failure.
