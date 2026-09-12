@@ -55,6 +55,15 @@ export function heartbeatMessage(counts: HeartbeatCounts): string {
 export type UptimePushResult = "sent" | "unconfigured" | "failed";
 
 /**
+ * Set the moment `pushUptime` has warned once about an unparseable
+ * `UPTIME_PUSH_URL`. A misconfigured URL is a boot-time typo, not a transient
+ * fault — it will not fix itself between heartbeats — so warning on every one
+ * of them, every five minutes, forever, would bury the log in a line nobody
+ * needed to see twice.
+ */
+let warnedUnparseableUptimePushUrl = false;
+
+/**
  * Short. The push is fire-and-forget decoration on a log line that has already
  * been written; a monitor that is itself down must not hold the worker's tick.
  */
@@ -87,6 +96,10 @@ export async function pushUptime(
   try {
     url = new URL(raw);
   } catch {
+    if (!warnedUnparseableUptimePushUrl) {
+      warnedUnparseableUptimePushUrl = true;
+      console.warn(`UPTIME_PUSH_URL is set but is not a valid URL: ${raw}`);
+    }
     return "unconfigured";
   }
   if (!url.searchParams.has("status")) url.searchParams.set("status", "up");

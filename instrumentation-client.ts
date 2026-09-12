@@ -20,7 +20,7 @@ import { clientSentryDsn, initSentry } from "@/lib/observability/sentry";
  * `NEXT_PUBLIC_` values are inlined by `next build`, so the DSN check below is
  * a comparison against a literal — a site adding Sentry later rebuilds, exactly
  * as it would to change `SITE_ENV`. With no DSN the condition is statically
- * false and the SDK is never fetched at all.
+ * false, and the SDK is never fetched or evaluated without a DSN.
  */
 type RouterTransitionStart = (href: string, navigationType: string) => void;
 

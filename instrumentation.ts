@@ -57,9 +57,9 @@ export async function register(): Promise<void> {
   // a missing DATABASE_URL by throwing first. `fatal` does not return.
   //
   // Dynamically imported so the SDK is absent from the Edge bundle Turbopack
-  // analyses, and absent from the module graph entirely on a site with no DSN —
-  // which is most clones. `initSentry` is what decides; this closure is only
-  // reached when it has already found a DSN.
+  // analyses, and never fetched or evaluated without a DSN — which is most
+  // clones. `initSentry` is what decides; this closure is only reached when it
+  // has already found a DSN.
   await startSentry();
 }
 

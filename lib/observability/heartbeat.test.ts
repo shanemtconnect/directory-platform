@@ -58,11 +58,32 @@ describe("pushUptime", () => {
 
   it("does nothing when UPTIME_PUSH_URL is not a URL", async () => {
     const fetchImpl = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(pushUptime("x", { UPTIME_PUSH_URL: "not a url" }, fetchImpl)).resolves.toBe(
+        "unconfigured",
+      );
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
-    await expect(pushUptime("x", { UPTIME_PUSH_URL: "not a url" }, fetchImpl)).resolves.toBe(
-      "unconfigured",
-    );
-    expect(fetchImpl).not.toHaveBeenCalled();
+  it("warns about an unparseable UPTIME_PUSH_URL, but only once per process", async () => {
+    // A typo'd monitor URL that nobody notices must not fill the logs with
+    // the same warning every five minutes forever — one line is enough to
+    // find it, and the module-scoped flag is what keeps it to one.
+    vi.resetModules();
+    const { pushUptime: freshPushUptime } = await import("./heartbeat");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await freshPushUptime("x", { UPTIME_PUSH_URL: "not a url" }, vi.fn());
+      await freshPushUptime("y", { UPTIME_PUSH_URL: "still not a url" }, vi.fn());
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("GETs the push URL with the heartbeat as the message", async () => {

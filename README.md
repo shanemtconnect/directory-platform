@@ -253,10 +253,6 @@ set boots and serves exactly as it would with all four — a boot that failed ov
 a missing monitoring URL would be precisely the outage the monitoring was bought
 to detect.
 
-**`.env.example` is not writable from this worktree** (a permission rule
-blocks it), so this section is the reference for these four. Add them there when
-you next edit that file.
-
 | Variable | Read at | Read by |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SENTRY_DSN` | **build** | `instrumentation-client.ts` — browser errors |

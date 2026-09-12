@@ -26,7 +26,21 @@ async function openClient(url: string): Promise<RedisProbeClient> {
   // an EventEmitter is a thrown exception at the top level — which would take
   // the server down instead of failing one health check.
   client.on("error", () => {});
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (e) {
+    // `connect()` rejecting leaves a client nobody else holds a reference to:
+    // `probeRedis`'s own `finally` only destroys whatever this function
+    // successfully RETURNS, and a rejected promise returns nothing. Without
+    // this, the socket `createClient` opened above stays open indefinitely.
+    try {
+      client.destroy();
+    } catch {
+      // Destroying a socket that just failed to connect can itself throw —
+      // the connect failure is already the answer being reported.
+    }
+    throw e;
+  }
   return client;
 }
 
