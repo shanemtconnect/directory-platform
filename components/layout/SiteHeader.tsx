@@ -6,7 +6,6 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { LocationSwitcher } from "@/components/location/LocationSwitcher";
 import { cityScopedHref } from "@/components/location/switcher-links";
 import { Container } from "./Container";
-import { isFooterMatrixSuppressed } from "./footer-matrix-flag";
 
 /**
  * Every link here comes from `navRoutes()`. There is deliberately no local list
@@ -49,22 +48,8 @@ const HEADER_CITIES = 12;
  *
  * A failed query costs the switcher, never the page. /pricing and /login do not
  * otherwise touch the database and are not worth a 500 for a nav control.
- *
- * Skipped entirely on a 404 or an error page, on the same flag the footer's
- * matrix uses (footer-matrix-flag.ts). Those two pages carry their own list of
- * ways back in, and the error page in particular may be rendering BECAUSE the
- * database just failed — which is the worst moment to ask it for twelve cities.
- *
- * The `await` before the flag is read is load-bearing, and is the one thing
- * here that differs from the footer. `app/layout.tsx` renders <SiteHeader />
- * BEFORE {children}, and the flag is set by the special page as it renders; the
- * footer, declared after {children}, can simply read it. Yielding once lets the
- * rest of the tree render up to its own first await — which is past the point
- * where `app/not-found.tsx` calls `suppressFooterMatrix()` — before we decide.
  */
 async function loadCities(): Promise<SwitcherCity[]> {
-  await Promise.resolve();
-  if (isFooterMatrixSuppressed()) return [];
   try {
     return await listSwitcherCities(db as never, PUBLIC_VIEWER, { limit: HEADER_CITIES });
   } catch (error) {
