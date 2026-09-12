@@ -98,6 +98,12 @@ export default async function BadgePage({
       )}
 
       <h2>The four styles</h2>
+      <p>
+        Each style comes with two versions of the same code: the plain one, whose badge links
+        straight to your listing, and a tracked one that routes the click through us so the
+        count is visible to you — at the cost of a <code>nofollow</code> on the link. The plain
+        one is the default because the link is the point.
+      </p>
       <BadgeGallery
         base={r.base}
         verified={r.verified}
