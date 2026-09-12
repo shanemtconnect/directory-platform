@@ -62,3 +62,68 @@ export function submissionReceived(data: SubmissionEmailData): EmailContent {
     }),
   };
 }
+
+/**
+ * The two decision emails.
+ *
+ * The submitter is told what happened and, when it is good news, where to look.
+ * There is no listing URL on a rejection: a page that is not published has no
+ * address to give, and offering one would be an invitation to check whether it
+ * has quietly gone live anyway.
+ */
+export interface DecisionEmailData {
+  listingName: string;
+  cityName: string;
+  /** Absolute URL of the live page. Only used by the approval. */
+  listingUrl: string;
+  submitter: { name: string; email: string };
+}
+
+export function submissionApproved(data: DecisionEmailData): EmailContent {
+  const subject = `${data.listingName} is now live on ${siteConfig.name}`;
+  return {
+    subject,
+    ...layout({
+      subject,
+      heading: `Thanks, ${data.submitter.name} — it's live`,
+      blocks: [
+        {
+          value:
+            `${data.listingName} has been reviewed and published. It now appears on the ` +
+            `${data.cityName} page and in search results on the site.`,
+        },
+        { label: "Your page", value: data.listingUrl, href: data.listingUrl },
+        {
+          value:
+            `Anything that needs correcting, reply to this email and tell us. If the business ` +
+            `is yours, you can claim the page to manage it and reply to enquiries yourself.`,
+        },
+      ],
+    }),
+  };
+}
+
+export function submissionRejected(
+  data: DecisionEmailData & { reason: string | null },
+): EmailContent {
+  const subject = `About your ${siteConfig.entity.singular} submission — ${data.listingName}`;
+  const blocks: Block[] = [
+    {
+      value:
+        `We have looked at your submission for ${data.listingName} and we are not able to ` +
+        `publish it as it stands.`,
+    },
+  ];
+  // Null only where an older row carries no stored reason; the admin form
+  // requires one. A blank paragraph would read as a shrug.
+  if (data.reason !== null && data.reason.trim() !== "") {
+    blocks.push({ label: "Why", value: data.reason.trim() });
+  }
+  blocks.push({
+    value:
+      `If that is wrong, or you can put it right, reply to this email and we will look again. ` +
+      `Nothing is deleted — we keep the submission on file.`,
+  });
+
+  return { subject, ...layout({ subject, heading: subject, blocks }) };
+}

@@ -1,0 +1,98 @@
+import { siteConfig } from "@/config/site.config";
+import type { AuditEntry } from "@/lib/db/queries/admin/audit";
+
+/**
+ * The trail. Read-only by design — an audit log that can be edited from the
+ * screen that displays it is not an audit log.
+ *
+ * The filter is a path segment (`/admin/audit/city`), not `?type=city`: global
+ * constraint 12, and reading searchParams forces the route dynamic in Next 16.
+ */
+function when(value: Date): string {
+  return new Intl.DateTimeFormat(siteConfig.locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: siteConfig.timezone,
+  }).format(value);
+}
+
+/** jsonb comes back as unknown. Rendered compactly, never as [object Object]. */
+function meta(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+export function AuditFilter({ types, current }: { types: string[]; current: string | null }) {
+  return (
+    <nav aria-label="Filter by entity" className="mb-4 flex flex-wrap gap-2">
+      <a
+        href="/admin/audit"
+        aria-current={current === null ? "page" : undefined}
+        className={current === null ? "font-semibold" : ""}
+      >
+        Everything
+      </a>
+      {types.map((type) => (
+        <a
+          key={type}
+          href={`/admin/audit/${type}`}
+          aria-current={current === type ? "page" : undefined}
+          className={current === type ? "font-semibold" : ""}
+        >
+          {type}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+export function AuditTable({ rows }: { rows: AuditEntry[] }) {
+  if (rows.length === 0) {
+    return <p data-testid="audit-empty">Nothing has been recorded under this filter yet.</p>;
+  }
+
+  return (
+    <div className="table-scroll">
+      <table data-testid="audit-table">
+        <caption>The {rows.length} most recent entries, newest first.</caption>
+        <thead>
+          <tr>
+            <th scope="col">When</th>
+            <th scope="col">Who</th>
+            <th scope="col">Action</th>
+            <th scope="col">Entity</th>
+            <th scope="col">Detail</th>
+            <th scope="col">IP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>
+                <time dateTime={row.createdAt.toISOString()}>{when(row.createdAt)}</time>
+              </td>
+              <td>{row.actor ?? <span className="text-muted">not signed in</span>}</td>
+              <td>{row.action}</td>
+              <td>
+                {row.entityType ?? "—"}
+                {row.entityId !== null && (
+                  <>
+                    <br />
+                    <small className="font-mono">{row.entityId}</small>
+                  </>
+                )}
+              </td>
+              <td className="max-w-sm break-words text-sm">{meta(row.meta)}</td>
+              <td className="text-sm">{row.ip ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

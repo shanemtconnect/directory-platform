@@ -1,3 +1,19 @@
+import {
+  NOTIFY_DECISION,
+  NOTIFY_ENQUIRY,
+  NOTIFY_KINDS,
+  NOTIFY_REMOVAL,
+  NOTIFY_REMOVAL_ACTIONED,
+  NOTIFY_REMOVAL_REJECTED,
+  NOTIFY_REPORT,
+  NOTIFY_SUBMISSION,
+} from "@/lib/email/notify";
+import {
+  submissionApproved,
+  submissionReceived,
+  submissionRejected,
+  submissionToAdmin,
+} from "@/lib/email/templates/submission";
 import { siteUrl } from "@/lib/schema/builders";
 import {
   claimNextJob,
@@ -7,6 +23,7 @@ import {
   type QueuedJob,
 } from "@/lib/db/queries/jobs";
 import {
+  decisionNotification,
   enquiryNotification,
   parkedSubmissionNotification,
   submissionNotification,
@@ -15,7 +32,6 @@ import {
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
-import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
 import { removalDecisionNotification, removalNotification, reportNotification } from "@/lib/db/queries/trust";
 import {
   removalActioned,
@@ -24,15 +40,6 @@ import {
   removalToAdmin,
   reportToAdmin,
 } from "@/lib/email/templates/trust";
-import {
-  NOTIFY_ENQUIRY,
-  NOTIFY_KINDS,
-  NOTIFY_REMOVAL,
-  NOTIFY_REMOVAL_ACTIONED,
-  NOTIFY_REMOVAL_REJECTED,
-  NOTIFY_REPORT,
-  NOTIFY_SUBMISSION,
-} from "@/lib/email/notify";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -235,6 +242,40 @@ async function runRemovalDecision(
   });
 }
 
+/**
+ * The approve/reject email. One recipient: the person who submitted it.
+ *
+ * The decision is read from the PAYLOAD rather than from the row's status —
+ * see DecisionJobPayload. The row is still re-read for everything else, so the
+ * name, town and reason are whatever they are when the email goes out.
+ */
+async function runDecision(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const listingId = readId(payload, "listingId");
+  if (listingId === null) throw new Retryable("The job carries no listingId");
+
+  const decision = readId(payload, "decision");
+  if (decision !== "approved" && decision !== "rejected") {
+    throw new Retryable(`The job carries no decision to send (${String(decision)})`);
+  }
+
+  const data = await decisionNotification(db, ADMIN_VIEWER, listingId);
+  if (!data) throw new Retryable(`No notifiable submitter on listing ${listingId}`);
+
+  const content = {
+    listingName: data.listingName,
+    cityName: data.cityName,
+    listingUrl: siteUrl(data.listingPath),
+    submitter: data.submitter,
+  };
+
+  const message =
+    decision === "approved"
+      ? submissionApproved(content)
+      : submissionRejected({ ...content, reason: data.rejectedReason });
+
+  await deliver(d, SUBMITTER, { to: data.submitter.email, ...message });
+}
+
 async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
   switch (job.kind) {
     case NOTIFY_ENQUIRY:
@@ -249,6 +290,8 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runRemovalDecision(db, d, job.payload, removalActioned);
     case NOTIFY_REMOVAL_REJECTED:
       return runRemovalDecision(db, d, job.payload, removalRejected);
+    case NOTIFY_DECISION:
+      return runDecision(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.

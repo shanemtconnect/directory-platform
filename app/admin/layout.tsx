@@ -8,6 +8,10 @@ import { currentViewer } from "@/lib/auth/viewer";
  *
  * A signed-in non-admin gets a 404, not a 403: confirming that /admin exists
  * tells an attacker where to point their effort.
+ *
+ * This gate covers PAGES only. Every server action the console uses re-checks
+ * with `requireAdmin()` — a layout is not a security boundary for an endpoint
+ * that can be called directly (global constraint 23).
  */
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const viewer = await currentViewer();

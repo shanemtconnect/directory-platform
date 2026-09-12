@@ -26,6 +26,8 @@ export const NOTIFY_REMOVAL = "notify.removal";
 export const NOTIFY_REMOVAL_ACTIONED = "notify.removal-actioned";
 export const NOTIFY_REMOVAL_REJECTED = "notify.removal-rejected";
 
+export const NOTIFY_DECISION = "notify.decision";
+
 /** The kinds worker/jobs/notify.ts claims. */
 export const NOTIFY_KINDS: string[] = [
   NOTIFY_ENQUIRY,
@@ -34,7 +36,9 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_REMOVAL,
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
+  NOTIFY_DECISION,
 ];
+
 
 /**
  * Job payloads are ids, never copies of the record. The worker re-reads the
@@ -48,6 +52,21 @@ export type SubmissionJobPayload =
   | { listingId: string }
   /** The town was not one we hold, so the payload was parked instead. */
   | { parkedId: string };
+
+/**
+ * The admin's decision, not the row's current status.
+ *
+ * Every other payload here is an id alone, because the worker re-reads the row
+ * and a copied field could go stale. The decision is the exception on purpose:
+ * it names the EVENT the submitter is being told about. A listing approved this
+ * morning and taken down this afternoon still owes its submitter the approval
+ * email, and a worker reading `listings.status` at send time would write the
+ * wrong one.
+ */
+export type DecisionJobPayload = {
+  listingId: string;
+  decision: "approved" | "rejected";
+};
 
 export async function notifyEnquiry(
   tx: TestDb,
@@ -118,4 +137,17 @@ export async function notifyRemovalDecision(
   const kind = decision === "actioned" ? NOTIFY_REMOVAL_ACTIONED : NOTIFY_REMOVAL_REJECTED;
   const payload: RemovalDecisionJobPayload = { removalRequestId };
   await enqueueJob(tx, viewer, { kind, payload });
+}
+
+/**
+ * Queued by the admin approve/reject actions, inside the transaction that
+ * changed the status. The submitter hears the outcome or the status change did
+ * not happen — there is no third state where a listing goes live silently.
+ */
+export async function notifyDecision(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: DecisionJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_DECISION, payload });
 }
