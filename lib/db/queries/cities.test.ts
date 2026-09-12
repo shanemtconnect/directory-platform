@@ -192,6 +192,26 @@ describe("listSwitcherCities", () => {
     });
   });
 
+  it("accepts the city you are on as a slug, so a caller need not resolve it first", async () => {
+    await withTestDb(async (tx) => {
+      await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      const otley = await makeCity(tx, "Otley", "West Yorkshire");
+
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, { currentCitySlug: "otley" });
+      expect(rows.map((r) => r.name)).toEqual(["Ripon", "Otley"]);
+      expect(rows.find((r) => r.id === otley)?.isCurrent).toBe(true);
+    });
+  });
+
+  it("ignores a slug that names no city we publish", async () => {
+    await withTestDb(async (tx) => {
+      await indexableCity(tx, "Ripon", "North Yorkshire", 9);
+      const rows = await listSwitcherCities(tx, PUBLIC_VIEWER, { currentCitySlug: "nowhere" });
+      expect(rows.map((r) => r.name)).toEqual(["Ripon"]);
+      expect(rows.every((r) => !r.isCurrent)).toBe(true);
+    });
+  });
+
   it("caps the list in the query, at the busiest end", async () => {
     await withTestDb(async (tx) => {
       for (let n = 1; n <= 6; n++) {

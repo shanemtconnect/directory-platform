@@ -49,16 +49,15 @@ export default async function SearchPage({ searchParams }: Props) {
     page: Number(one(sp.page) ?? "1") || 1,
   };
 
-  const [results, cities, categories] = await Promise.all([
+  // The switcher takes the facet as the slug it already is, so it resolves the
+  // current city itself and this query runs alongside the other three rather
+  // than waiting on listCities to hand it an id.
+  const [results, cities, categories, switcherCities] = await Promise.all([
     search(db as never, PUBLIC_VIEWER, params),
     listCities(db as never, PUBLIC_VIEWER),
     listCategories(db as never, PUBLIC_VIEWER),
+    listSwitcherCities(db as never, PUBLIC_VIEWER, { currentCitySlug: params.city ?? null }),
   ]);
-
-  // The facet is a slug; the switcher marks the current city by id. The select
-  // above is built from the same list, so a city being filtered on is in it.
-  const currentCityId = cities.find((c) => c.slug === params.city)?.id ?? null;
-  const switcherCities = await listSwitcherCities(db as never, PUBLIC_VIEWER, { currentCityId });
 
   // Preserve every active filter in pagination links.
   const qs = new URLSearchParams();

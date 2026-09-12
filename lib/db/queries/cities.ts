@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { cities, categories, verticals, areas } from "@/lib/db/schema";
 import type { Viewer } from "@/lib/db/viewer";
@@ -131,6 +132,13 @@ export const SWITCHER_LIMIT = 24;
 export interface SwitcherOptions {
   /** The city whose page this is. Kept in the list even outside the cap. */
   currentCityId?: string | null;
+  /**
+   * The same thing as a slug, for a caller that has one and would otherwise
+   * have to await another query to turn it into an id — /search reads `?city=`.
+   * Resolving it here is what lets that page put this query in its Promise.all
+   * instead of running it afterwards. `currentCityId` wins if both are given.
+   */
+  currentCitySlug?: string | null;
   /** Rows returned, applied in SQL. Defaults to SWITCHER_LIMIT. */
   limit?: number;
 }
@@ -159,14 +167,13 @@ export interface SwitcherOptions {
  * fetched separately when the cap cut it, because a switcher that cannot name
  * where you are is broken — so the list is at most `limit + 1` rows.
  */
-export async function listSwitcherCities(
+const querySwitcherCities = async (
   tx: Db,
   _viewer: Viewer,
-  options: SwitcherOptions = {},
-): Promise<SwitcherCity[]> {
-  const currentCityId = options.currentCityId ?? null;
-  const limit = Math.max(1, options.limit ?? SWITCHER_LIMIT);
-
+  currentCityId: string | null,
+  currentCitySlug: string | null,
+  limit: number,
+): Promise<SwitcherCity[]> => {
   const columns = {
     id: cities.id,
     name: cities.name,
@@ -179,17 +186,28 @@ export async function listSwitcherCities(
     .from(cities)
     .where(and(eq(cities.isPublished, true), eq(cities.isIndexable, true)))
     .orderBy(desc(cities.listingCount), asc(cities.name))
-    .limit(limit);
+    .limit(Math.max(1, limit));
 
-  if (currentCityId !== null && !rows.some((r) => r.id === currentCityId)) {
+  let currentId =
+    currentCityId ?? rows.find((r) => r.slug === currentCitySlug)?.id ?? null;
+
+  if ((currentCityId ?? currentCitySlug) !== null && !rows.some((r) => r.id === currentId)) {
     // Published is still required: an unpublished city has no page to link to,
     // and this is the one row that arrives without the indexable filter.
     const [current] = await tx
       .select(columns)
       .from(cities)
-      .where(and(eq(cities.isPublished, true), eq(cities.id, currentCityId)))
+      .where(
+        and(
+          eq(cities.isPublished, true),
+          currentCityId !== null
+            ? eq(cities.id, currentCityId)
+            : eq(cities.slug, currentCitySlug!),
+        ),
+      )
       .limit(1);
     if (current) {
+      currentId = current.id;
       rows.push(current);
       // Re-sorted rather than appended, so the extra row lands where the single
       // uncapped query would have put it instead of always at the end.
@@ -197,5 +215,31 @@ export async function listSwitcherCities(
     }
   }
 
-  return rows.map((r) => ({ ...r, isCurrent: r.id === currentCityId }));
+  return rows.map((r) => ({ ...r, isCurrent: r.id === currentId }));
+};
+
+/**
+ * `cache()` on the primitive arguments rather than on the options object,
+ * because React keys the cache on argument IDENTITY: a fresh `{ limit: 12 }`
+ * literal at each call site would miss every time and the wrapper would buy
+ * nothing. Keyed this way, the header and a page that ask for the same list in
+ * the same render pay for one query between them.
+ *
+ * Outside a React render — the unit suite — `cache` calls straight through, so
+ * a test that writes rows and asks again still sees them.
+ */
+const cachedSwitcherCities = cache(querySwitcherCities);
+
+export function listSwitcherCities(
+  tx: Db,
+  viewer: Viewer,
+  options: SwitcherOptions = {},
+): Promise<SwitcherCity[]> {
+  return cachedSwitcherCities(
+    tx,
+    viewer,
+    options.currentCityId ?? null,
+    options.currentCitySlug?.trim() || null,
+    options.limit ?? SWITCHER_LIMIT,
+  );
 }
