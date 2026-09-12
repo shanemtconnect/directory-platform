@@ -195,7 +195,7 @@ export async function decisionNotification(
 
   const stored = (row.customFields as { submission?: StoredSubmission } | null)?.submission ?? {};
   const fromBlob = submitterFrom(stored);
-  const email = fromBlob?.email ?? row.submittedByEmail;
+  const email = row.submittedByEmail ?? fromBlob?.email ?? null;
   if (email === null || email.trim() === "") return null;
 
   return {

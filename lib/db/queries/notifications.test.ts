@@ -32,6 +32,26 @@ describe("decisionNotification", () => {
     });
   });
 
+  it("prefers submitted_by_email over a different address in the stored blob", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeViewer(tx);
+      const ctx = await makeScaffold(tx);
+      const id = await makeListing(tx, ctx, {
+        name: "Two Addresses",
+        status: "published",
+        submittedByEmail: "authoritative@example.co.uk",
+        customFields: {
+          submission: { submitterName: "Blob Name", submitterEmail: "blob@example.co.uk" },
+        },
+      });
+
+      const data = await decisionNotification(tx, admin, id);
+      // The column is what the submission form wrote and what survives an
+      // edit to custom_fields — it wins over a stale blob address.
+      expect(data?.submitter.email).toBe("authoritative@example.co.uk");
+    });
+  });
+
   it("falls back to submitted_by_email when the stored blob has no address", async () => {
     await withTestDb(async (tx) => {
       const admin = await makeViewer(tx);
