@@ -292,6 +292,29 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
    fails the boot rather than silently reverting to the shared default.
    `scripts/purge-cache.sh` reads the same variable.
 
+9. **Wire up automatic deploys from GitHub Actions (optional, recommended).**
+   `.github/workflows/deploy.yml` calls Coolify's deploy API for both
+   applications above once `.github/workflows/ci.yml` passes on `main` (or on
+   demand from the Actions tab), then runs `scripts/smoke.sh` against the live
+   site and fails the job if it isn't actually serving. It needs four
+   **repository secrets** (repo → Settings → Secrets and variables → Actions
+   → Secrets) and never has them printed anywhere:
+
+   | Secret | Where to find it |
+   | --- | --- |
+   | `COOLIFY_BASE` | Your Coolify instance's URL. |
+   | `COOLIFY_TOKEN` | Coolify → avatar → **Keys & Tokens** → create an API token with deploy permission. Shown once. |
+   | `COOLIFY_WEB_UUID` | The web app's own page in Coolify — the UUID in that page's URL. |
+   | `COOLIFY_WORKER_UUID` | Same, for the worker app from step 6. |
+
+   Also set one **repository variable** (same page, **Variables** tab —
+   public, not secret): `SITE_URL`, matching `NEXT_PUBLIC_SITE_URL`.
+
+   Skip this step and the site still deploys — trigger it by hand from
+   Coolify's UI instead. Without the secrets, `deploy.yml` still runs on every
+   push to `main` but fails immediately and loudly (`COOLIFY_BASE is not
+   set`) rather than doing nothing or doing the wrong thing.
+
 ---
 
 ## 5. DNS

@@ -178,6 +178,42 @@ every enquiry. Cloudflare's published always-pass testing keys are the right
 thing there: `TURNSTILE_SITE_KEY=1x00000000000000000000AA`,
 `TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA`.
 
+### CI/CD: `.github/workflows/deploy.yml`
+
+Coolify is git-connected and builds the image itself; the manual `docker
+build` above is for a local check, not what production runs. What triggers
+Coolify is `.github/workflows/deploy.yml`, firing automatically once
+`.github/workflows/ci.yml` finishes green on `main`, or on demand via the
+Actions tab (**Run workflow** on `Deploy`, pick a branch — the escape hatch
+for redeploying an old commit or shipping a hotfix branch before it merges).
+It never builds anything itself: `scripts/deploy-coolify.sh` calls Coolify's
+deploy API for the web and worker apps and polls each to `finished`/`failed`,
+then `scripts/smoke.sh` hits the live site and fails the job if `/api/health`
+doesn't report `db: ok`, or `/`, `/sitemap.xml`, or a real listing page pulled
+out of that sitemap don't come back 200.
+
+Four **repository secrets** (Settings → Secrets and variables → Actions →
+Secrets), never committed anywhere:
+
+| Secret | Where it comes from |
+| --- | --- |
+| `COOLIFY_BASE` | Your Coolify instance's URL, e.g. `https://coolify.example.com` (no trailing slash needed — the script strips one). |
+| `COOLIFY_TOKEN` | Coolify → your user avatar → **Keys & Tokens** → API tokens → create one with deploy permission. Shown once; store it only in this secret. |
+| `COOLIFY_WEB_UUID` | The web application's page in Coolify — the UUID in that page's URL (`.../application/<uuid>`). |
+| `COOLIFY_WORKER_UUID` | Same, for the worker application. |
+
+Plus one **repository variable** (same settings page, **Variables** tab, not
+a secret — it's the site's own public URL): `SITE_URL`, the same value as
+`NEXT_PUBLIC_SITE_URL`. `deploy-coolify.sh` never logs `COOLIFY_TOKEN`, only
+the `deployment_uuid` Coolify hands back for each app.
+
+A clone with none of these set simply never deploys through this workflow —
+push to `main` still runs CI, `deploy.yml`'s gate on `workflow_dispatch ||
+(workflow_run success)` still fires, and the job fails at `: "${COOLIFY_BASE:?
+COOLIFY_BASE is not set}"` inside `deploy-coolify.sh` rather than doing
+anything silently wrong. Set up Coolify manually (§ below) until the four
+secrets exist.
+
 ### Migrating: `MIGRATE_ON_BOOT=true` on the web service
 
 Set `MIGRATE_ON_BOOT=true` in the web service's environment. Coolify's
