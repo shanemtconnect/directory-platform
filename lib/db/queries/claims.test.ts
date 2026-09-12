@@ -9,7 +9,7 @@ import type { Viewer } from "@/lib/db/viewer";
 import {
   attachClaimDocument,
   claimNotification,
-  claimsForProfile,
+  claimsForViewer,
   claimsWithPurgeableDocuments,
   decideClaim,
   getClaimForAdmin,
@@ -459,7 +459,7 @@ describe("the 30-day document purge", () => {
   });
 });
 
-describe("claimsForProfile", () => {
+describe("claimsForViewer", () => {
   it("returns the claimant's own claims with the LISTING id for the retry link", async () => {
     await withTestDb(async (tx) => {
       const { listingId, profileId, viewer } = await scene(tx);
@@ -469,21 +469,21 @@ describe("claimsForProfile", () => {
       });
       if (started.outcome !== "sent") throw new Error("setup failed");
 
-      const mine = await claimsForProfile(tx, viewer, profileId);
+      const mine = await claimsForViewer(tx, viewer);
       expect(mine).toHaveLength(1);
       expect(mine[0]?.listingId).toBe(listingId);
       expect(mine[0]?.status).toBe("pending");
 
-      // Scoped by the profile it is given, so another account sees nothing.
+      // Scoped by the viewer's own profile, so another account sees nothing.
       const stranger = await makeUser(tx);
-      expect(await claimsForProfile(tx, stranger.viewer, stranger.profileId)).toEqual([]);
+      expect(await claimsForViewer(tx, stranger.viewer)).toEqual([]);
     });
   });
 
   it("is closed to an anonymous viewer", async () => {
     await withTestDb(async (tx) => {
-      const { profileId } = await scene(tx);
-      await expect(claimsForProfile(tx, { role: "public" }, profileId)).rejects.toThrow(/FORBIDDEN/);
+      await scene(tx);
+      await expect(claimsForViewer(tx, { role: "public" })).rejects.toThrow(/FORBIDDEN/);
     });
   });
 });

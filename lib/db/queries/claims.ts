@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { auditLog, cities, claims, listings, profiles, user } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { matchesListingDomain } from "@/lib/claims/domain";
@@ -450,7 +450,7 @@ export interface ClaimDetail extends PendingClaim {
   documentsPurgedAt: Date | null;
   /** Which document slots hold an object, for the presigned-GET links. */
   documents: ("proof" | "id")[];
-  claimantEmail: string | null;
+  /** Shown to the reviewer: a run of claims from one address is the signal. */
   ip: string | null;
 }
 
@@ -504,7 +504,6 @@ export async function getClaimForAdmin(
     claimantName: row.claimantName,
     roleAtBusiness: row.roleAtBusiness,
     businessEmail: row.businessEmail,
-    claimantEmail: row.businessEmail,
     evidenceType: row.evidenceType,
     evidenceNotes: row.evidenceNotes,
     status: row.status,
@@ -804,13 +803,17 @@ export interface ProfileClaim {
   createdAt: Date;
 }
 
-/** Newest first, for the claimant's own view of what they have asked for. */
-export async function claimsForProfile(
-  tx: Db,
-  viewer: Viewer,
-  profileId: string,
-): Promise<ProfileClaim[]> {
+/**
+ * Newest first, for the claimant's own view of what they have asked for.
+ *
+ * Scoped by the VIEWER's profile, resolved here, rather than by a profile id
+ * the caller passes in: a page that had to look the id up first would be one
+ * mistake away from listing somebody else's claims, and a claim row carries a
+ * name, an address and a rejection reason.
+ */
+export async function claimsForViewer(tx: Db, viewer: Viewer): Promise<ProfileClaim[]> {
   assertSignedIn(viewer);
+  if (viewer.role === "public") return [];
   const rows = await tx
     .select({
       id: claims.id,
@@ -825,7 +828,9 @@ export async function claimsForProfile(
     .from(claims)
     .innerJoin(listings, eq(listings.id, claims.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(eq(claims.userId, profileId))
+    .where(sql`${claims.userId} = (
+      select ${profiles.id} from ${profiles} where ${profiles.userId} = ${viewer.userId}
+    )`)
     .orderBy(desc(claims.createdAt));
 
   return rows.map(({ listingSlug, citySlug, ...rest }) => ({

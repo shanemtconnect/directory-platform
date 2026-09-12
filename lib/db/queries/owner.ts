@@ -83,7 +83,12 @@ export async function ownerListings(tx: Db, viewer: Viewer): Promise<OwnerListin
   return rows.map(({ slug, citySlug, ...rest }) => ({ ...rest, path: `/${citySlug}/${slug}` }));
 }
 
-export interface OwnerListingDetail extends OwnerListing {
+/**
+ * `unreadEnquiries` is deliberately absent: the editor does not show a count,
+ * and carrying a field this query never computes would mean returning 0 as if
+ * it were an answer.
+ */
+export interface OwnerListingDetail extends Omit<OwnerListing, "unreadEnquiries"> {
   description: string | null;
   phone: string | null;
   website: string | null;
@@ -122,7 +127,7 @@ export async function ownerListing(
   if (!row) return null;
 
   const { slug, citySlug, ...rest } = row;
-  return { ...rest, path: `/${citySlug}/${slug}`, unreadEnquiries: 0 };
+  return { ...rest, path: `/${citySlug}/${slug}` };
 }
 
 /**

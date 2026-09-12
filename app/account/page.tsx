@@ -4,7 +4,7 @@ import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { ensureProfile } from "@/lib/auth/profile";
 import { ownerListings, ownerUnreadCount } from "@/lib/db/queries/owner";
-import { claimsForProfile } from "@/lib/db/queries/claims";
+import { claimsForViewer } from "@/lib/db/queries/claims";
 
 export const metadata: Metadata = {
   title: "Your account",
@@ -28,12 +28,14 @@ export default async function AccountPage({ searchParams }: Props) {
   const viewer = await currentViewer();
   const e = siteConfig.entity;
 
-  // The layout has already redirected an anonymous viewer to /login.
-  const profile = await ensureProfile(db, viewer);
+  // The layout has already redirected an anonymous viewer to /login. The
+  // profile is ensured rather than read so a brand-new account has one before
+  // anything tries to scope by it.
+  await ensureProfile(db, viewer);
   const [listings, unread, claims] = await Promise.all([
     ownerListings(db, viewer),
     ownerUnreadCount(db, viewer),
-    claimsForProfile(db, viewer, profile.id),
+    claimsForViewer(db, viewer),
   ]);
 
   const message = claim === undefined ? null : CLAIM_MESSAGES[claim] ?? null;

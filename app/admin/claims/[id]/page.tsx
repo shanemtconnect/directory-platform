@@ -62,6 +62,9 @@ export default async function AdminClaimPage({ params }: Props) {
         <dt>Opened</dt>
         <dd>{date(claim.createdAt)}</dd>
 
+        <dt>From</dt>
+        <dd>{claim.ip ?? "No address recorded"}</dd>
+
         {claim.decidedAt && (
           <>
             <dt>Decided</dt>
