@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { withTestDb, type TestDb } from "@/test/db";
-import { jobQueue, reports } from "@/lib/db/schema";
-import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { jobQueue, removalRequests, reports, user } from "@/lib/db/schema";
+import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeScaffold, makeListing } from "@/test/factories";
-import { createRemovalRequest, createReport } from "@/lib/db/queries/trust";
+import { actionRemovalRequest, createRemovalRequest, createReport } from "@/lib/db/queries/trust";
 import type { SendResult } from "@/lib/email/sender";
 
 const sendEmail = vi.fn<(m: Record<string, unknown>) => Promise<SendResult>>();
@@ -14,6 +16,15 @@ vi.mock("@/lib/email/sender", () => ({
 
 const { notifyRemoval, notifyReport } = await import("@/lib/email/notify");
 const { processNotifications } = await import("./notify");
+
+/** An admin viewer whose user row exists, so `ensureProfile` can bridge it. */
+async function makeAdmin(tx: TestDb): Promise<Viewer & { role: "admin" }> {
+  const userId = `u_${randomUUID()}`;
+  await tx
+    .insert(user)
+    .values({ id: userId, name: "Mo Moderator", email: `${userId}@example.test`, emailVerified: true });
+  return { role: "admin", userId };
+}
 
 const ENV = { ...process.env };
 
@@ -67,6 +78,24 @@ async function queuedRemoval(tx: TestDb) {
     ip: null,
   });
   await notifyRemoval(tx, PUBLIC_VIEWER, filed);
+  return filed;
+}
+
+/** A removal request an admin has already decided, with the decision's own job queued. */
+async function queuedRemovalDecision(tx: TestDb, decision: "actioned" | "rejected") {
+  const admin = await makeAdmin(tx);
+  const ctx = await makeScaffold(tx);
+  const listingId = await makeListing(tx, ctx, { name: "The Old Mill" });
+  const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+    listingId,
+    requesterName: "Alex Owner",
+    requesterEmail: "alex@example.co.uk",
+    relationship: "owner",
+    reason: null,
+    ip: null,
+  });
+  if (filed.outcome !== "created") throw new Error("setup failed");
+  await actionRemovalRequest(tx, admin, filed.removalRequestId, decision);
   return filed;
 }
 
@@ -160,6 +189,75 @@ describe("processNotifications — removal requests", () => {
     await withTestDb(async (tx) => {
       await notifyRemoval(tx, PUBLIC_VIEWER, { outcome: "unknown-listing" });
       expect(await tx.select().from(jobQueue)).toHaveLength(0);
+    });
+  });
+});
+
+describe("processNotifications — removal decisions", () => {
+  it("emails the requester alone when a removal is actioned", async () => {
+    await withTestDb(async (tx) => {
+      await queuedRemovalDecision(tx, "actioned");
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(recipients()).toEqual(["alex@example.co.uk"]);
+      expect((await jobRow(tx)).status).toBe("done");
+
+      const body = bodies();
+      expect(body).toContain("The Old Mill");
+    });
+  });
+
+  it("emails the requester alone when a removal is rejected", async () => {
+    await withTestDb(async (tx) => {
+      await queuedRemovalDecision(tx, "rejected");
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(recipients()).toEqual(["alex@example.co.uk"]);
+      expect((await jobRow(tx)).status).toBe("done");
+    });
+  });
+
+  it("retries a bounced send rather than silently dropping the notification", async () => {
+    await withTestDb(async (tx) => {
+      await queuedRemovalDecision(tx, "actioned");
+      sendEmail.mockResolvedValueOnce({ sent: false, reason: "rejected", error: "bounced" });
+
+      expect(await processNotifications(tx)).toBe(0);
+      expect((await jobRow(tx)).status).toBe("pending");
+
+      await tx.update(jobQueue).set({ runAfter: new Date(Date.now() - 60_000) });
+      expect(await processNotifications(tx)).toBe(1);
+      expect(recipients()).toEqual(["alex@example.co.uk", "alex@example.co.uk"]);
+      expect((await jobRow(tx)).status).toBe("done");
+    });
+  });
+
+  it("does not process a decision job twice once it is done", async () => {
+    await withTestDb(async (tx) => {
+      await queuedRemovalDecision(tx, "actioned");
+
+      await processNotifications(tx);
+      await tx.update(jobQueue).set({ runAfter: new Date(Date.now() - 60_000) });
+      expect(await processNotifications(tx)).toBe(0);
+
+      expect(recipients()).toEqual(["alex@example.co.uk"]);
+    });
+  });
+
+  it("fails the job rather than the tick when there is nobody to tell", async () => {
+    await withTestDb(async (tx) => {
+      const filed = await queuedRemovalDecision(tx, "actioned");
+      // The address has gone missing, so the read model has nobody to notify —
+      // mirrors the "request has gone" case above without deleting a row a
+      // foreign key still points at.
+      await tx.update(removalRequests).set({ requesterEmail: null }).where(
+        eq(removalRequests.id, filed.removalRequestId),
+      );
+
+      expect(await processNotifications(tx)).toBe(0);
+      const job = await jobRow(tx);
+      expect(job.status).toBe("pending");
+      expect(job.lastError).toMatch(/removal/i);
     });
   });
 });

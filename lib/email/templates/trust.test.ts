@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import { siteConfig } from "@/config/site.config";
 import { REMOVAL_SLA_WORKING_DAYS } from "@/lib/trust/working-days";
 import type { EmailContent } from "./layout";
-import { removalReceived, removalToAdmin, reportToAdmin } from "./trust";
+import {
+  removalActioned,
+  removalReceived,
+  removalRejected,
+  removalToAdmin,
+  reportToAdmin,
+} from "./trust";
 
 const report = {
   listingName: "The Old Mill",
@@ -23,10 +29,17 @@ const removal = {
   reviewUrl: "https://example.co.uk/admin",
 };
 
+const decision = {
+  listingName: "The Old Mill",
+  requesterName: "Alex Owner",
+};
+
 const every: [string, EmailContent][] = [
   ["reportToAdmin", reportToAdmin(report)],
   ["removalToAdmin", removalToAdmin(removal)],
   ["removalReceived", removalReceived(removal)],
+  ["removalActioned", removalActioned(decision)],
+  ["removalRejected", removalRejected(decision)],
 ];
 
 describe.each(every)("%s", (_name, content) => {
@@ -114,5 +127,39 @@ describe("removalReceived", () => {
 
   it("names the listing it is about", () => {
     expect(content.text).toContain("The Old Mill");
+  });
+});
+
+describe("removalActioned", () => {
+  const content = removalActioned(decision);
+
+  it("tells the requester the listing is gone", () => {
+    expect(content.text).toContain("The Old Mill");
+    expect(content.text).toMatch(/removed|taken down/i);
+  });
+
+  it("escapes a requester name that tries to close a tag", () => {
+    const nasty = removalActioned({ ...decision, requesterName: "<script>alert(1)</script>" });
+    expect(nasty.html).not.toContain("<script>alert(1)</script>");
+    expect(nasty.html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("removalRejected", () => {
+  const content = removalRejected(decision);
+
+  it("tells the requester the request was not actioned", () => {
+    expect(content.text).toContain("The Old Mill");
+    expect(content.text).not.toMatch(/we have removed|taken down/i);
+  });
+
+  it("gives them a way to come back to us", () => {
+    expect(content.text).toContain(siteConfig.supportEmail);
+  });
+
+  it("escapes a requester name that tries to close a tag", () => {
+    const nasty = removalRejected({ ...decision, requesterName: "<script>alert(1)</script>" });
+    expect(nasty.html).not.toContain("<script>alert(1)</script>");
+    expect(nasty.html).toContain("&lt;script&gt;");
   });
 });

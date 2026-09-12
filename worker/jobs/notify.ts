@@ -16,12 +16,20 @@ import { ADMIN_VIEWER } from "@/worker/viewer";
 import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
-import { removalNotification, reportNotification } from "@/lib/db/queries/trust";
-import { removalReceived, removalToAdmin, reportToAdmin } from "@/lib/email/templates/trust";
+import { removalDecisionNotification, removalNotification, reportNotification } from "@/lib/db/queries/trust";
+import {
+  removalActioned,
+  removalReceived,
+  removalRejected,
+  removalToAdmin,
+  reportToAdmin,
+} from "@/lib/email/templates/trust";
 import {
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
   NOTIFY_REMOVAL,
+  NOTIFY_REMOVAL_ACTIONED,
+  NOTIFY_REMOVAL_REJECTED,
   NOTIFY_REPORT,
   NOTIFY_SUBMISSION,
 } from "@/lib/email/notify";
@@ -204,6 +212,29 @@ async function runRemoval(db: Db, d: Delivery, payload: Record<string, unknown>)
   await deliver(d, ADMIN, { to: adminAddress(), ...removalToAdmin(content) });
 }
 
+/**
+ * The reply every removal page promises: "we email you when it is done."
+ * Requester only — a decision on somebody's own removal request is not the
+ * admin's news to receive a second time.
+ */
+async function runRemovalDecision(
+  db: Db,
+  d: Delivery,
+  payload: Record<string, unknown>,
+  build: typeof removalActioned,
+): Promise<void> {
+  const removalRequestId = readId(payload, "removalRequestId");
+  if (removalRequestId === null) throw new Retryable("The job carries no removalRequestId");
+
+  const data = await removalDecisionNotification(db, ADMIN_VIEWER, removalRequestId);
+  if (!data) throw new Retryable(`No notifiable removal request ${removalRequestId}`);
+
+  await deliver(d, REQUESTER, {
+    to: data.requesterEmail,
+    ...build({ listingName: data.listingName, requesterName: data.requesterName }),
+  });
+}
+
 async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
   switch (job.kind) {
     case NOTIFY_ENQUIRY:
@@ -214,6 +245,10 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runReport(db, d, job.payload);
     case NOTIFY_REMOVAL:
       return runRemoval(db, d, job.payload);
+    case NOTIFY_REMOVAL_ACTIONED:
+      return runRemovalDecision(db, d, job.payload, removalActioned);
+    case NOTIFY_REMOVAL_REJECTED:
+      return runRemovalDecision(db, d, job.payload, removalRejected);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.

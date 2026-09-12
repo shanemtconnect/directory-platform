@@ -2,11 +2,20 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
-import { auditLog, listings, removalRequests, reports, suppressions, user } from "@/lib/db/schema";
+import {
+  auditLog,
+  jobQueue,
+  listings,
+  removalRequests,
+  reports,
+  suppressions,
+  user,
+} from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { checkSuppressed } from "@/lib/import/guardrails";
 import { setClock, resetClock } from "@/lib/clock";
+import { NOTIFY_REMOVAL_ACTIONED, NOTIFY_REMOVAL_REJECTED } from "@/lib/email/notify";
 import {
   actionRemovalRequest,
   actionReport,
@@ -14,6 +23,7 @@ import {
   createReport,
   listOpenRemovalRequests,
   listOpenReports,
+  removalDecisionNotification,
   removalNotification,
   reportNotification,
   trustTarget,
@@ -370,6 +380,13 @@ describe("actionRemovalRequest", () => {
         .where(eq(auditLog.entityId, filed.removalRequestId));
       expect(audit).toHaveLength(1);
       expect(audit[0]?.action).toBe("removal_request.actioned");
+
+      // The copy on every removal page promises an email "when it is done" —
+      // enqueued in the same transaction as the decision, not left for a
+      // caller to remember.
+      const jobs = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_REMOVAL_ACTIONED));
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.payload).toMatchObject({ removalRequestId: filed.removalRequestId });
     });
   });
 
@@ -394,6 +411,13 @@ describe("actionRemovalRequest", () => {
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing?.status).toBe("published");
       expect(await tx.select().from(suppressions)).toHaveLength(0);
+
+      // A "no" is still an answer the requester was promised, not silence.
+      const jobs = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_REMOVAL_REJECTED));
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.payload).toMatchObject({ removalRequestId: filed.removalRequestId });
+      expect(await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_REMOVAL_ACTIONED)))
+        .toHaveLength(0);
     });
   });
 
@@ -417,6 +441,7 @@ describe("actionRemovalRequest", () => {
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing?.status).toBe("published");
       expect(await tx.select().from(suppressions)).toHaveLength(0);
+      expect(await tx.select().from(jobQueue)).toHaveLength(0);
     });
   });
 
@@ -440,6 +465,9 @@ describe("actionRemovalRequest", () => {
       expect(again.outcome).toBe("not-open");
       // One decision, one suppression. A double click must not file two.
       expect(await tx.select().from(suppressions)).toHaveLength(1);
+      // ...and one notification job, not one per attempt.
+      expect(await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_REMOVAL_ACTIONED)))
+        .toHaveLength(1);
     });
   });
 });
@@ -514,6 +542,40 @@ describe("the notification read models", () => {
       const admin = await makeAdmin(tx);
       expect(await reportNotification(tx, admin, randomUUID())).toBeNull();
       expect(await removalNotification(tx, admin, randomUUID())).toBeNull();
+    });
+  });
+
+  it("give the removal decision notification the requester, after the request is closed", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+        listingId,
+        requesterName: "Alex Owner",
+        requesterEmail: "alex@example.co.uk",
+        relationship: "owner",
+        reason: null,
+        ip: null,
+      });
+      if (filed.outcome !== "created") throw new Error("setup failed");
+
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned");
+
+      const data = await removalDecisionNotification(tx, admin, filed.removalRequestId);
+      expect(data).toMatchObject({
+        listingName: "The Old Barn",
+        requesterName: "Alex Owner",
+        requesterEmail: "alex@example.co.uk",
+      });
+    });
+  });
+
+  it("refuses a non-admin and is nothing for a row that is not there", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      await expect(removalDecisionNotification(tx, USER, randomUUID())).rejects.toThrow(/FORBIDDEN/);
+      expect(await removalDecisionNotification(tx, admin, randomUUID())).toBeNull();
     });
   });
 });

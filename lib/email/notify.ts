@@ -1,7 +1,7 @@
 import { enqueueJob } from "@/lib/db/queries/jobs";
 import type { EnquiryResult } from "@/lib/db/queries/enquiries";
 import type { SubmissionResult } from "@/lib/db/queries/submissions";
-import type { RemovalRequestResult, ReportResult } from "@/lib/db/queries/trust";
+import type { RemovalDecision, RemovalRequestResult, ReportResult } from "@/lib/db/queries/trust";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
 
@@ -23,6 +23,8 @@ export const NOTIFY_ENQUIRY = "notify.enquiry";
 export const NOTIFY_SUBMISSION = "notify.submission";
 export const NOTIFY_REPORT = "notify.report";
 export const NOTIFY_REMOVAL = "notify.removal";
+export const NOTIFY_REMOVAL_ACTIONED = "notify.removal-actioned";
+export const NOTIFY_REMOVAL_REJECTED = "notify.removal-rejected";
 
 /** The kinds worker/jobs/notify.ts claims. */
 export const NOTIFY_KINDS: string[] = [
@@ -30,6 +32,8 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_SUBMISSION,
   NOTIFY_REPORT,
   NOTIFY_REMOVAL,
+  NOTIFY_REMOVAL_ACTIONED,
+  NOTIFY_REMOVAL_REJECTED,
 ];
 
 /**
@@ -93,4 +97,25 @@ export async function notifyRemoval(
   if (result.outcome !== "created") return;
   const payload: RemovalJobPayload = { removalRequestId: result.removalRequestId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REMOVAL, payload });
+}
+
+export type RemovalDecisionJobPayload = { removalRequestId: string };
+
+/**
+ * The reply every removal page promises: "we email you when it is done."
+ * Called from inside `actionRemovalRequest` itself, in the same transaction
+ * as the decision, rather than left to whatever calls it — Task 16's admin
+ * pages do not exist yet, and a promise this specific must not depend on
+ * every future caller remembering to keep it. Sent either way: a rejection is
+ * still an answer the requester was owed, not silence.
+ */
+export async function notifyRemovalDecision(
+  tx: TestDb,
+  viewer: Viewer,
+  removalRequestId: string,
+  decision: RemovalDecision,
+): Promise<void> {
+  const kind = decision === "actioned" ? NOTIFY_REMOVAL_ACTIONED : NOTIFY_REMOVAL_REJECTED;
+  const payload: RemovalDecisionJobPayload = { removalRequestId };
+  await enqueueJob(tx, viewer, { kind, payload });
 }

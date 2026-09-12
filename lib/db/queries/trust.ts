@@ -4,6 +4,7 @@ import { now } from "@/lib/clock";
 import { ensureProfile } from "@/lib/auth/profile";
 import { normaliseName } from "@/lib/import/guardrails";
 import { normalisePostcode } from "@/lib/geo/countries";
+import { notifyRemovalDecision } from "@/lib/email/notify";
 import { removalDueAt } from "@/lib/trust/working-days";
 import {
   auditLog,
@@ -442,6 +443,12 @@ export async function actionRemovalRequest(
     meta: { listingId: row.listingId, suppressionId },
   });
 
+  // Enqueued here, not left to the caller: every removal page promises "we
+  // email you when it is done", and Task 16's admin pages should not have to
+  // remember that promise to keep it. Same transaction as the decision, so a
+  // rolled-back decision cannot leave a notification behind it.
+  await notifyRemovalDecision(tx, viewer, removalRequestId, decision);
+
   return { outcome: "updated", id: removalRequestId };
 }
 
@@ -556,4 +563,45 @@ export async function removalNotification(
 
 function isRelationship(value: string | null): value is RemovalRelationship {
   return value !== null && (REMOVAL_RELATIONSHIPS as readonly string[]).includes(value);
+}
+
+export interface RemovalDecisionNotification {
+  listingName: string;
+  requesterName: string;
+  requesterEmail: string;
+}
+
+/**
+ * What the "we email you when it is done" email needs, read fresh at send
+ * time rather than filtered by status — by the time the worker runs, the
+ * request this is about is no longer open.
+ */
+export async function removalDecisionNotification(
+  tx: TestDb,
+  viewer: Viewer,
+  removalRequestId: string,
+): Promise<RemovalDecisionNotification | null> {
+  assertAdmin(viewer);
+  if (!UUID.test(removalRequestId)) return null;
+
+  const [row] = await tx
+    .select({
+      requesterName: removalRequests.requesterName,
+      requesterEmail: removalRequests.requesterEmail,
+      listingName: listings.name,
+    })
+    .from(removalRequests)
+    .innerJoin(listings, eq(listings.id, removalRequests.listingId))
+    .where(eq(removalRequests.id, removalRequestId))
+    .limit(1);
+  if (!row) return null;
+  // The column is nullable and the form's validation is not the database's.
+  // Without an address there is nobody to tell.
+  if (row.requesterEmail === null) return null;
+
+  return {
+    listingName: row.listingName,
+    requesterName: row.requesterName ?? row.requesterEmail,
+    requesterEmail: row.requesterEmail,
+  };
 }

@@ -94,6 +94,59 @@ export function removalToAdmin(data: RemovalEmailData): EmailContent {
   };
 }
 
+export interface RemovalDecisionEmailData {
+  listingName: string;
+  requesterName: string;
+}
+
+/**
+ * The reply every removal page and every removal email promises: "we email
+ * you when it is done." Sent only to the requester, whichever way the
+ * decision goes — silence after a privacy request is what turns it into a
+ * complaint, and that is true of a "no" as much as a "yes".
+ */
+export function removalActioned(data: RemovalDecisionEmailData): EmailContent {
+  const subject = `Removed — ${data.listingName}`;
+  return {
+    subject,
+    ...layout({
+      subject,
+      heading: `Done, ${data.requesterName}`,
+      blocks: [
+        {
+          value: `We have removed ${data.listingName} from ${siteConfig.name}, as you asked.`,
+        },
+        {
+          value:
+            `We also recorded enough about it to stop a later update putting it back, so ` +
+            `you do not need to ask twice.`,
+        },
+      ],
+    }),
+  };
+}
+
+export function removalRejected(data: RemovalDecisionEmailData): EmailContent {
+  const subject = `Your removal request — ${siteConfig.name}`;
+  return {
+    subject,
+    ...layout({
+      subject,
+      heading: `About your request, ${data.requesterName}`,
+      blocks: [
+        {
+          value:
+            `We have looked at your request to remove ${data.listingName} from ` +
+            `${siteConfig.name}, and decided not to take it down.`,
+        },
+        {
+          value: `If you think we have this wrong, reply to this email and tell us why.`,
+        },
+      ],
+    }),
+  };
+}
+
 export function removalReceived(data: RemovalEmailData): EmailContent {
   const subject = `We have your removal request — ${siteConfig.name}`;
   return {
