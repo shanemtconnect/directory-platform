@@ -16,7 +16,12 @@ import { ADMIN_VIEWER } from "@/worker/viewer";
 import { sendEmail, type EmailMessage } from "@/lib/email/sender";
 import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
 import { submissionReceived, submissionToAdmin } from "@/lib/email/templates/submission";
-import { NOTIFY_ENQUIRY, NOTIFY_KINDS, NOTIFY_SUBMISSION } from "@/lib/email/notify";
+import {
+  NOTIFY_ENQUIRY, NOTIFY_KINDS, NOTIFY_SUBMISSION,
+  NOTIFY_REVIEW_SUBMITTED, NOTIFY_REVIEW_VERIFIED,
+} from "@/lib/email/notify";
+import { reviewNotification } from "@/lib/db/queries/reviews";
+import { reviewToAdmin, reviewToOwner, reviewVerification } from "@/lib/email/templates/review";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -156,6 +161,11 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runEnquiry(db, d, job.payload);
     case NOTIFY_SUBMISSION:
       return runSubmission(db, d, job.payload);
+    // Appended by the reviews module; the handler is at the foot of the file.
+    case NOTIFY_REVIEW_SUBMITTED:
+      return runReviewSubmitted(db, d, job.payload);
+    case NOTIFY_REVIEW_VERIFIED:
+      return runReviewVerified(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -206,4 +216,95 @@ export async function processNotifications(db: Db): Promise<number> {
   }
 
   return done;
+}
+
+/* ------------------------------------------------------ reviews (Task 22) */
+
+/**
+ * A fourth recipient role. It has to be a stable string across attempts for
+ * the same reason the other three do: it is what stops a retry sending the
+ * verification link twice.
+ */
+const REVIEWER = "reviewer";
+
+/** Reviews live under the listing they are about. */
+function reviewsUrl(listingPath: string): string {
+  return siteUrl(`${listingPath}/reviews`);
+}
+
+/**
+ * The verification link.
+ *
+ * A review with no live token has already been verified — someone clicked the
+ * link before the queue drained, or a retry is running after the fact — and
+ * there is nothing left to send. That is a completed job, not a failure: a
+ * retry would only re-send a link that no longer works.
+ */
+async function runReviewSubmitted(
+  db: Db, d: Delivery, payload: Record<string, unknown>,
+): Promise<void> {
+  const reviewId = readId(payload, "reviewId");
+  if (reviewId === null) throw new Retryable("The job carries no reviewId");
+
+  const data = await reviewNotification(db, ADMIN_VIEWER, reviewId);
+  if (!data) throw new Retryable(`No review ${reviewId}`);
+  if (data.token === null) return;
+
+  await deliver(d, REVIEWER, {
+    to: data.authorEmail,
+    ...reviewVerification({
+      listingName: data.listing.name,
+      listingUrl: siteUrl(data.listing.path),
+      reviewsUrl: reviewsUrl(data.listing.path),
+      verifyUrl: siteUrl(`/review/verify/${encodeURIComponent(data.token)}`),
+      author: data.authorDisplayName ?? "",
+      rating: data.rating,
+      title: data.title,
+      body: data.body,
+      flaggedReason: data.flaggedReason,
+    }),
+  });
+}
+
+/**
+ * What the click decided.
+ *
+ * The owner hears about it only when the review is actually on the page and
+ * only when the listing is claimed — the same rule the enquiry handler uses,
+ * and for the same reason: an unclaimed listing's contact address is one we
+ * hold, not one anybody asked us to write to.
+ */
+async function runReviewVerified(
+  db: Db, d: Delivery, payload: Record<string, unknown>,
+): Promise<void> {
+  const reviewId = readId(payload, "reviewId");
+  if (reviewId === null) throw new Retryable("The job carries no reviewId");
+
+  const data = await reviewNotification(db, ADMIN_VIEWER, reviewId);
+  if (!data) throw new Retryable(`No review ${reviewId}`);
+
+  const content = {
+    listingName: data.listing.name,
+    listingUrl: siteUrl(data.listing.path),
+    reviewsUrl: reviewsUrl(data.listing.path),
+    // The link is spent by the time this job runs; nothing in these two
+    // emails uses it, and it must not be re-published to anyone.
+    verifyUrl: siteUrl(data.listing.path),
+    author: data.authorDisplayName ?? "",
+    rating: data.rating,
+    title: data.title,
+    body: data.body,
+    flaggedReason: data.flaggedReason,
+  };
+
+  if (
+    data.status === "published" &&
+    data.listing.claimed &&
+    data.listing.email !== null &&
+    data.listing.email.trim() !== ""
+  ) {
+    await deliver(d, OWNER, { to: data.listing.email, ...reviewToOwner(content) });
+  }
+
+  await deliver(d, ADMIN, { to: adminAddress(), ...reviewToAdmin(content) });
 }
