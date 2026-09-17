@@ -65,9 +65,15 @@ export interface PayPalClient {
   cancelSubscription(id: string, reason: string): Promise<void>;
   /** The buyer-facing page for changing a card. Null when PayPal offers none. */
   manageUrl(id: string): Promise<string | null>;
+  /**
+   * `rawBody` is the request body exactly as PayPal sent it. It is spliced
+   * into the verify request untouched, because the signature is over those
+   * bytes and a re-serialised object is not them. The caller must have
+   * parsed it already: an invalid document here is a malformed verify call.
+   */
   verifyWebhookSignature(
     headers: Record<string, string | null | undefined>,
-    event: unknown,
+    rawBody: string,
   ): Promise<boolean>;
 }
 
@@ -284,7 +290,7 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
       return linkHref(json.links, "edit") ?? linkHref(json.links, "approve");
     },
 
-    async verifyWebhookSignature(headers, event) {
+    async verifyWebhookSignature(headers, rawBody) {
       const webhookId = clean(env.PAYPAL_WEBHOOK_ID);
       // Fail closed, always. An unverifiable event that is trusted is a free
       // subscription for anyone who can guess this URL.
@@ -298,18 +304,25 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
         string, string, string, string, string,
       ];
 
+      // The envelope is serialised WITHOUT the event, then the raw bytes are
+      // spliced in as the last member. PayPal signs the body it sent —
+      // whitespace, escapes, number forms and all — and `JSON.stringify` of
+      // a parsed copy normalises every one of those, which turns a genuine
+      // event into a verification FAILURE.
+      const envelope = JSON.stringify({
+        auth_algo: authAlgo,
+        cert_url: certUrl,
+        transmission_id: transmissionId,
+        transmission_sig: sig,
+        transmission_time: time,
+        webhook_id: webhookId,
+      });
+      const body = `${envelope.slice(0, -1)},"webhook_event":${rawBody}}`;
+
       try {
         const { ok, json } = await call("/v1/notifications/verify-webhook-signature", {
           method: "POST",
-          body: JSON.stringify({
-            auth_algo: authAlgo,
-            cert_url: certUrl,
-            transmission_id: transmissionId,
-            transmission_sig: sig,
-            transmission_time: time,
-            webhook_id: webhookId,
-            webhook_event: event,
-          }),
+          body,
         });
         return ok && json.verification_status === "SUCCESS";
       } catch (e) {

@@ -51,6 +51,27 @@ export type BeaconMetric = (typeof BEACON_METRICS)[number];
  */
 export const MAX_BEACON_EVENTS = 100;
 
+/**
+ * How many of those events may be views: one.
+ *
+ * A beacon is sent by one page, and one page is one view. The endpoint
+ * accepted a hundred of them in a single POST, which turned the per-client
+ * rate limit into a multiplier — 120 beacons of 100 views each is 12,000
+ * views per ten minutes from one address against any listing id at all.
+ */
+export const MAX_BEACON_VIEWS = 1;
+
+/**
+ * And how many may be impressions: a page of cards.
+ *
+ * The largest grid the site renders is 24 (`PER_PAGE`, `SEARCH_PER_PAGE`);
+ * 40 leaves room for a sidebar of related listings without leaving room for a
+ * forged batch to matter. Anything past the cap is dropped, not refused: the
+ * script that overshoots is ours, and a 400 would cost the whole page's
+ * counts rather than the tail.
+ */
+export const MAX_BEACON_IMPRESSIONS = 40;
+
 export function isBeaconMetric(v: unknown): v is BeaconMetric {
   return typeof v === "string" && (BEACON_METRICS as readonly string[]).includes(v);
 }
@@ -86,6 +107,21 @@ export const STATS_KEY_PREFIX = "stats:";
  */
 export function statsKey(listingId: string, day: string, metric: StatMetric): string {
   return `${STATS_KEY_PREFIX}${listingId}:${day}:${metric}`;
+}
+
+/**
+ * `stats:seen:<YYYY-MM-DD>:<ip>:<listingId>` — the mark that says an address
+ * has already been counted as a view of this listing today.
+ *
+ * SET NX EX 86400, never read back, never joined to anything: a day later it
+ * is gone. It is the one key in the pipeline that carries an address, and it
+ * exists because the alternative — trusting each client to send one view per
+ * listing per day — is no guard at all. Under the `stats:` prefix on purpose,
+ * so the same SCAN discipline (never KEYS, never FLUSHALL) covers it, and the
+ * flush's key parser refuses it: a mark is not a count.
+ */
+export function seenKey(day: string, ip: string, listingId: string): string {
+  return `${STATS_KEY_PREFIX}seen:${day}:${ip}:${listingId}`;
 }
 
 export interface ParsedStatsKey {

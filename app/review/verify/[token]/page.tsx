@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { guardFeature } from "@/lib/features/guard";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { previewReviewToken, REVIEW_TOKEN_TTL_DAYS } from "@/lib/db/queries/reviews";
+import { REVIEW_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import { ResendVerificationForm } from "@/components/reviews/ResendVerificationForm";
 
 /**
@@ -50,6 +52,20 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 export default async function VerifyReviewPage({ params }: Props) {
   guardFeature("reviews");
+
+  // Counted before the token is looked up, in the bucket the confirm POST
+  // shares: a guess loop must not be a free query per guess.
+  const limit = await limitPublicWrite("review-verify", await headers(), REVIEW_VERIFY_RATE_LIMIT);
+  if (!limit.allowed) {
+    return (
+      <Shell>
+        <h1>Too many attempts</h1>
+        <p data-testid="review-verify-limited">
+          Too many attempts from this connection. Please try again in a minute.
+        </p>
+      </Shell>
+    );
+  }
 
   const { token } = await params;
   const raw = decodeURIComponent(token);

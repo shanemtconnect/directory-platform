@@ -6,10 +6,12 @@ import type { StatEvent } from "@/lib/stats/counters";
 process.env.NEXT_PUBLIC_SITE_URL = "http://localhost:3215";
 
 const recordStats = vi.fn<(events: StatEvent[]) => Promise<number>>();
+const claimDailyView = vi.fn<(ip: string, listingId: string) => Promise<boolean>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
 
 vi.mock("@/lib/stats/counters", () => ({
   recordStats: (events: StatEvent[]) => recordStats(events),
+  claimDailyView: (ip: string, listingId: string) => claimDailyView(ip, listingId),
 }));
 vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/spam/write-limit")>()),
@@ -46,6 +48,8 @@ describe("POST /api/beacon", () => {
   beforeEach(() => {
     recordStats.mockReset();
     recordStats.mockResolvedValue(1);
+    claimDailyView.mockReset();
+    claimDailyView.mockResolvedValue(true);
     limitPublicWrite.mockReset();
     limitPublicWrite.mockResolvedValue(allowed);
   });
@@ -135,14 +139,63 @@ describe("POST /api/beacon", () => {
     expect(recordStats).not.toHaveBeenCalled();
   });
 
-  it("caps how many events one beacon may carry", async () => {
-    const events = Array.from({ length: 200 }, () => ({ listingId: LISTING, metric: "impression" }));
+  it("caps how many impressions one beacon may carry, and drops the rest silently", async () => {
+    // 200 distinct listings, every one a valid impression. A page never
+    // renders that many cards, so past the cap this is a forged batch — but
+    // the script that overshoots is ours, so the tail is dropped, not the
+    // whole beacon: still 204, still counted up to the cap.
+    const events = Array.from({ length: 200 }, (_, i) => ({
+      listingId: `33333333-3333-4333-8333-${String(i).padStart(12, "0")}`,
+      metric: "impression",
+    }));
 
     const res = await post({ events });
 
     expect(res.status).toBe(204);
-    const { MAX_BEACON_EVENTS } = await import("@/lib/stats/keys");
-    expect(recordStats.mock.calls[0]![0]).toHaveLength(MAX_BEACON_EVENTS);
+    const { MAX_BEACON_IMPRESSIONS } = await import("@/lib/stats/keys");
+    expect(recordStats.mock.calls[0]![0]).toHaveLength(MAX_BEACON_IMPRESSIONS);
+    expect(recordStats.mock.calls[0]![0][0]).toEqual({ listingId: events[0]!.listingId, metric: "impression" });
+  });
+
+  it("counts a repeated (listing, metric) pair once per beacon", async () => {
+    // The same card listed a hundred times is one impression of one card,
+    // whatever the body says — and the same id in a different case is the
+    // same listing.
+    const res = await post({
+      events: [
+        { listingId: LISTING, metric: "impression" },
+        { listingId: LISTING, metric: "impression" },
+        { listingId: LISTING.toUpperCase(), metric: "impression" },
+        { listingId: OTHER, metric: "impression" },
+        { listingId: LISTING, metric: "view" },
+      ],
+    });
+
+    expect(res.status).toBe(204);
+    expect(recordStats).toHaveBeenCalledWith([
+      { listingId: LISTING, metric: "impression" },
+      { listingId: OTHER, metric: "impression" },
+      { listingId: LISTING, metric: "view" },
+    ]);
+  });
+
+  it("counts at most one view per beacon", async () => {
+    // One beacon is one page, and one page is one view. The endpoint used to
+    // take a hundred, which multiplied the rate limit by a hundred.
+    const res = await post({
+      events: [
+        { listingId: LISTING, metric: "view" },
+        { listingId: OTHER, metric: "view" },
+        { listingId: "33333333-3333-4333-8333-000000000000", metric: "view" },
+        { listingId: OTHER, metric: "impression" },
+      ],
+    });
+
+    expect(res.status).toBe(204);
+    expect(recordStats).toHaveBeenCalledWith([
+      { listingId: LISTING, metric: "view" },
+      { listingId: OTHER, metric: "impression" },
+    ]);
   });
 
   it("drops the invalid entries of a batch and counts the rest", async () => {
@@ -163,6 +216,8 @@ describe("POST /api/beacon — who is counted", () => {
   beforeEach(() => {
     recordStats.mockReset();
     recordStats.mockResolvedValue(1);
+    claimDailyView.mockReset();
+    claimDailyView.mockResolvedValue(true);
     limitPublicWrite.mockReset();
     limitPublicWrite.mockResolvedValue(allowed);
   });
@@ -218,10 +273,75 @@ describe("POST /api/beacon — who is counted", () => {
   });
 });
 
+describe("POST /api/beacon — one view per address per listing per day", () => {
+  beforeEach(() => {
+    recordStats.mockReset();
+    recordStats.mockResolvedValue(1);
+    claimDailyView.mockReset();
+    claimDailyView.mockResolvedValue(true);
+    limitPublicWrite.mockReset();
+    limitPublicWrite.mockResolvedValue(allowed);
+  });
+
+  it("asks the guard about the view, keyed by the client address and the listing", async () => {
+    await post({ listingId: LISTING, metric: "view" });
+
+    expect(claimDailyView).toHaveBeenCalledWith("198.51.100.7", LISTING);
+    expect(recordStats).toHaveBeenCalledWith([{ listingId: LISTING, metric: "view" }]);
+  });
+
+  it("drops the view when the address has already been counted today, keeps the impressions, still 204", async () => {
+    claimDailyView.mockResolvedValue(false);
+
+    const res = await post({
+      events: [
+        { listingId: LISTING, metric: "view" },
+        { listingId: OTHER, metric: "impression" },
+      ],
+    });
+
+    expect(res.status).toBe(204);
+    expect(recordStats).toHaveBeenCalledWith([{ listingId: OTHER, metric: "impression" }]);
+  });
+
+  it("drops a view-only beacon to nothing without telling the client", async () => {
+    claimDailyView.mockResolvedValue(false);
+
+    const res = await post({ listingId: LISTING, metric: "view" });
+
+    expect(res.status).toBe(204);
+    expect(recordStats).not.toHaveBeenCalled();
+  });
+
+  it("does not consult the guard for a beacon with no view in it", async () => {
+    await post({ listingId: LISTING, metric: "impression" });
+
+    expect(claimDailyView).not.toHaveBeenCalled();
+  });
+
+  it("counts normally when the client address is unknown", async () => {
+    // No proxy header, no address to key a mark under. Counting is the right
+    // default: a shared bucket for every unidentified visitor would let one
+    // person's view stop everybody else's.
+    const request = new Request("http://localhost:3215/api/beacon", {
+      method: "POST",
+      headers: { "user-agent": BROWSER },
+      body: JSON.stringify({ listingId: LISTING, metric: "view" }),
+    });
+    const { POST } = await import("./route");
+
+    expect((await POST(request)).status).toBe(204);
+    expect(claimDailyView).not.toHaveBeenCalled();
+    expect(recordStats).toHaveBeenCalledWith([{ listingId: LISTING, metric: "view" }]);
+  });
+});
+
 describe("POST /api/beacon — rate limit", () => {
   beforeEach(() => {
     recordStats.mockReset();
     recordStats.mockResolvedValue(1);
+    claimDailyView.mockReset();
+    claimDailyView.mockResolvedValue(true);
     limitPublicWrite.mockReset();
   });
 

@@ -184,3 +184,35 @@ export const FORGOT_PASSWORD_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as c
  * token is minted: a different answer would be the enumeration oracle.
  */
 export const FORGOT_PASSWORD_EMAIL_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
+ * 300 a minute per address, in front of /api/webhooks/paypal.
+ *
+ * Every POST there used to cost a verify call to PayPal's API before any
+ * throttle, so anyone who could guess the URL could spend our PayPal quota —
+ * and the verify endpoint's rate limit is the one that, once tripped, rejects
+ * the genuine event behind the flood. PayPal delivers from a small set of
+ * addresses and retries with backoff, so 300 a minute is far above anything a
+ * real burst of renewals produces and far below what a loop can spend. The
+ * check sits before the body is read and before verification: a blocked
+ * delivery costs a header lookup and a Redis INCR, nothing else.
+ */
+export const PAYPAL_WEBHOOK_RATE_LIMIT = { limit: 300, windowSeconds: 60 } as const;
+
+/**
+ * Thirty a minute per address, on the review confirmation link — the landing
+ * page and the POST behind its button share the bucket.
+ *
+ * The token is 32 bytes of CSPRNG, so guessing it is not realistic; what the
+ * limit stops is a guess loop also being a free database query generator, and
+ * it costs a real reviewer nothing — they open the page once and press one
+ * button. Same shape as `/claim/outreach/[token]`.
+ */
+export const REVIEW_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+
+/**
+ * Thirty a minute per address, on the claim confirmation link, page and POST
+ * together. The same reasoning as the review link, with a larger prize behind
+ * it: a confirmed claim hands over a listing.
+ */
+export const CLAIM_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;

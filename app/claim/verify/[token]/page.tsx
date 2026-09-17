@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { previewClaimToken } from "@/lib/db/queries/claims";
+import { CLAIM_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 
 /**
  * `/claim/verify/<token>` — the magic link's landing page.
@@ -40,6 +42,22 @@ interface Props {
 }
 
 export default async function VerifyClaimPage({ params }: Props) {
+  // Counted before the token is looked up, in the bucket the confirm POST
+  // shares: a guess loop must not be a free query per guess.
+  const limit = await limitPublicWrite("claim-verify", await headers(), CLAIM_VERIFY_RATE_LIMIT);
+  if (!limit.allowed) {
+    return (
+      <main>
+        <div className="mx-auto max-w-2xl">
+          <h1>Too many attempts</h1>
+          <p data-testid="claim-verify-limited">
+            Too many attempts from this connection. Please try again in a minute.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   const { token } = await params;
   const viewer = await currentViewer();
   const preview = await previewClaimToken(db, viewer, decodeURIComponent(token));

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   BEACON_METRICS,
+  MAX_BEACON_EVENTS,
+  MAX_BEACON_IMPRESSIONS,
+  MAX_BEACON_VIEWS,
   METRIC_COLUMN,
   STAT_METRICS,
   STATS_KEY_PREFIX,
@@ -9,6 +12,7 @@ import {
   isBeaconMetric,
   isUuid,
   parseStatsKey,
+  seenKey,
   statsKey,
 } from "./keys";
 
@@ -69,6 +73,34 @@ describe("statsKey / parseStatsKey", () => {
     expect(parseStatsKey(`${STATS_KEY_PREFIX}${id}:12-09-2026:view`)).toBeNull();
     expect(parseStatsKey(`${STATS_KEY_PREFIX}${id}:2026-09-12:drop-table`)).toBeNull();
     expect(parseStatsKey(`${STATS_KEY_PREFIX}${id}:2026-09-12`)).toBeNull();
+  });
+
+  it("never mistakes a per-address view mark for a counter", () => {
+    // The marks share the `stats:` namespace so one SCAN covers both, and the
+    // flush must skip them: a mark is a flag, not a count, and GETDEL on it
+    // would let the same address count again the same day.
+    expect(parseStatsKey(seenKey("2026-09-12", "198.51.100.7", id))).toBeNull();
+    expect(parseStatsKey(seenKey("2026-09-12", "2001:db8::7", id))).toBeNull();
+  });
+});
+
+describe("seenKey", () => {
+  const id = "11111111-2222-4333-8444-555555555555";
+
+  it("is stats:seen:<day>:<ip>:<listingId>", () => {
+    expect(seenKey("2026-09-12", "198.51.100.7", id)).toBe(
+      `${STATS_KEY_PREFIX}seen:2026-09-12:198.51.100.7:${id}`,
+    );
+  });
+});
+
+describe("beacon caps", () => {
+  it("allow one view and a page of impressions per beacon", () => {
+    // One page is one view; a grid is 24 cards, so 40 impressions covers the
+    // largest page the site renders with room to spare.
+    expect(MAX_BEACON_VIEWS).toBe(1);
+    expect(MAX_BEACON_IMPRESSIONS).toBe(40);
+    expect(MAX_BEACON_VIEWS + MAX_BEACON_IMPRESSIONS).toBeLessThanOrEqual(MAX_BEACON_EVENTS);
   });
 });
 

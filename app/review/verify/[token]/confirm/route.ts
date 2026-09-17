@@ -6,6 +6,7 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { verifyReviewToken } from "@/lib/db/queries/reviews";
 import { notifyReviewVerified } from "@/lib/email/notify";
 import { siteOrigin } from "@/lib/site-env";
+import { REVIEW_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -26,13 +27,23 @@ import type { TestDb } from "@/lib/db/types";
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ token: string }> },
 ): Promise<Response> {
   const origin = siteOrigin();
   // Build-time constant: with reviews off this route is a 404 like every other
   // part of the module.
   if (!isEnabled("reviews")) return new NextResponse(null, { status: 404 });
+
+  // One bucket with the landing page: a guess loop against either is the
+  // same loop, and a real reviewer spends two of the thirty.
+  const limit = await limitPublicWrite("review-verify", request.headers, REVIEW_VERIFY_RATE_LIMIT);
+  if (!limit.allowed) {
+    return new NextResponse("Too many requests", {
+      status: 429,
+      headers: { "Retry-After": String(limit.retryAfterSeconds), "Cache-Control": "no-store" },
+    });
+  }
 
   const { token } = await params;
 

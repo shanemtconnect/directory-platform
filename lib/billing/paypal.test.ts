@@ -177,17 +177,40 @@ describe("verifyWebhookSignature", () => {
   it("asks PayPal and believes only SUCCESS", async () => {
     const ok = stub({ ...TOKEN, "verify-webhook-signature": { verification_status: "SUCCESS" } });
     const okClient = createPayPalClient({ env: ENV, http: ok.http });
-    await expect(okClient.verifyWebhookSignature(headers, { id: "EV" })).resolves.toBe(true);
+    await expect(okClient.verifyWebhookSignature(headers, '{"id":"EV"}')).resolves.toBe(true);
 
     const bad = stub({ ...TOKEN, "verify-webhook-signature": { verification_status: "FAILURE" } });
     const badClient = createPayPalClient({ env: ENV, http: bad.http });
-    await expect(badClient.verifyWebhookSignature(headers, { id: "EV" })).resolves.toBe(false);
+    await expect(badClient.verifyWebhookSignature(headers, '{"id":"EV"}')).resolves.toBe(false);
+  });
+
+  it("sends PayPal the bytes it signed, verbatim, not a re-serialisation", async () => {
+    // PayPal signs the body it sent. `JSON.parse` then `JSON.stringify` drops
+    // whitespace, reorders nothing but normalises escapes and number forms,
+    // and any of those turns a genuine event into a FAILURE. The raw text is
+    // spliced into the verify request as-is.
+    const raw = '{\n  "id": "EV-1",\n  "amount": 10.50,\n  "note": "caf\\u00e9 \\/ bar"\n}';
+    const { http, calls } = stub({
+      ...TOKEN,
+      "verify-webhook-signature": { verification_status: "SUCCESS" },
+    });
+    const client = createPayPalClient({ env: ENV, http });
+
+    await expect(client.verifyWebhookSignature(headers, raw)).resolves.toBe(true);
+
+    const verify = calls.find((c) => c.url.includes("verify-webhook-signature"));
+    const body = String(verify!.init.body);
+    expect(body).toContain(`"webhook_event":${raw}`);
+    // And the envelope around it is still one valid JSON document.
+    const parsed = JSON.parse(body) as { webhook_id: string; webhook_event: { id: string; amount: number } };
+    expect(parsed.webhook_id).toBe("WH-1");
+    expect(parsed.webhook_event).toEqual({ id: "EV-1", amount: 10.5, note: "café / bar" });
   });
 
   it("refuses without a webhook id instead of accepting an unsigned event", async () => {
     const { http, calls } = stub({ ...TOKEN });
     const client = createPayPalClient({ env: { ...ENV, PAYPAL_WEBHOOK_ID: "" }, http });
-    await expect(client.verifyWebhookSignature(headers, { id: "EV" })).resolves.toBe(false);
+    await expect(client.verifyWebhookSignature(headers, '{"id":"EV"}')).resolves.toBe(false);
     expect(calls).toHaveLength(0);
   });
 
@@ -195,7 +218,7 @@ describe("verifyWebhookSignature", () => {
     const { http, calls } = stub({ ...TOKEN });
     const client = createPayPalClient({ env: ENV, http });
     const { "paypal-transmission-sig": _sig, ...partial } = headers;
-    await expect(client.verifyWebhookSignature(partial, { id: "EV" })).resolves.toBe(false);
+    await expect(client.verifyWebhookSignature(partial, '{"id":"EV"}')).resolves.toBe(false);
     expect(calls).toHaveLength(0);
   });
 
@@ -204,7 +227,7 @@ describe("verifyWebhookSignature", () => {
       throw new Error("network down");
     };
     const client = createPayPalClient({ env: ENV, http });
-    await expect(client.verifyWebhookSignature(headers, { id: "EV" })).resolves.toBe(false);
+    await expect(client.verifyWebhookSignature(headers, '{"id":"EV"}')).resolves.toBe(false);
   });
 });
 

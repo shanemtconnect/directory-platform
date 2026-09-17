@@ -269,7 +269,7 @@ export type VerifyReviewResult =
  */
 export async function verifyReviewToken(
   tx: TestDb,
-  _viewer: Viewer,
+  viewer: Viewer,
   token: string,
 ): Promise<VerifyReviewResult> {
   if (token.trim() === "") return { outcome: "unknown-token" };
@@ -303,11 +303,14 @@ export async function verifyReviewToken(
     .limit(1);
   if (!review) return { outcome: "unknown-token" };
 
+  // Through the published gate: a listing that has come down since the
+  // review was written has no page for a rating to go on, and a review
+  // published against it would be the first thing shown if it came back.
   const [place] = await tx
     .select({ listingSlug: listings.slug, citySlug: cities.slug })
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(eq(listings.id, invite.listingId))
+    .where(and(eq(listings.id, invite.listingId), publishedListings(viewer)))
     .limit(1);
   if (!place) return { outcome: "unknown-token" };
   const path = `/${place.citySlug}/${place.listingSlug}`;
@@ -339,15 +342,35 @@ export async function verifyReviewToken(
   });
   const status = reason === null ? "published" : "pending";
 
-  await tx
+  // `status = 'pending'` in the WHERE, not just the id. A moderator may have
+  // rejected (or published) this review between the email going out and the
+  // click; the click proves an address and must not overrule a person. Zero
+  // rows means somebody got there first, and the answer is the same as for
+  // a second click: report the row as it stands, recompute nothing.
+  const confirmed = await tx
     .update(reviews)
     .set({ emailVerifiedAt: now(), status, flaggedReason: reason, updatedAt: now() })
-    .where(eq(reviews.id, review.id));
+    .where(and(eq(reviews.id, review.id), eq(reviews.status, "pending")))
+    .returning({ id: reviews.id });
 
+  // The link is spent either way, so the landing page and this agree from
+  // now on: "already confirmed", never "confirmable" for a decided review.
   await tx
     .update(reviewInvites)
     .set({ usedAt: now(), updatedAt: now() })
     .where(eq(reviewInvites.id, invite.id));
+
+  if (confirmed.length === 0) {
+    return {
+      outcome: "verified",
+      reviewId: review.id,
+      listingId: invite.listingId,
+      path,
+      status: review.status === "published" ? "published" : "pending",
+      flaggedReason: review.flaggedReason,
+      repeat: true,
+    };
+  }
 
   await recomputeListingRating(tx, invite.listingId);
 
@@ -377,7 +400,7 @@ export type ReviewTokenPreview =
   | { outcome: "unknown" };
 
 /** Everything the landing page needs, resolved from a token in one query. */
-async function inviteContext(tx: TestDb, token: string) {
+async function inviteContext(tx: TestDb, viewer: Viewer, token: string) {
   if (token.trim() === "") return null;
 
   const [invite] = await tx
@@ -403,7 +426,9 @@ async function inviteContext(tx: TestDb, token: string) {
       citySlug: cities.slug,
     })
     .from(reviews)
-    .innerJoin(listings, eq(listings.id, reviews.listingId))
+    // Through the published gate, as the confirm is: the page must never say
+    // "confirmable" for a review the confirm will refuse.
+    .innerJoin(listings, and(eq(listings.id, reviews.listingId), publishedListings(viewer)))
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(and(eq(reviews.listingId, invite.listingId), eq(reviews.authorEmail, invite.sentTo)))
     .limit(1);
@@ -428,10 +453,10 @@ async function inviteContext(tx: TestDb, token: string) {
  */
 export async function previewReviewToken(
   tx: TestDb,
-  _viewer: Viewer,
+  viewer: Viewer,
   token: string,
 ): Promise<ReviewTokenPreview> {
-  const ctx = await inviteContext(tx, token);
+  const ctx = await inviteContext(tx, viewer, token);
   if (!ctx) return { outcome: "unknown" };
 
   const listingName = ctx.review.listingName;
@@ -473,10 +498,10 @@ export type ResendReviewResult =
  */
 export async function resendReviewVerification(
   tx: TestDb,
-  _viewer: Viewer,
+  viewer: Viewer,
   token: string,
 ): Promise<ResendReviewResult> {
-  const ctx = await inviteContext(tx, token);
+  const ctx = await inviteContext(tx, viewer, token);
   if (!ctx) return { outcome: "not-resendable" };
   if (ctx.review.emailVerifiedAt !== null) return { outcome: "not-resendable" };
   if (ctx.review.status !== "pending") return { outcome: "not-resendable" };

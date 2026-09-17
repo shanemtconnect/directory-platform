@@ -7,6 +7,7 @@ import {
   isStatMetric,
   isUuid,
   parseStatsKey,
+  seenKey,
   statsKey,
 } from "./keys";
 
@@ -33,6 +34,12 @@ import {
  * nothing; short enough to be self-cleaning.
  */
 export const COUNTER_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * One day. A per-address mark exists so one address counts one view of one
+ * listing per day; keeping it longer would refuse tomorrow's genuine visit.
+ */
+export const SEEN_TTL_SECONDS = 24 * 60 * 60;
 
 export interface StatEvent {
   listingId: string;
@@ -113,6 +120,34 @@ export async function recordStats(events: StatEvent[], at: Date = now()): Promis
     }),
   );
   return landed;
+}
+
+/**
+ * Whether this address's view of this listing is the first today.
+ *
+ * SET NX EX in one round trip: the first caller creates the mark and is told
+ * so; every later one the same day is told no. The beacon drops the view on a
+ * no and still counts the impressions — a person reloading a page is one
+ * visitor, and so is a script posting the same beacon a thousand times.
+ *
+ * True, not false, when Redis is unreachable or the id is refused by Redis:
+ * the guard protects a counter that cannot be written either, and the
+ * caller's own validation has already thrown out a bad id. A non-uuid here is
+ * the one exception, refused outright so it can never become a key.
+ */
+export async function claimDailyView(
+  ip: string,
+  listingId: string,
+  at: Date = now(),
+): Promise<boolean> {
+  if (!isUuid(listingId)) return false;
+  const client = await statsRedis();
+  if (!client) return true;
+  try {
+    return await client.setIfAbsent(seenKey(dayKey(at), ip, listingId), "1", SEEN_TTL_SECONDS);
+  } catch {
+    return true;
+  }
 }
 
 export interface DrainOptions {

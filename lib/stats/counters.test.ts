@@ -9,8 +9,9 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 process.env.REDIS_URL = "redis://localhost:6380/7";
 
 const { closeStatsRedis, statsRedis } = await import("./redis");
-const { COUNTER_TTL_SECONDS, drainStats, recordStat, recordStats } = await import("./counters");
-const { STATS_KEY_PREFIX, dayKey, statsKey } = await import("./keys");
+const { COUNTER_TTL_SECONDS, SEEN_TTL_SECONDS, claimDailyView, drainStats, recordStat, recordStats } =
+  await import("./counters");
+const { STATS_KEY_PREFIX, dayKey, seenKey, statsKey } = await import("./keys");
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -92,6 +93,63 @@ describe("recordStats", () => {
   it("skips the invalid entries and counts the rest", async () => {
     const n = await recordStats([{ listingId: "nope", metric: "view" }, { listingId: A, metric: "view" }], AT);
     expect(n).toBe(1);
+  });
+});
+
+describe("claimDailyView", () => {
+  const IP = "198.51.100.7";
+
+  it("counts the first view from an address and refuses the second the same day", async () => {
+    expect(await claimDailyView(IP, A, AT)).toBe(true);
+    expect(await claimDailyView(IP, A, AT)).toBe(false);
+  });
+
+  it("is per address, per listing and per day", async () => {
+    await claimDailyView(IP, A, AT);
+
+    expect(await claimDailyView("203.0.113.9", A, AT)).toBe(true);
+    expect(await claimDailyView(IP, B, AT)).toBe(true);
+    expect(await claimDailyView(IP, A, new Date("2026-09-13T10:00:00Z"))).toBe(true);
+  });
+
+  it("forgets the mark within a day", async () => {
+    await claimDailyView(IP, A, AT);
+    const c = await statsRedis();
+    const ttl = await c!.ttl(seenKey(DAY, IP, A));
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(SEEN_TTL_SECONDS);
+  });
+
+  it("is skipped by the flush rather than drained as a count", async () => {
+    await claimDailyView(IP, A, AT);
+    await recordStat(A, "view", AT);
+
+    const deltas = await drainStats();
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]!.views).toBe(1);
+    // The mark survives the drain, so the address still cannot count twice.
+    expect(await claimDailyView(IP, A, AT)).toBe(false);
+  });
+
+  it("refuses a listing id that is not a uuid without writing a key", async () => {
+    expect(await claimDailyView(IP, "../../etc/passwd", AT)).toBe(false);
+    const c = await statsRedis();
+    const { keys } = await c!.scan("0", `${STATS_KEY_PREFIX}*`, 100);
+    expect(keys).toEqual([]);
+  });
+
+  it("counts normally when Redis is unreachable", async () => {
+    // The guard is a courtesy to the numbers, not a gate on the request: with
+    // no Redis there is no counter to protect either.
+    const previous = process.env.REDIS_URL;
+    await closeStatsRedis();
+    process.env.REDIS_URL = "redis://127.0.0.1:6399/7";
+    try {
+      expect(await claimDailyView(IP, A, AT)).toBe(true);
+    } finally {
+      process.env.REDIS_URL = previous;
+      await closeStatsRedis();
+    }
   });
 });
 
