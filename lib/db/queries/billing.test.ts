@@ -22,6 +22,7 @@ import {
   staleSubscriptionsForSync,
   subscriptionForEvent,
   subscriptionForOwner,
+  subscriptionForOwnerByProviderId,
 } from "./billing";
 
 const ADMIN = { role: "admin" as const, userId: "worker" };
@@ -310,6 +311,50 @@ describe("ownerSubscriptions", () => {
       const s = await scenario(tx);
       const stranger = await makeOwner(tx);
       await expect(ownerSubscriptions(tx, stranger.viewer, s.profileId)).resolves.toHaveLength(0);
+    });
+  });
+});
+
+describe("subscriptionForOwnerByProviderId", () => {
+  it("resolves PayPal's id only for the profile that owns the listing", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      const id = await activated(tx, s);
+
+      const mine = await subscriptionForOwnerByProviderId(tx, s.viewer, {
+        providerSubscriptionId: fx.SUB_ID,
+        profileId: s.profileId,
+      });
+      expect(mine).toMatchObject({ id, listingId: s.listingId });
+      expect(mine?.listingPath).toMatch(/^\/[^/]+\/[^/]+$/);
+
+      // A stranger who has guessed or been shown the PayPal id learns
+      // nothing — not even that it exists.
+      const stranger = await makeOwner(tx);
+      expect(
+        await subscriptionForOwnerByProviderId(tx, stranger.viewer, {
+          providerSubscriptionId: fx.SUB_ID,
+          profileId: stranger.profileId,
+        }),
+      ).toBeNull();
+    });
+  });
+
+  it("is null for an id nobody holds, and refuses the public", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      expect(
+        await subscriptionForOwnerByProviderId(tx, s.viewer, {
+          providerSubscriptionId: "I-NOBODY",
+          profileId: s.profileId,
+        }),
+      ).toBeNull();
+      await expect(
+        subscriptionForOwnerByProviderId(tx, { role: "public" }, {
+          providerSubscriptionId: fx.SUB_ID,
+          profileId: s.profileId,
+        }),
+      ).rejects.toThrow("FORBIDDEN");
     });
   });
 });

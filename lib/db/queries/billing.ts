@@ -417,6 +417,7 @@ export interface OwnerSubscription {
   readonly listingId: string;
   readonly listingName: string;
   readonly listingPath: string;
+  readonly cityPath: string;
   readonly tier: TierName;
   readonly interval: Interval;
   readonly status: string;
@@ -452,6 +453,7 @@ const toOwnerSubscription = (row: OwnerRow): OwnerSubscription => ({
   listingId: row.listingId,
   listingName: row.listingName,
   listingPath: `/${row.citySlug}/${row.listingSlug}`,
+  cityPath: `/${row.citySlug}`,
   tier: row.tier,
   interval: row.interval,
   status: row.status,
@@ -497,6 +499,36 @@ export async function subscriptionForOwner(
     .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(and(eq(subscriptions.id, input.id), eq(listings.ownerId, input.profileId)))
+    .limit(1);
+  return row ? toOwnerSubscription(row as OwnerRow) : null;
+}
+
+/**
+ * The checkout return page's lookup. PayPal hands the buyer back with its own
+ * `subscription_id` on the query string; this resolves it to a row ONLY when
+ * the signed-in profile owns the listing it pays for. Any other id — a guess,
+ * or somebody else's — is null before a PayPal call or an audit row can
+ * happen, and the page renders the same thing for "not yours" and "not
+ * found".
+ */
+export async function subscriptionForOwnerByProviderId(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { providerSubscriptionId: string; profileId: string },
+): Promise<OwnerSubscription | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.profileId) || input.providerSubscriptionId.trim() === "") return null;
+  const [row] = await tx
+    .select(OWNER_COLUMNS)
+    .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(
+      and(
+        eq(subscriptions.providerSubscriptionId, input.providerSubscriptionId.trim()),
+        eq(listings.ownerId, input.profileId),
+      ),
+    )
     .limit(1);
   return row ? toOwnerSubscription(row as OwnerRow) : null;
 }

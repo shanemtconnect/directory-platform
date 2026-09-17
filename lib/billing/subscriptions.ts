@@ -16,6 +16,7 @@ import type { TestDb } from "@/test/db";
 import { applyDiscount, type CouponRejection } from "./coupons";
 import { firstPaidCycleSequence, planAmount, planIdFor } from "./plans";
 import type { PayPalClient, PlanOverride } from "./paypal";
+import { BILLING_SYSTEM_VIEWER } from "./process";
 import { decide, parseEvent, type PayPalEvent } from "./webhooks";
 
 /**
@@ -27,7 +28,7 @@ import { decide, parseEvent, type PayPalEvent } from "./webhooks";
  * outcome rather than a crash.
  */
 
-const WORKER: Viewer = { role: "admin", userId: "00000000-0000-0000-0000-000000000000" };
+const WORKER: Viewer = BILLING_SYSTEM_VIEWER;
 
 export interface StartCheckoutInput {
   readonly client: PayPalClient | null;

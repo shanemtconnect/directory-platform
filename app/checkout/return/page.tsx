@@ -4,9 +4,10 @@ import { revalidatePath } from "next/cache";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
+import { ensureProfile } from "@/lib/auth/profile";
 import { getPayPalClient } from "@/lib/billing/paypal";
 import { reconcileSubscription } from "@/lib/billing/subscriptions";
-import { subscriptionForEvent } from "@/lib/db/queries/billing";
+import { subscriptionForOwnerByProviderId } from "@/lib/db/queries/billing";
 import type { TestDb } from "@/test/db";
 
 /**
@@ -22,6 +23,11 @@ import type { TestDb } from "@/test/db";
  * reconcile is a no-op writing the same values. If PayPal is unreachable,
  * nothing is granted and the page says the subscription is being set up — the
  * webhook will finish it.
+ *
+ * The id on the query string is PayPal's, and anyone signed in can put one
+ * there. So the row is resolved through the OWNER first (global constraint
+ * 24): a subscription this profile does not own is the same as one that does
+ * not exist — no PayPal call, no audit row, no revalidation, no listing link.
  */
 
 export const dynamic = "force-dynamic";
@@ -52,26 +58,31 @@ export default async function CheckoutReturnPage({
   let listingPath: string | null = null;
 
   if (providerSubscriptionId !== null) {
-    const result = await db.transaction(async (tx) => {
-      const handle = tx as unknown as TestDb;
-      const out = await reconcileSubscription(handle, {
-        client: getPayPalClient(),
-        providerSubscriptionId,
-      });
-      const sub = await subscriptionForEvent(handle, { role: "admin", userId: "00000000-0000-0000-0000-000000000000" }, {
-        providerSubscriptionId,
-        customId: null,
-      });
-      return { out, sub };
+    const profile = await ensureProfile(db, viewer);
+    const owned = await subscriptionForOwnerByProviderId(db, viewer, {
+      providerSubscriptionId,
+      profileId: profile.id,
     });
 
-    confirmed = result.out.outcome === "applied" && result.out.action === "activate";
-    listingPath = result.sub?.listingPath ?? null;
+    if (owned !== null) {
+      // One PayPal round-trip inside an open transaction, so the answer and
+      // the rows it changes commit together. Fine at this volume; do not add
+      // a second call in here.
+      const out = await db.transaction(async (tx) =>
+        reconcileSubscription(tx as unknown as TestDb, {
+          client: getPayPalClient(),
+          providerSubscriptionId,
+        }),
+      );
 
-    if (confirmed && result.sub) {
-      // The listing ranks differently the moment its tier changes.
-      revalidatePath(result.sub.listingPath);
-      revalidatePath(result.sub.cityPath);
+      confirmed = out.outcome === "applied" && out.action === "activate";
+      listingPath = owned.listingPath;
+
+      if (confirmed) {
+        // The listing ranks differently the moment its tier changes.
+        revalidatePath(owned.listingPath);
+        revalidatePath(owned.cityPath);
+      }
     }
   }
 

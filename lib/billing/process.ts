@@ -28,17 +28,20 @@ import { customIdFor, decide, HANDLED_EVENTS, parseEvent, providerSubscriptionId
  */
 
 /**
- * The authority this endpoint acts with.
+ * The authority billing's own machinery acts with — the webhook endpoint and
+ * the reconcile that the return page and the sync job share.
  *
  * Declared here rather than imported from `worker/viewer.ts`: that module's
  * whole point is that request-path code must not be able to reach a ready-made
- * admin viewer, and a route handler is request-path code. The nil UUID can
- * never match a row's owner_id.
+ * admin viewer, and a route handler is request-path code. This one is exported
+ * for `lib/billing/` only; it applies what PayPal reports and nothing else.
+ * The nil UUID can never match a row's owner_id.
  */
-const WEBHOOK_VIEWER: Viewer = {
+export const BILLING_SYSTEM_VIEWER: Viewer = {
   role: "admin",
   userId: "00000000-0000-0000-0000-000000000000",
 };
+const WEBHOOK_VIEWER = BILLING_SYSTEM_VIEWER;
 
 export type WebhookOutcome =
   | "not-configured"
