@@ -1,8 +1,9 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { auditLog, cities, enquiries, listings, profiles } from "@/lib/db/schema";
+import { cities, enquiries, listings, profiles } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 import type { Db } from "@/lib/db/client";
+import { writeAudit } from "./audit";
 
 /**
  * The owner portal's data layer.
@@ -35,24 +36,6 @@ function ownedByViewer(viewer: Exclude<Viewer, { role: "public" }>) {
   return sql`${listings.ownerId} = (
     select ${profiles.id} from ${profiles} where ${profiles.userId} = ${viewer.userId}
   )`;
-}
-
-/**
- * The viewer's own profile id, for `audit_log.actor_id`.
- *
- * Global constraint 21: the "who" column is a `profiles.id`, never the Better
- * Auth user id, which is not a uuid and would not fit the column.
- */
-async function actorProfileId(
-  tx: Db,
-  viewer: Exclude<Viewer, { role: "public" }>,
-): Promise<string | null> {
-  const [profile] = await tx
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.userId, viewer.userId))
-    .limit(1);
-  return profile?.id ?? null;
 }
 
 export interface OwnerListing {
@@ -200,8 +183,7 @@ export async function updateOwnerListing(
   // Global constraint 22: the audit row lands in the same transaction, and it
   // carries the address the edit came from. Without one the row can say what
   // changed but not whether the session that changed it was the owner's.
-  await tx.insert(auditLog).values({
-    actorId: await actorProfileId(tx, viewer),
+  await writeAudit(tx, viewer, {
     action: "listing.edited",
     entityType: "listing",
     entityId: listingId,
@@ -314,8 +296,7 @@ export async function markEnquiryHandled(
   // replies within N hours" figure, so marking an enquiry replied is a write
   // that changes what the site tells strangers — it is audited like any other.
   // Only on a real change: a no-op click is not an event.
-  await tx.insert(auditLog).values({
-    actorId: await actorProfileId(tx, viewer),
+  await writeAudit(tx, viewer, {
     action: action === "read" ? "enquiry.marked_read" : "enquiry.marked_replied",
     entityType: "enquiry",
     entityId: enquiryId,

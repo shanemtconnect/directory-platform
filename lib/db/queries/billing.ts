@@ -15,6 +15,7 @@ import type { TierName } from "@/config/types";
 import type { Interval } from "@/lib/pricing";
 import type { CurrentSubscription, Effect } from "@/lib/billing/webhooks";
 import type { TestDb } from "@/lib/db/types";
+import { writeAuditAs } from "@/lib/db/queries/audit";
 
 /**
  * Every database access billing makes.
@@ -27,36 +28,16 @@ import type { TestDb } from "@/lib/db/types";
  * `listings.tier` is written HERE and nowhere else (global constraint 31) —
  * it is the ranking input in `lib/db/sort.ts`, so a second writer is a
  * position somebody did not pay for.
+ *
+ * Every owner and webhook mutation below writes its audit row through
+ * `writeAuditAs` in ./audit.ts, inside the caller's transaction (global
+ * constraint 22). Webhook and job rows carry a null actor: there is no human
+ * behind them, and the row records the event that caused it instead.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const PROVIDER = "paypal";
-
-/**
- * There is no shared audit helper on this branch, so this is the private one
- * (the controller unifies them on merge). Every owner and webhook mutation
- * below calls it inside the caller's transaction — global constraint 22.
- */
-export async function writeBillingAudit(
-  tx: TestDb,
-  input: {
-    actorId: string | null;
-    action: string;
-    entityId: string | null;
-    meta: Record<string, unknown>;
-    ip?: string | null;
-  },
-): Promise<void> {
-  await tx.insert(auditLog).values({
-    actorId: input.actorId,
-    action: input.action,
-    entityType: "subscription",
-    entityId: input.entityId,
-    meta: input.meta,
-    ip: input.ip ?? null,
-  });
-}
 
 function assertWorker(viewer: Viewer): void {
   // Webhook and job paths only. These rows carry other people's billing state.
@@ -239,8 +220,8 @@ export async function createPendingSubscription(
     .returning({ id: subscriptions.id });
 
   const id = row!.id;
-  await writeBillingAudit(tx, {
-    actorId: input.profileId,
+  await writeAuditAs(tx, input.profileId, {
+    entityType: "subscription",
     action: "billing.checkout_started",
     entityId: id,
     meta: {
@@ -433,9 +414,9 @@ export async function applyEffect(
     }
   }
 
-  await writeBillingAudit(tx, {
+  await writeAuditAs(tx, null, {
     // A webhook has no human actor. The row records the event that caused it.
-    actorId: null,
+    entityType: "subscription",
     action: `billing.${effect.action}`,
     entityId: sub.id,
     meta: {
@@ -596,8 +577,8 @@ export async function requestCancellation(
     .set({ cancelAtPeriodEnd: true, updatedAt: now() })
     .where(eq(subscriptions.id, input.subscriptionId));
 
-  await writeBillingAudit(tx, {
-    actorId: input.profileId,
+  await writeAuditAs(tx, input.profileId, {
+    entityType: "subscription",
     action: "billing.cancel_requested",
     entityId: input.subscriptionId,
     meta: { listingId: owned.listingId, periodEnd: owned.currentPeriodEnd?.toISOString() ?? null },
@@ -784,8 +765,8 @@ export async function markReminderSent(
   target: ReminderTarget,
 ): Promise<void> {
   assertWorker(viewer);
-  await writeBillingAudit(tx, {
-    actorId: null,
+  await writeAuditAs(tx, null, {
+    entityType: "subscription",
     action: REMINDER_ACTION,
     entityId: target.subscriptionId,
     meta: {

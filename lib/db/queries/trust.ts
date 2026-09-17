@@ -7,7 +7,6 @@ import { normalisePostcode } from "@/lib/geo/countries";
 import { notifyRemovalDecision } from "@/lib/email/notify";
 import { removalDueAt } from "@/lib/trust/working-days";
 import {
-  auditLog,
   cities,
   listings,
   removalRequests,
@@ -16,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import type { reportReason } from "@/lib/db/schema/enums";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import { writeAuditAs } from "./audit";
 import { publishedListings } from "./listings";
 import { setListingStatus } from "./submissions";
 import type { TestDb } from "@/lib/db/types";
@@ -33,9 +33,12 @@ import type { TestDb } from "@/lib/db/types";
  * asking for less exposure, not more.
  *
  * The decisions write an `audit_log` row in the same handle as the change
- * (global constraint 22). There is no shared `writeAudit` yet, so this file
- * has a private one; it is a straight insert and merges into the shared helper
- * without a behaviour change.
+ * (global constraint 22), through `writeAuditAs` in ./audit.ts. `actorId` is
+ * the moderator's `profiles.id` (constraint 21), never the Better Auth user
+ * id, and `ip` is the moderator's own — the reporter's or requester's, if we
+ * hold it at all, sits on the row the decision is about. Null rather than
+ * defaulted: an admin action taken from somewhere the caller could not read a
+ * proxy header is a fact worth keeping, not a reason to write a placeholder.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,33 +58,6 @@ const REMOVAL_SUPPRESSION_REASON = "Removal request actioned";
 
 function assertAdmin(viewer: Viewer): void {
   if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
-}
-
-/**
- * Every decision below writes one of these on the same handle as the change it
- * describes, so a rolled-back decision cannot leave a record saying it
- * happened. `actorId` is a `profiles.id` (global constraint 21), never the
- * Better Auth user id.
- */
-async function writeAudit(
-  tx: TestDb,
-  input: {
-    actorId: string;
-    action: string;
-    entityType: string;
-    entityId: string;
-    meta: Record<string, unknown>;
-    /**
-     * The moderator's own IP (global constraint 22), not the reporter's or
-     * requester's — that one, if we hold it at all, sits on the row the
-     * decision is about. Null rather than defaulted: an admin action taken
-     * from somewhere the caller could not read a proxy header is a fact
-     * worth keeping, not a reason to write a placeholder.
-     */
-    ip: string | null;
-  },
-): Promise<void> {
-  await tx.insert(auditLog).values(input);
 }
 
 /* ------------------------------------------------------------- the target */
@@ -354,8 +330,7 @@ export async function actionReport(
     .set({ status: decision, updatedAt: now() })
     .where(eq(reports.id, reportId));
 
-  await writeAudit(tx, {
-    actorId: actor.id,
+  await writeAuditAs(tx, actor.id, {
     action: `report.${decision}`,
     entityType: "report",
     entityId: reportId,
@@ -446,8 +421,7 @@ export async function actionRemovalRequest(
     })
     .where(eq(removalRequests.id, removalRequestId));
 
-  await writeAudit(tx, {
-    actorId: actor.id,
+  await writeAuditAs(tx, actor.id, {
     action: `removal_request.${decision}`,
     entityType: "removal_request",
     entityId: removalRequestId,

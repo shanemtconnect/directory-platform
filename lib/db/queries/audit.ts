@@ -28,13 +28,40 @@ export interface AuditInput {
   ip?: string | null;
 }
 
+/**
+ * The worker's viewer (`worker/viewer.ts`) and the billing system viewer carry
+ * the nil UUID: a real UUID so comparisons cannot break, and one no `user` row
+ * will ever have. Resolving it through `ensureProfile` would try to insert a
+ * profile for a user that does not exist, so it is recognised here and written
+ * as "nobody" — the same null a webhook or a purge job records.
+ */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
 export async function writeAudit(
   tx: TestDb,
   viewer: Viewer,
   input: AuditInput,
 ): Promise<string> {
-  const actorId = viewer.role === "public" ? null : (await ensureProfile(tx, viewer)).id;
+  const actorId =
+    viewer.role === "public" || viewer.userId === NIL_UUID
+      ? null
+      : (await ensureProfile(tx, viewer)).id;
+  return writeAuditAs(tx, actorId, input);
+}
 
+/**
+ * The same row, for a caller that has already resolved the actor.
+ *
+ * Most mutations hold the claimant's or owner's `profiles.id` from an earlier
+ * lookup in the same transaction, and the system paths (webhooks, reminders,
+ * purges) have no viewer at all — `actorId` is null there by design, never a
+ * placeholder. Everything that reaches `audit_log` ends in this insert.
+ */
+export async function writeAuditAs(
+  tx: TestDb,
+  actorId: string | null,
+  input: AuditInput,
+): Promise<string> {
   const [row] = await tx
     .insert(auditLog)
     .values({

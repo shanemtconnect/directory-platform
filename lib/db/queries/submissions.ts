@@ -1,8 +1,9 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { auditLog, categories, cities, listings } from "@/lib/db/schema";
+import { categories, cities, listings } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/import/guardrails";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
+import { writeAuditAs } from "@/lib/db/queries/audit";
 import { ROOT_SCOPE, SlugError, allocateSlug } from "@/lib/routing/slugs";
 import { geocodeCity } from "@/lib/geo/geocode";
 import { siteConfig } from "@/config/site.config";
@@ -238,7 +239,8 @@ async function createAutoCity(
     createdBy: "auto",
   });
 
-  await tx.insert(auditLog).values({
+  // Nobody signed in: a submission is public, so the row has no actor.
+  await writeAuditAs(tx, null, {
     action: AUTO_CITY_ACTION,
     entityType: "city",
     entityId: id,
@@ -346,16 +348,13 @@ export async function createSubmission(
   if (cityId === null) {
     // ip is recorded once, on the audit row's own column.
     const { ip: _ip, ...payload } = input;
-    const [parked] = await tx
-      .insert(auditLog)
-      .values({
-        action: PARKED_SUBMISSION_ACTION,
-        entityType: "listing_submission",
-        meta: { ...submission, listing: payload },
-        ip: input.ip,
-      })
-      .returning({ id: auditLog.id });
-    return { outcome: "parked", parkedId: parked!.id };
+    const parkedId = await writeAuditAs(tx, null, {
+      action: PARKED_SUBMISSION_ACTION,
+      entityType: "listing_submission",
+      meta: { ...submission, listing: payload },
+      ip: input.ip,
+    });
+    return { outcome: "parked", parkedId };
   }
 
   const id = randomUUID();
