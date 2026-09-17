@@ -11,7 +11,11 @@ node_modules
 
 .superpowers
 docs
+# playwright.config.ts is the only importer of e2e/ (`./e2e/database`) and
+# nothing in either image runs Playwright — but tsconfig includes it and
+# `next build` type-checks it, so excluding e2e/ alone is a TS2307 at build.
 e2e
+playwright.config.ts
 test-results
 playwright-report
 seeds/**/*.md
