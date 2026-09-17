@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { verifyClaimToken } from "@/lib/db/queries/claims";
+import { CLAIM_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -30,6 +31,16 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> },
 ): Promise<Response> {
+  // One bucket with the landing page: a guess loop against either is the
+  // same loop, and a real claimant spends two of the thirty.
+  const limit = await limitPublicWrite("claim-verify", request.headers, CLAIM_VERIFY_RATE_LIMIT);
+  if (!limit.allowed) {
+    return new Response("Too many requests", {
+      status: 429,
+      headers: { "Retry-After": String(limit.retryAfterSeconds), "Cache-Control": "no-store" },
+    });
+  }
+
   const { token } = await params;
   const viewer = await currentViewer();
 
