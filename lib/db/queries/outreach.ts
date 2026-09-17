@@ -1,4 +1,5 @@
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { hashToken } from "@/lib/security/token-hash";
 import {
   auditLog,
   campaignMessages,
@@ -119,7 +120,11 @@ export async function outreachCandidates(
 export interface OutreachMessageInput {
   listingId: string;
   toAddress: string;
-  /** Null for a channel that carries no magic link. Unique when present. */
+  /**
+   * The RAW token, null for a channel that carries no magic link. Unique when
+   * present. Stored as its digest (lib/security/token-hash.ts): the raw token
+   * belongs in the file that goes to the sender and nowhere in this database.
+   */
   magicToken: string | null;
 }
 
@@ -163,7 +168,7 @@ export async function createOutreachCampaign(
         campaignId,
         listingId: m.listingId,
         toAddress: m.toAddress,
-        magicToken: m.magicToken,
+        magicToken: m.magicToken === null ? null : hashToken(m.magicToken),
       })),
     );
   }
@@ -209,7 +214,7 @@ export async function recordOutreachClick(
     })
     .from(campaignMessages)
     .innerJoin(listings, eq(listings.id, campaignMessages.listingId))
-    .where(and(eq(campaignMessages.magicToken, trimmed), eq(listings.status, "published")))
+    .where(and(eq(campaignMessages.magicToken, hashToken(trimmed)), eq(listings.status, "published")))
     .limit(1);
   if (!row) return null;
 
