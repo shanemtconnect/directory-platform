@@ -128,3 +128,24 @@ schedule("badge-counters", "*/1 * * * *", async (tx) => {
 });
 
 console.log("[worker] started");
+
+/**
+ * Phase 5, billing.
+ *
+ * Both are hourly and both are no-ops on a site without PayPal credentials —
+ * the sync job says so in its log line and the reminder job simply finds
+ * nothing, because a site with no subscriptions has no renewals.
+ *
+ * Offset minutes, not on the hour: they share a database with everything else
+ * that ticks, and three jobs starting at :00 together is a thundering herd for
+ * no reason.
+ */
+schedule("renewal-reminders", "17 * * * *", async (tx) => {
+  const { runRenewalReminders } = await import("./jobs/renewal-reminders");
+  await runRenewalReminders(tx);
+});
+
+schedule("subscription-sync", "37 * * * *", async (tx) => {
+  const { syncSubscriptions } = await import("./jobs/subscription-sync");
+  await syncSubscriptions(tx);
+});

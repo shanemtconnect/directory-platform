@@ -4,6 +4,12 @@ import { annualSaving, formatMoney, isFree, priceFor, type Interval } from "@/li
 /**
  * Everything on this card is read off the TierSpec. Nothing here knows how many
  * plans exist, what they are called, or what they cost.
+ *
+ * The call to action is built from the tier's own name and the interval, so a
+ * clone that adds a plan gets a working checkout link without editing this
+ * file. It carries no listing id: /pricing is a public, cached page and does
+ * not know whose business is reading it. The checkout page asks for the
+ * listing and refuses anyone who has not claimed one.
  */
 export function PricingCard({
   name,
@@ -62,6 +68,16 @@ export function PricingCard({
           <li key={b}>{b}</li>
         ))}
       </ul>
+
+      <p data-testid="plan-cta" className="mt-4 mb-0">
+        {free ? (
+          <a href="/add-listing">Add a free listing</a>
+        ) : (
+          <a href={`/checkout/${name}/${interval}`} rel="nofollow" data-testid="plan-checkout-link">
+            Choose {tier.label}
+          </a>
+        )}
+      </p>
 
       {tier.verificationIncluded && (
         <p data-testid="verification-note" className="mt-4 mb-0 border-t border-line pt-4 text-sm text-muted">

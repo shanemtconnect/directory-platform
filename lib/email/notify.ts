@@ -259,3 +259,36 @@ export async function notifyClaimDecided(
   const payload: ClaimJobPayload = { claimId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_CLAIM_DECIDED, payload });
 }
+
+/* ------------------------------------------------------------------ billing */
+
+/**
+ * Renewal reminders go through the same queue for the same reason enquiries
+ * do: the hourly job that finds them must not be the thing that talks to a
+ * mail provider, or one slow send holds up every other reminder in the batch
+ * and a crash loses the ones already decided on.
+ *
+ * A SEPARATE kind list, not an addition to NOTIFY_KINDS. `claimNextJob` takes
+ * the kinds its caller handles precisely so a second consumer cannot be handed
+ * work meant for the first — the billing worker drains these, the notify
+ * worker drains those, and neither can starve the other.
+ */
+export const NOTIFY_BILLING_REMINDER = "notify.billing_reminder";
+
+export const BILLING_NOTIFY_KINDS: string[] = [NOTIFY_BILLING_REMINDER];
+
+export type BillingReminderJobPayload = {
+  subscriptionId: string;
+  /** 30, 7 or 0. Carried so the email can read differently on the day. */
+  offsetDays: number;
+  /** The period end this reminder is about; the dedupe key includes it. */
+  periodEnd: string;
+};
+
+export async function notifyRenewal(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: BillingReminderJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_BILLING_REMINDER, payload: { ...payload } });
+}

@@ -1,5 +1,8 @@
 import type { FeatureFlag, FeatureMap } from "./types";
 import { isSupportedCountry, COUNTRY_PROFILES, SUPPORTED_COUNTRIES } from "../lib/geo/countries";
+import { siteConfig } from "./site.config";
+
+const isBlank = (v: string | undefined): boolean => v === undefined || v.trim() === "";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -107,17 +110,72 @@ export const RUNTIME_ENV = [
 ] as const;
 
 /**
+ * Required ONCE BILLING IS TURNED ON, and not before.
+ *
+ * Billing is opt-in per site: a directory can run for months on free listings
+ * alone, and a boot that fails for want of a PayPal key it never uses is an
+ * outage the code chose to have. So `PAYPAL_CLIENT_ID` is the switch — when it
+ * is set, the site is taking money, and the rest of this group has to be there
+ * too:
+ *
+ *   PAYPAL_CLIENT_SECRET — no secret, no API call; every checkout 500s.
+ *   PAYPAL_WEBHOOK_ID    — the nastiest of the three, because nothing looks
+ *                          broken. Unset, `verifyWebhookSignature` rejects
+ *                          every delivery (it fails closed, as it must), so
+ *                          activations and renewals silently never land and a
+ *                          paying customer's listing lapses on its own.
+ *   PAYPAL_PLAN_*        — one id per billable tier and interval, derived from
+ *                          config/site.config.ts by scripts/paypal-setup.ts.
+ *                          A missing one means that plan's checkout can only
+ *                          say "not available", which is a dead pricing page.
+ *
+ * PAYPAL_ENV is deliberately NOT required: it defaults to the sandbox, and the
+ * failure mode of forgetting it is taking test money rather than real money.
+ */
+export const BILLING_ENV_SWITCH = "PAYPAL_CLIENT_ID";
+
+const BILLING_INTERVALS = ["monthly", "annual"] as const;
+
+/**
+ * One plan id per billable tier and interval, derived from the tier prices.
+ *
+ * Derived HERE rather than imported from `lib/billing/plans.ts`, which is
+ * where the same list lives for the application. `next.config.ts` imports this
+ * file and Next compiles it with relative module resolution only, so anything
+ * this file reaches for must avoid the `@/` alias — and `lib/billing/plans.ts`
+ * is full of it. A build that cannot load next.config is a build that does not
+ * happen, which is a worse failure than one duplicated `flatMap`.
+ *
+ * The two lists are asserted equal in `lib/billing/plans.test.ts`, so they
+ * cannot drift apart in silence.
+ */
+export const PLAN_ENV_VARS: readonly string[] = Object.entries(siteConfig.tiers)
+  .filter(([, tier]) => tier.priceAnnual > 0 || tier.priceMonthly > 0)
+  .flatMap(([name]) =>
+    BILLING_INTERVALS.map((interval) =>
+      `PAYPAL_PLAN_${name.toUpperCase()}_${interval.toUpperCase()}`,
+    ),
+  );
+
+export const BILLING_ENV: readonly string[] = [
+  "PAYPAL_CLIENT_SECRET",
+  "PAYPAL_WEBHOOK_ID",
+  ...PLAN_ENV_VARS,
+];
+
+/**
  * Not enforced yet. Each group moves into RUNTIME_ENV when the phase that reads
  * it lands, so the list stays a checklist rather than folklore:
  *
  *   R2_*            — Phase 2, media upload and claim-document storage.
- *   PAYPAL_*        — Phase 5, subscriptions. PAYPAL_WEBHOOK_ID left unset
- *                     silently stops renewals, so it belongs in the same gate.
  *   RESEND_API_KEY / EMAIL_FROM / ADMIN_NOTIFICATION_EMAIL
  *                   — transactional email. Wired, but deliberately staying
  *                     here: lib/email/sender.ts logs and sends nothing when
  *                     they are unset, so a preview environment without mail
  *                     credentials still boots and still takes enquiries.
+ *
+ * PAYPAL_* has moved out of this list into BILLING_ENV above: it is enforced
+ * now, but conditionally rather than always.
  *
  * Deliberately absent: TURNSTILE_* and MAPTILER_KEY. Both stay optional after
  * their phases ship — the form falls back to server-side rate limiting and the
@@ -129,15 +187,21 @@ export const RUNTIME_ENV_PHASE5 = [
   "R2_SECRET_ACCESS_KEY",
   "R2_BUCKET_MEDIA",
   "R2_BUCKET_CLAIM_DOCS",
-  "PAYPAL_CLIENT_ID",
-  "PAYPAL_CLIENT_SECRET",
-  "PAYPAL_WEBHOOK_ID",
   "RESEND_API_KEY",
   "EMAIL_FROM",
   "ADMIN_NOTIFICATION_EMAIL",
 ] as const;
 
-const isBlank = (v: string | undefined): boolean => v === undefined || v.trim() === "";
+/**
+ * Nothing when billing is off; the whole group when it is on.
+ *
+ * Returned rather than thrown so `validateEnv` can report it in the same
+ * message as everything else that is missing.
+ */
+export function missingBillingEnv(env: Record<string, string | undefined>): string[] {
+  if (isBlank(env[BILLING_ENV_SWITCH])) return [];
+  return BILLING_ENV.filter((k) => isBlank(env[k]));
+}
 
 export function validateEnv(
   env: Record<string, string | undefined>,
@@ -145,6 +209,8 @@ export function validateEnv(
 ): void {
   const required: readonly string[] = opts.phase === "build" ? BUILD_ENV : RUNTIME_ENV;
   const missing = required.filter((k) => isBlank(env[k]));
+  // Conditional, and only at runtime: a build has no site secrets at all.
+  if (opts.phase !== "build") missing.push(...missingBillingEnv(env));
   if (missing.length > 0) {
     throw new ConfigError(
       `Missing required environment variables (${opts.phase}):\n  - ${missing.join("\n  - ")}\n` +

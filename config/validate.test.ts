@@ -7,6 +7,10 @@ import {
   ConfigError,
   RUNTIME_ENV,
   RUNTIME_ENV_PHASE5,
+  BILLING_ENV,
+  BILLING_ENV_SWITCH,
+  missingBillingEnv,
+  PLAN_ENV_VARS,
 } from "./validate";
 import { siteConfig } from "./site.config";
 import { FEATURE_FLAGS, type FeatureFlag, type FeatureMap } from "./types";
@@ -127,9 +131,6 @@ describe("validateEnv", () => {
       "R2_SECRET_ACCESS_KEY",
       "R2_BUCKET_MEDIA",
       "R2_BUCKET_CLAIM_DOCS",
-      "PAYPAL_CLIENT_ID",
-      "PAYPAL_CLIENT_SECRET",
-      "PAYPAL_WEBHOOK_ID",
       "RESEND_API_KEY",
       "EMAIL_FROM",
       "ADMIN_NOTIFICATION_EMAIL",
@@ -289,5 +290,51 @@ describe("validateCountry", () => {
   it("catches a locale that does not match the country", () => {
     expect(() => validateCountry({ country: "US", currency: "USD", locale: "en-GB" }))
       .toThrow(/does not match country/);
+  });
+});
+
+describe("billing environment", () => {
+  const runtime = Object.fromEntries(RUNTIME_ENV.map((k) => [k, "x"]));
+
+  it("asks for nothing while billing is switched off", () => {
+    expect(missingBillingEnv({})).toEqual([]);
+    // A site can run for months on free listings. Refusing to boot for want of
+    // a PayPal key it never uses is an outage the code chose to have.
+    expect(() => validateEnv(runtime, { phase: "runtime" })).not.toThrow();
+  });
+
+  it("asks for the whole group as soon as the client id appears", () => {
+    const missing = missingBillingEnv({ [BILLING_ENV_SWITCH]: "id" });
+    expect(missing).toEqual([...BILLING_ENV]);
+    expect(missing).toContain("PAYPAL_WEBHOOK_ID");
+  });
+
+  it("names one plan id per billable tier and interval", () => {
+    for (const key of PLAN_ENV_VARS) expect(BILLING_ENV).toContain(key);
+  });
+
+  it("fails the boot when billing is half-configured", () => {
+    expect(() =>
+      validateEnv({ ...runtime, PAYPAL_CLIENT_ID: "id" }, { phase: "runtime" }),
+    ).toThrow(ConfigError);
+  });
+
+  it("passes once every billing key is set", () => {
+    const full = {
+      ...runtime,
+      PAYPAL_CLIENT_ID: "id",
+      ...Object.fromEntries(BILLING_ENV.map((k) => [k, "x"])),
+    };
+    expect(() => validateEnv(full, { phase: "runtime" })).not.toThrow();
+  });
+
+  it("never asks for a billing key at build time — the image has no secrets", () => {
+    expect(() =>
+      validateEnv({ NEXT_PUBLIC_SITE_URL: "https://x.test", PAYPAL_CLIENT_ID: "id" }, { phase: "build" }),
+    ).not.toThrow();
+  });
+
+  it("does not require PAYPAL_ENV: the default is the sandbox, which is the safe way to be wrong", () => {
+    expect(BILLING_ENV).not.toContain("PAYPAL_ENV");
   });
 });
