@@ -253,6 +253,8 @@ export async function verifyClaimToken(
   tx: Db,
   _viewer: Viewer,
   token: string,
+  /** The confirming request's address (global constraint 22). */
+  ip: string | null = null,
 ): Promise<VerifyResult> {
   if (token.trim() === "") return { outcome: "unknown" };
 
@@ -348,6 +350,7 @@ export async function verifyClaimToken(
     action: "claim.approved",
     entityId: row.id,
     meta: { listingId: row.listingId, evidence: "domain_email", automatic: true },
+    ip,
   });
 
   return approved;

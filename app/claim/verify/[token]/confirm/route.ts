@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { verifyClaimToken } from "@/lib/db/queries/claims";
+import { clientIp } from "@/lib/spam/client-ip";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -33,8 +34,13 @@ export async function POST(
   const { token } = await params;
   const viewer = await currentViewer();
 
+  // The address goes on the claim.approved audit row, as it does for every
+  // other claim decision: a takeover investigated later is worth nothing
+  // without where the confirming click came from.
+  const ip = clientIp(request.headers);
+
   const result = await db.transaction(async (tx) =>
-    verifyClaimToken(tx as unknown as Db, viewer, decodeURIComponent(token)),
+    verifyClaimToken(tx as unknown as Db, viewer, decodeURIComponent(token), ip),
   );
 
   if (result.outcome !== "approved") return back(request, result.outcome);
