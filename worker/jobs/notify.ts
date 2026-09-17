@@ -75,6 +75,9 @@ const BATCH = 25;
 /** Thrown to mark a job for retry. The message becomes `last_error`. */
 class Retryable extends Error {}
 
+/** How much of a failure message reaches the log line. */
+const LOGGED_ERROR_CHARS = 200;
+
 let warnedNoAdmin = false;
 
 function adminAddress(): string {
@@ -445,9 +448,12 @@ export async function processNotifications(db: Db): Promise<number> {
         await markDelivered(db, ADMIN_VIEWER, job.id, [...d.done, ...d.fresh]);
       }
       const outcome = await failJob(db, ADMIN_VIEWER, job.id, message);
+      // Truncated for the log: a mailer's error can quote the request it
+      // rejected, recipient address and all, and a log line is shipped to
+      // places a queue row is not. The full text is in `last_error`.
       console.error(
         `[worker] ${job.kind} ${job.id} ${outcome.status === "failed" ? "PARKED" : "failed"}` +
-          ` after ${outcome.attempts}: ${message}`,
+          ` after ${outcome.attempts}: ${message.slice(0, LOGGED_ERROR_CHARS)}`,
       );
     }
   }
