@@ -15,7 +15,13 @@ let redisDownUntil = 0;
 async function redis(): Promise<RedisClientType | null> {
   if (client?.isReady) return client;
   if (Date.now() < redisDownUntil) return null;
-  if (connecting) return connecting;
+  // A connect already in flight is somebody else's wait. Callers that arrive
+  // while it is pending count in process (see `memory`) rather than queue
+  // behind it: a connect attempt can take the full timeout times the
+  // reconnect attempts, and the cooldown only spares the calls *after* it.
+  // Only the call that started the attempt waits for the answer, so the happy
+  // path — and the first call after a cooldown — still lands on Redis.
+  if (connecting) return null;
   connecting = (async () => {
     try {
       const c = createClient({
