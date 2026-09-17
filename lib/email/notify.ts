@@ -31,6 +31,13 @@ export const NOTIFY_REMOVAL_REJECTED = "notify.removal-rejected";
 
 export const NOTIFY_DECISION = "notify.decision";
 
+/** The magic link that is the whole of the proof on the automatic claim rung. */
+export const NOTIFY_CLAIM_LINK = "notify.claimLink";
+/** A document claim nobody can decide automatically. */
+export const NOTIFY_CLAIM_SUBMITTED = "notify.claimSubmitted";
+/** The outcome, approved or rejected, going back to the claimant. */
+export const NOTIFY_CLAIM_DECIDED = "notify.claimDecided";
+
 /** The kinds worker/jobs/notify.ts claims. */
 export const NOTIFY_KINDS: string[] = [
   NOTIFY_ENQUIRY,
@@ -40,8 +47,10 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
   NOTIFY_DECISION,
+  NOTIFY_CLAIM_LINK,
+  NOTIFY_CLAIM_SUBMITTED,
+  NOTIFY_CLAIM_DECIDED,
 ];
-
 
 /**
  * Job payloads are ids, never copies of the record. The worker re-reads the
@@ -212,4 +221,41 @@ export async function notifyReviewResent(
   if (result.outcome !== "sent") return;
   const payload: ReviewJobPayload = { reviewId: result.reviewId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
+}
+
+/**
+ * The claim payload is the claim id and nothing else — not the token.
+ *
+ * A magic token in a queue row is a live credential sitting in a table that
+ * outlives the thing it unlocks, readable by anything that can read the queue.
+ * The worker re-reads the claim when it runs, so an expired or superseded
+ * token is never sent.
+ */
+export type ClaimJobPayload = { claimId: string };
+
+export async function notifyClaimLink(
+  tx: TestDb,
+  viewer: Viewer,
+  claimId: string,
+): Promise<void> {
+  const payload: ClaimJobPayload = { claimId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_CLAIM_LINK, payload });
+}
+
+export async function notifyClaimSubmitted(
+  tx: TestDb,
+  viewer: Viewer,
+  claimId: string,
+): Promise<void> {
+  const payload: ClaimJobPayload = { claimId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_CLAIM_SUBMITTED, payload });
+}
+
+export async function notifyClaimDecided(
+  tx: TestDb,
+  viewer: Viewer,
+  claimId: string,
+): Promise<void> {
+  const payload: ClaimJobPayload = { claimId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_CLAIM_DECIDED, payload });
 }
