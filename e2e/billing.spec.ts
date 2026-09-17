@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
+import { E2E_DATABASE_URL } from "./database";
 
 /**
  * Checkout, end to end, with no PayPal involved.
@@ -23,8 +24,8 @@ import postgres from "postgres";
 
 const PAID_TIERS = ["essential", "premium"] as const;
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev";
+// The same database the server under test runs on — never directory_dev.
+const DATABASE_URL = E2E_DATABASE_URL;
 
 async function signUp(page: Page): Promise<string> {
   const stamp = `${Date.now()}${Math.floor(Math.random() * 1000)}`;

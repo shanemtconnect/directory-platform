@@ -14,7 +14,13 @@ import { expect, test } from "@playwright/test";
 async function aPublishedListing(
   request: import("@playwright/test").APIRequestContext,
 ): Promise<{ path: string; id: string }> {
-  const index = await request.get("/sitemaps/listings-0.xml");
+  // Via the index, not a guessed shard path: the shard URL shape belongs to
+  // Next's generateSitemaps and has changed once already.
+  const sitemapIndex = await request.get("/sitemap.xml");
+  expect(sitemapIndex.ok()).toBe(true);
+  const shard = /<loc>([^<]*listings-0[^<]*)<\/loc>/.exec(await sitemapIndex.text());
+  expect(shard, "the sitemap index names a listings-0 shard").not.toBeNull();
+  const index = await request.get(new URL(shard![1]!).pathname);
   expect(index.ok()).toBe(true);
   const xml = await index.text();
   const loc = /<loc>([^<]+)<\/loc>/.exec(xml);
