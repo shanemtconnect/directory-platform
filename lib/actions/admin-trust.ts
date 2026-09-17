@@ -51,7 +51,7 @@ export interface QueueState {
   message?: string;
 }
 
-const GONE = "That is not there any more — the queue below is what is left.";
+const GONE = "That is not there any more. Reload the queue to see what is left.";
 
 /**
  * What to tell an admin who clicked a row somebody else had already dealt
@@ -62,7 +62,7 @@ const GONE = "That is not there any more — the queue below is what is left.";
 function message(result: DecisionResult): string | null {
   switch (result.outcome) {
     case "not-open":
-      return "Somebody has already decided this one.";
+      return "Somebody has already decided this one. Reload the queue to see what is left.";
     case "unknown":
       return GONE;
     case "forbidden":
