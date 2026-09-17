@@ -196,6 +196,20 @@ describe("verifyClaimToken", () => {
     });
   });
 
+  it("records the confirming request's ip on the claim.approved row", async () => {
+    await withTestDb(async (tx) => {
+      const { token, claimId } = await requested(tx);
+      const result = await verifyClaimToken(tx, { role: "public" }, token, "203.0.113.7");
+      expect(result.outcome).toBe("approved");
+
+      const rows = await tx
+        .select({ ip: auditLog.ip, entityId: auditLog.entityId })
+        .from(auditLog)
+        .where(eq(auditLog.action, "claim.approved"));
+      expect(rows).toEqual([{ ip: "203.0.113.7", entityId: claimId }]);
+    });
+  });
+
   it("burns the token as it approves, so the link cannot be used again", async () => {
     await withTestDb(async (tx) => {
       const { token, profileId } = await requested(tx);

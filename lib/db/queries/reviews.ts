@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { and, count, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
 import {
-  auditLog, cities, listings, profiles, reviews, reviewInvites, reviewReplies,
+  auditLog, cities, listings, reviews, reviewInvites, reviewReplies,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
+import { ensureProfile } from "@/lib/auth/profile";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { flagReview } from "@/lib/reviews/moderation";
@@ -126,15 +127,16 @@ export type CreateReviewResult =
   | { outcome: "own-listing" }
   | { outcome: "already-reviewed" };
 
-/** The profile row id behind a signed-in viewer, or null if there isn't one. */
+/**
+ * The profile row id behind a signed-in viewer, or null for a public one.
+ *
+ * Through `ensureProfile` (global constraint 21) rather than a bare select: an
+ * admin moderating on their first day has no `profiles` row yet, and a plain
+ * lookup answered null for them — an audit row that says nobody did it.
+ */
 async function profileIdOf(tx: TestDb, viewer: Viewer): Promise<string | null> {
   if (viewer.role === "public") return null;
-  const [row] = await tx
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.userId, viewer.userId))
-    .limit(1);
-  return row?.id ?? null;
+  return (await ensureProfile(tx, viewer)).id;
 }
 
 /**

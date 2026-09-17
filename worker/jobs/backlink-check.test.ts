@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
-import { badges, listings } from "@/lib/db/schema";
+import { badges, cities, listings } from "@/lib/db/schema";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { BACKLINK_RANK_BOOST } from "@/lib/db/queries/badges";
 import type { Resolver } from "@/lib/badge/backlink";
@@ -43,6 +43,14 @@ describe("checkBadgeBacklinks", () => {
       });
 
       expect(report).toMatchObject({ checked: 1, verified: 1, failed: 0 });
+      // A boost granted changes the ranking on three cached pages; the
+      // scheduler revalidates them once this transaction has committed.
+      const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, ctx.cityId));
+      expect(report.revalidate).toEqual([
+        `/${city!.slug}/the-old-mill`,
+        `/${city!.slug}/the-old-mill/reviews`,
+        `/${city!.slug}`,
+      ]);
       const [badge] = await tx.select().from(badges).where(eq(badges.listingId, listingId));
       expect(badge?.backlinkVerified).toBe(true);
       expect(badge?.lastCheckedAt).not.toBeNull();
@@ -68,8 +76,24 @@ describe("checkBadgeBacklinks", () => {
       });
 
       expect(report).toMatchObject({ checked: 1, verified: 0, failed: 1 });
+      expect(report.revalidate).toHaveLength(3);
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing?.backlinkBoost).toBe(0);
+    });
+  });
+
+  it("names no pages when the check changes nothing — a still-dead link is not a stale page", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "Still Dead" });
+      await tx.insert(badges).values({ listingId, backlinkUrl: "https://client.example/about" });
+
+      const report = await checkBadgeBacklinks(tx, {
+        resolve: PUBLIC_DNS,
+        fetchImpl: pages({ "https://client.example/about": "<p>no link</p>" }),
+      });
+
+      expect(report).toMatchObject({ checked: 1, verified: 0, failed: 1, revalidate: [] });
     });
   });
 

@@ -1,73 +1,55 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RateLimitResult } from "@/lib/spam/rate-limit";
+import type { Viewer } from "@/lib/db/viewer";
 
 const verifyClaimToken = vi.fn<(...a: unknown[]) => Promise<{ outcome: string; path?: string }>>();
-const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
+const revalidatePath = vi.fn<(p: string) => void>();
+const currentViewer = vi.fn<() => Promise<Viewer>>();
+const TX = { marker: "tx" };
 
 vi.mock("@/lib/db/client", () => ({
-  db: { transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({}) },
-  getDb: () => ({}),
+  db: { transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(TX) },
 }));
-vi.mock("@/lib/auth/viewer", () => ({ currentViewer: async () => ({ role: "public" }) }));
+vi.mock("@/lib/auth/viewer", () => ({ currentViewer: () => currentViewer() }));
 vi.mock("@/lib/db/queries/claims", () => ({
   verifyClaimToken: (...args: unknown[]) => verifyClaimToken(...args),
 }));
-vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/spam/write-limit")>()),
-  limitPublicWrite: (...args: unknown[]) => limitPublicWrite(...args),
-}));
-vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/cache", () => ({ revalidatePath: (p: string) => revalidatePath(p) }));
 
-const allowed: RateLimitResult = { allowed: true, remaining: 29, retryAfterSeconds: 0 };
-const blocked: RateLimitResult = { allowed: false, remaining: 0, retryAfterSeconds: 30 };
-
-function confirm(token: string): [Request, { params: Promise<{ token: string }> }] {
+function confirm(token: string, headers: Record<string, string> = {}) {
   return [
-    new Request(`http://localhost:3215/claim/verify/${token}/confirm`, {
-      method: "POST",
-      headers: { "x-forwarded-for": "198.51.100.7" },
-    }),
+    new Request(`http://localhost:3211/claim/verify/${token}/confirm`, { method: "POST", headers }),
     { params: Promise.resolve({ token }) },
-  ];
+  ] as const;
 }
 
 describe("POST /claim/verify/[token]/confirm", () => {
   beforeEach(() => {
     verifyClaimToken.mockReset();
-    limitPublicWrite.mockReset();
-    limitPublicWrite.mockResolvedValue(allowed);
+    revalidatePath.mockReset();
+    currentViewer.mockReset().mockResolvedValue({ role: "public" });
   });
 
-  it("applies the claim and sends the claimant to their account", async () => {
-    verifyClaimToken.mockResolvedValue({ outcome: "approved", path: "/a-city/a-listing" });
+  it("hands the confirming request's ip to verifyClaimToken for the audit row", async () => {
+    verifyClaimToken.mockResolvedValue({ outcome: "approved", path: "/leeds/the-old-mill" });
     const { POST } = await import("./route");
 
-    const res = await POST(...confirm("tok-live"));
+    const res = await POST(...confirm("tok-1", { "x-forwarded-for": "198.51.100.4, 203.0.113.7" }));
 
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("http://localhost:3215/account?claim=approved");
+    expect(new URL(res.headers.get("location")!).search).toBe("?claim=approved");
+    // The LAST hop is the one our proxy wrote; the client controls the rest.
+    expect(verifyClaimToken).toHaveBeenCalledWith(TX, { role: "public" }, "tok-1", "203.0.113.7");
+    expect(revalidatePath).toHaveBeenCalledWith("/leeds/the-old-mill");
   });
 
-  it("counts every confirm against the bucket the landing page uses", async () => {
-    verifyClaimToken.mockResolvedValue({ outcome: "unknown" });
-    const { CLAIM_VERIFY_RATE_LIMIT } = await import("@/lib/spam/write-limit");
-    const [request, ctx] = confirm("tok-guessed");
+  it("passes a null ip, never a placeholder, when no proxy header is present", async () => {
+    verifyClaimToken.mockResolvedValue({ outcome: "expired" });
     const { POST } = await import("./route");
 
-    await POST(request, ctx);
+    const res = await POST(...confirm("tok-2"));
 
-    expect(limitPublicWrite).toHaveBeenCalledWith("claim-verify", request.headers, CLAIM_VERIFY_RATE_LIMIT);
-    expect(CLAIM_VERIFY_RATE_LIMIT).toEqual({ limit: 30, windowSeconds: 60 });
-  });
-
-  it("refuses a client over the limit with 429 and looks nothing up", async () => {
-    limitPublicWrite.mockResolvedValue(blocked);
-    const { POST } = await import("./route");
-
-    const res = await POST(...confirm("tok-guessed"));
-
-    expect(res.status).toBe(429);
-    expect(res.headers.get("retry-after")).toBe("30");
-    expect(verifyClaimToken).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).search).toBe("?claim=expired");
+    expect(verifyClaimToken).toHaveBeenCalledWith(TX, { role: "public" }, "tok-2", null);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

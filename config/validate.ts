@@ -180,6 +180,19 @@ export const BILLING_ENV: readonly string[] = [
  * Deliberately absent: TURNSTILE_* and MAPTILER_KEY. Both stay optional after
  * their phases ship — the form falls back to server-side rate limiting and the
  * map is never required to see the listings — so neither should ever fail a boot.
+ *
+ * Also optional, and also never enforced:
+ *
+ *   INTERNAL_REVALIDATE_SECRET — shared by the web and worker containers. The
+ *                                worker POSTs the ISR paths a tier change or
+ *                                backlink boost left stale to
+ *                                /api/internal/revalidate with it as a bearer
+ *                                token (lib/revalidate/client.ts). Unset, the
+ *                                route 404s and the worker logs once and
+ *                                skips: pages then catch up when their ISR
+ *                                window turns over, which is what happened
+ *                                before the route existed. Set the SAME value
+ *                                on both services or nothing is revalidated.
  */
 export const RUNTIME_ENV_PHASE5 = [
   "R2_ACCOUNT_ID",

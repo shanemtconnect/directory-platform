@@ -38,7 +38,29 @@ export const NOTIFY_CLAIM_SUBMITTED = "notify.claimSubmitted";
 /** The outcome, approved or rejected, going back to the claimant. */
 export const NOTIFY_CLAIM_DECIDED = "notify.claimDecided";
 
-/** The kinds worker/jobs/notify.ts claims. */
+/** Reviews — the handlers sit at the foot of worker/jobs/notify.ts. */
+export const NOTIFY_REVIEW_SUBMITTED = "notify.review.submitted";
+export const NOTIFY_REVIEW_VERIFIED = "notify.review.verified";
+
+/**
+ * The two auth token emails. Queued like everything else rather than sent
+ * inline from Better Auth's callback, for the same reason the enquiry form
+ * does not send its own mail: a slow Resend must never be a slow sign-up, and
+ * a failed send must be retried rather than lost inside a request that has
+ * already returned.
+ */
+export const NOTIFY_AUTH_RESET = "notify.auth-reset";
+export const NOTIFY_AUTH_VERIFY = "notify.auth-verify";
+
+/**
+ * Every kind worker/jobs/notify.ts claims — the ONE answer to "what does the
+ * notify worker drain". `BILLING_NOTIFY_KINDS` below is deliberately not in
+ * it: renewal-reminders.ts drains those itself.
+ *
+ * A kind added here without a `case` in that file's `run` is caught by
+ * worker/jobs/notify-kinds.test.ts, not discovered in production as a job
+ * that retries five times and parks.
+ */
 export const NOTIFY_KINDS: string[] = [
   NOTIFY_ENQUIRY,
   NOTIFY_SUBMISSION,
@@ -50,6 +72,10 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_CLAIM_LINK,
   NOTIFY_CLAIM_SUBMITTED,
   NOTIFY_CLAIM_DECIDED,
+  NOTIFY_REVIEW_SUBMITTED,
+  NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_AUTH_RESET,
+  NOTIFY_AUTH_VERIFY,
 ];
 
 /**
@@ -166,16 +192,7 @@ export async function notifyDecision(
 
 /* ------------------------------------------------------ reviews (Task 22) */
 
-/**
- * Appended rather than woven in: this file is shared by several modules
- * landing in parallel, so each one adds its kinds at the end and pushes them
- * onto `NOTIFY_KINDS` instead of editing the literal above — a line every
- * module would otherwise be rewriting at once.
- */
-export const NOTIFY_REVIEW_SUBMITTED = "notify.review.submitted";
-export const NOTIFY_REVIEW_VERIFIED = "notify.review.verified";
-
-NOTIFY_KINDS.push(NOTIFY_REVIEW_SUBMITTED, NOTIFY_REVIEW_VERIFIED);
+/* The review kinds are declared with the rest of NOTIFY_KINDS above. */
 
 /** Ids, never copies: the worker re-reads the review when it runs. */
 export type ReviewJobPayload = { reviewId: string };
@@ -295,26 +312,10 @@ export async function notifyRenewal(
 
 /*
  * ---------------------------------------------------------------------------
- * Auth emails (password reset, address verification).
- *
- * Appended as a block rather than threaded through the constants above: this
- * file is edited by several tasks in the same wave and merged keep-both, so a
- * self-contained tail is the shape that survives that. The kinds are pushed
- * onto NOTIFY_KINDS for the same reason.
+ * Auth emails (password reset, address verification). The kinds themselves
+ * are declared with the rest of NOTIFY_KINDS above.
  * ---------------------------------------------------------------------------
  */
-
-/**
- * The two token emails. Queued like everything else rather than sent inline
- * from Better Auth's callback, for the same reason the enquiry form does not
- * send its own mail: a slow Resend must never be a slow sign-up, and a failed
- * send must be retried rather than lost inside a request that has already
- * returned.
- */
-export const NOTIFY_AUTH_RESET = "notify.auth-reset";
-export const NOTIFY_AUTH_VERIFY = "notify.auth-verify";
-
-NOTIFY_KINDS.push(NOTIFY_AUTH_RESET, NOTIFY_AUTH_VERIFY);
 
 /**
  * How long a reset or verification token lives, in seconds.

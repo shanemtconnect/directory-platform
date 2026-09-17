@@ -1,4 +1,10 @@
 import {
+  AUTH_TOKEN_TTL_SECONDS,
+  NOTIFY_AUTH_RESET,
+  NOTIFY_AUTH_VERIFY,
+  NOTIFY_CLAIM_DECIDED,
+  NOTIFY_CLAIM_LINK,
+  NOTIFY_CLAIM_SUBMITTED,
   NOTIFY_DECISION,
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
@@ -6,9 +12,9 @@ import {
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
   NOTIFY_REPORT,
-  NOTIFY_SUBMISSION,
   NOTIFY_REVIEW_SUBMITTED,
   NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_SUBMISSION,
 } from "@/lib/email/notify";
 import {
   submissionApproved,
@@ -49,11 +55,8 @@ import {
 } from "@/lib/email/templates/claim";
 import { claimNotification } from "@/lib/db/queries/claims";
 import { MAGIC_TOKEN_TTL_MINUTES, isTokenExpired } from "@/lib/claims/token";
-import {
-  NOTIFY_CLAIM_DECIDED,
-  NOTIFY_CLAIM_LINK,
-  NOTIFY_CLAIM_SUBMITTED,
-} from "@/lib/email/notify";
+import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
+import { authEmailRecipient } from "@/lib/db/queries/profile";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -540,19 +543,10 @@ async function runReviewVerified(
  * ---------------------------------------------------------------------------
  * Auth emails (password reset, address verification).
  *
- * A self-contained tail, imports included: this file is edited by several
- * tasks in one wave and merged keep-both, so nothing above this line was
- * touched except the two `case` lines in `run`. Import declarations are
- * hoisted, so placing them here changes nothing about when they resolve.
+ * A self-contained tail: the handlers live here, their imports in the
+ * header with everything else's.
  * ---------------------------------------------------------------------------
  */
-import {
-  AUTH_TOKEN_TTL_SECONDS,
-  NOTIFY_AUTH_RESET,
-  NOTIFY_AUTH_VERIFY,
-} from "@/lib/email/notify";
-import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
-import { authEmailRecipient } from "@/lib/db/queries/profile";
 
 const ACCOUNT = "account";
 

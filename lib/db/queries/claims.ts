@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
-import { auditLog, cities, claims, listings, profiles, user } from "@/lib/db/schema";
+import { cities, claims, listings, profiles, user } from "@/lib/db/schema";
+import { writeAuditAs } from "@/lib/db/queries/audit";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { matchesListingDomain } from "@/lib/claims/domain";
 import { isTokenExpired, magicTokenExpiry, newMagicToken } from "@/lib/claims/token";
@@ -36,35 +37,6 @@ function assertAdmin(viewer: Viewer): void {
   // A claim row carries the claimant's name, business address and the path to
   // a scan of their utility bill. Reading the queue is reading personal data.
   if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
-}
-
-/**
- * Local until there is a shared one.
- *
- * Global constraint 22 requires an audit row in the same transaction as every
- * admin or owner mutation, and every caller here already has the transaction
- * open. Private on purpose: when the shared `writeAudit` lands, this is the
- * single place that changes.
- */
-async function writeAudit(
-  tx: Db,
-  row: {
-    actorId: string | null;
-    action: string;
-    entityId: string;
-    entityType?: string;
-    meta?: Record<string, unknown>;
-    ip?: string | null;
-  },
-): Promise<void> {
-  await tx.insert(auditLog).values({
-    actorId: row.actorId,
-    action: row.action,
-    entityType: row.entityType ?? "claim",
-    entityId: row.entityId,
-    meta: row.meta ?? null,
-    ip: row.ip ?? null,
-  });
 }
 
 export interface ClaimableListing {
@@ -200,8 +172,8 @@ export async function startDomainClaim(
     claimId = row!.id;
   }
 
-  await writeAudit(tx, {
-    actorId: input.profileId,
+  await writeAuditAs(tx, input.profileId, {
+    entityType: "claim",
     action: "claim.requested",
     entityId: claimId,
     meta: { listingId: input.listingId, evidence: "domain_email" },
@@ -281,6 +253,8 @@ export async function verifyClaimToken(
   tx: Db,
   _viewer: Viewer,
   token: string,
+  /** The confirming request's address (global constraint 22). */
+  ip: string | null = null,
 ): Promise<VerifyResult> {
   if (token.trim() === "") return { outcome: "unknown" };
 
@@ -371,11 +345,12 @@ export async function verifyClaimToken(
 
   await promoteToOwner(tx, row.userId);
 
-  await writeAudit(tx, {
-    actorId: row.userId,
+  await writeAuditAs(tx, row.userId, {
+    entityType: "claim",
     action: "claim.approved",
     entityId: row.id,
     meta: { listingId: row.listingId, evidence: "domain_email", automatic: true },
+    ip,
   });
 
   return approved;
@@ -438,8 +413,8 @@ export async function startDocumentClaim(
     .values({ listingId: input.listingId, userId: input.profileId, ...values })
     .returning({ id: claims.id });
 
-  await writeAudit(tx, {
-    actorId: input.profileId,
+  await writeAuditAs(tx, input.profileId, {
+    entityType: "claim",
     action: "claim.requested",
     entityId: row!.id,
     meta: { listingId: input.listingId, evidence: "document" },
@@ -476,8 +451,8 @@ export async function attachClaimDocument(
   // Global constraint 22. An identity document arriving is exactly the event
   // an abuse investigation reads back later, and it is worth nothing without
   // the address it came from.
-  await writeAudit(tx, {
-    actorId: input.profileId,
+  await writeAuditAs(tx, input.profileId, {
+    entityType: "claim",
     action: "claim.document_uploaded",
     entityId: input.claimId,
     ip: input.ip,
@@ -635,8 +610,8 @@ export async function recordDocumentView(
   input: { claimId: string; actorProfileId: string; slot: "proof" | "id"; ip: string | null },
 ): Promise<void> {
   assertAdmin(viewer);
-  await writeAudit(tx, {
-    actorId: input.actorProfileId,
+  await writeAuditAs(tx, input.actorProfileId, {
+    entityType: "claim",
     action: "claim.document_viewed",
     entityId: input.claimId,
     meta: { slot: input.slot },
@@ -751,8 +726,8 @@ export async function decideClaim(
     .returning({ id: claims.id });
   if (decided.length === 0) return { outcome: "already-decided" };
 
-  await writeAudit(tx, {
-    actorId: input.actorProfileId,
+  await writeAuditAs(tx, input.actorProfileId, {
+    entityType: "claim",
     action: input.decision === "approved" ? "claim.approved" : "claim.rejected",
     entityId: row.id,
     meta: {
@@ -917,8 +892,8 @@ export async function markClaimDocumentsPurged(
     })
     .where(eq(claims.id, claimId));
 
-  await writeAudit(tx, {
-    actorId: null,
+  await writeAuditAs(tx, null, {
+    entityType: "claim",
     action: "claim.documents_purged",
     entityId: claimId,
     meta: { count: paths.length, retentionDays: DOCUMENT_RETENTION_DAYS },

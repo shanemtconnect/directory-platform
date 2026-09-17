@@ -1,5 +1,6 @@
 import { reconcileSubscription } from "@/lib/billing/subscriptions";
 import { staleSubscriptionsForSync } from "@/lib/db/queries/billing";
+import { listingPaths } from "@/lib/db/queries/paths";
 import { getPayPalClient, type PayPalClient } from "@/lib/billing/paypal";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import type { Db } from "@/lib/db/client";
@@ -34,6 +35,14 @@ export interface SyncResult {
   readonly checked: number;
   readonly reconciled: number;
   readonly skipped?: boolean;
+  /**
+   * The ISR pages each applied change left stale — listing, its reviews page,
+   * its city. Returned rather than revalidated here: this runs inside the
+   * advisory lock's transaction, and a path marked stale before the tier
+   * write commits is re-cached with the old tier. `worker/index.ts` sends
+   * them once the lock has released (lib/revalidate/client.ts).
+   */
+  readonly revalidate: string[];
 }
 
 export async function syncSubscriptions(
@@ -44,7 +53,7 @@ export async function syncSubscriptions(
   if (client === null) {
     // Not an error: a site without billing credentials has nothing to sync.
     console.log("[worker] subscription-sync skipped — PayPal is not configured");
-    return { checked: 0, reconciled: 0, skipped: true };
+    return { checked: 0, reconciled: 0, skipped: true, revalidate: [] };
   }
 
   const stale = await staleSubscriptionsForSync(db, ADMIN_VIEWER, {
@@ -52,6 +61,7 @@ export async function syncSubscriptions(
     limit: BATCH,
   });
   let reconciled = 0;
+  const revalidate: string[] = [];
 
   for (const row of stale) {
     // A savepoint each: one subscription whose write fails must not roll back
@@ -63,8 +73,10 @@ export async function syncSubscriptions(
         providerSubscriptionId: row.providerSubscriptionId,
       }),
     );
-    if (outcome.outcome === "applied") reconciled++;
-    else if (outcome.outcome === "provider-error") {
+    if (outcome.outcome === "applied") {
+      reconciled++;
+      revalidate.push(...(await listingPaths(db, ADMIN_VIEWER, row.listingId)));
+    } else if (outcome.outcome === "provider-error") {
       console.error(`[worker] could not reconcile ${row.providerSubscriptionId}: ${outcome.message}`);
     }
   }
@@ -72,5 +84,5 @@ export async function syncSubscriptions(
   if (stale.length > 0) {
     console.log(`[worker] subscription-sync checked ${stale.length}, reconciled ${reconciled}`);
   }
-  return { checked: stale.length, reconciled };
+  return { checked: stale.length, reconciled, revalidate };
 }

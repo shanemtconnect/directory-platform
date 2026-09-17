@@ -6,6 +6,7 @@ import { withAdvisoryLock } from "./lock";
 import { now } from "@/lib/clock";
 import { jobCounts } from "@/lib/db/queries/health";
 import { HEARTBEAT_CRON, pushUptime, runHeartbeat } from "@/lib/observability/heartbeat";
+import { revalidatePaths } from "@/lib/revalidate/client";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -28,20 +29,40 @@ if (process.env.WORKER_ENABLED !== "true") {
 }
 
 /**
+ * What a job may hand back: the ISR paths its writes left stale. They are sent
+ * to the web container only after `withAdvisoryLock` has returned, i.e. after
+ * the job's transaction has committed — a path marked stale before its write
+ * commits is re-cached with the old row (see lib/revalidate/client.ts).
+ */
+type JobOutcome = void | { readonly revalidate?: readonly string[] };
+
+/**
  * Jobs run inside this container via node-cron, not by system cron hitting HTTP
  * endpoints: that way they get logging, retries and no public attack surface.
  */
-function schedule(name: string, expr: string, fn: (tx: Db) => Promise<void>): void {
+function schedule(name: string, expr: string, fn: (tx: Db) => Promise<JobOutcome>): void {
   cron.schedule(expr, async () => {
     const startedAt = now();
     try {
-      const ran = await withAdvisoryLock(db, name, fn);
+      // A plain array, not the outcome itself: TypeScript narrows a union
+      // assigned inside a closure to its initialiser, and `never` has no
+      // `.revalidate`.
+      let paths: readonly string[] = [];
+      const ran = await withAdvisoryLock(db, name, async (tx) => {
+        paths = (await fn(tx))?.revalidate ?? [];
+      });
       const ms = Date.now() - startedAt.getTime();
       console.log(`[worker] ${name} ${ran ? "ok" : "skipped (lock held elsewhere)"} in ${ms}ms`);
       if (ran) {
         await db.insert(jobRuns).values({
           jobName: name, startedAt, finishedAt: now(), status: "ok", lockKey: name,
         });
+        // Committed now. Never throws: a failed cache nudge is a stale page,
+        // not a failed job.
+        if (paths.length > 0) {
+          const { sent } = await revalidatePaths(paths);
+          console.log(`[worker] ${name} revalidated ${sent}/${paths.length} path(s)`);
+        }
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -54,10 +75,6 @@ function schedule(name: string, expr: string, fn: (tx: Db) => Promise<void>): vo
   console.log(`[worker] scheduled ${name} (${expr})`);
 }
 
-// Phase 1 ships the image pipeline. Later phases add:
-//   Phase 3 — city indexing gate
-//   Phase 5 — verification expiry and renewal reminders at 30/7/0 days
-//   Phase 6 — backlink verification
 schedule("derivatives", "*/1 * * * *", async (tx) => {
   const { processPendingDerivatives } = await import("./jobs/derivatives");
   await processPendingDerivatives(tx);
@@ -117,7 +134,7 @@ schedule("purge-claim-docs", "0 3 * * *", async (tx) => {
 // only spreads the fetches out — it never re-checks anything early.
 schedule("backlink-check", "0 * * * *", async (tx) => {
   const { checkBadgeBacklinks } = await import("./jobs/backlink-check");
-  await checkBadgeBacklinks(tx);
+  return checkBadgeBacklinks(tx);
 });
 
 // Badge impressions and clicks live in Redis between flushes, so this is the
@@ -147,5 +164,5 @@ schedule("renewal-reminders", "17 * * * *", async (tx) => {
 
 schedule("subscription-sync", "37 * * * *", async (tx) => {
   const { syncSubscriptions } = await import("./jobs/subscription-sync");
-  await syncSubscriptions(tx);
+  return syncSubscriptions(tx);
 });
