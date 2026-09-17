@@ -10,7 +10,7 @@ import { E2E_DATABASE_URL } from "./database";
  * with no human in the loop — so it is worth proving against a real server, a
  * real session and a real database rather than a mock.
  *
- * It reads the magic token straight out of `claims`, because the mail sender
+ * It reads the magic token out of the queued email job, because the mail sender
  * is deliberately `not-configured` locally (lib/email/sender.ts returns
  * `{ sent: false, reason: "not-configured" }` rather than throwing). The email
  * is not what is under test here; what the link DOES is.
@@ -125,11 +125,15 @@ test.describe("claiming a listing", () => {
     await expect(sent).toContainText(BUSINESS_EMAIL);
 
     // The token never reaches the browser — it is mailed to the business's own
-    // domain — so the test reads it the way the recipient's inbox would.
+    // domain — and `claims.magic_token` holds only its digest, so the one place
+    // the raw token can be read from is the queued email job that will carry
+    // it to the worker (no worker runs under Playwright, so it is still there).
     const [claim] = await sql<{ id: string; magic_token: string }[]>`
-      select id, magic_token from claims
-      where listing_id = ${target.id} and business_email = ${BUSINESS_EMAIL}
-      order by created_at desc limit 1
+      select c.id, j.payload ->> 'token' as magic_token
+      from claims c
+      join job_queue j on j.kind = 'notify.claimLink' and j.payload ->> 'claimId' = c.id::text
+      where c.listing_id = ${target.id} and c.business_email = ${BUSINESS_EMAIL}
+      order by j.created_at desc limit 1
     `;
     expect(claim?.magic_token, "the claim must carry a magic token").toBeTruthy();
     claimId = claim!.id;

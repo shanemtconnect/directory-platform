@@ -223,22 +223,28 @@ export async function notifyReviewResent(
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }
 
-/**
- * The claim payload is the claim id and nothing else — not the token.
- *
- * A magic token in a queue row is a live credential sitting in a table that
- * outlives the thing it unlocks, readable by anything that can read the queue.
- * The worker re-reads the claim when it runs, so an expired or superseded
- * token is never sent.
- */
+/** The submitted and decided payloads are the claim id and nothing else. */
 export type ClaimJobPayload = { claimId: string };
+
+/**
+ * The link job is the one payload that carries a credential, because it has
+ * to: `claims.magic_token` holds only the digest (lib/security/token-hash.ts),
+ * so the raw token exists nowhere the worker could re-read it from. It rides
+ * in the payload for exactly as long as the job is pending — the queue is
+ * admin-only and the token lives thirty minutes — and `completeJob` scrubs
+ * it the moment the email has gone (lib/db/queries/jobs.ts). The worker still
+ * re-reads the claim, so a link that has expired, been decided, or been
+ * replaced by a resend is never the one that goes out.
+ */
+export type ClaimLinkJobPayload = { claimId: string; token: string };
 
 export async function notifyClaimLink(
   tx: TestDb,
   viewer: Viewer,
   claimId: string,
+  token: string,
 ): Promise<void> {
-  const payload: ClaimJobPayload = { claimId };
+  const payload: ClaimLinkJobPayload = { claimId, token };
   await enqueueJob(tx, viewer, { kind: NOTIFY_CLAIM_LINK, payload });
 }
 

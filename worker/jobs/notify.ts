@@ -49,6 +49,7 @@ import {
 } from "@/lib/email/templates/claim";
 import { claimNotification } from "@/lib/db/queries/claims";
 import { MAGIC_TOKEN_TTL_MINUTES, isTokenExpired } from "@/lib/claims/token";
+import { hashToken } from "@/lib/security/token-hash";
 import {
   NOTIFY_CLAIM_DECIDED,
   NOTIFY_CLAIM_LINK,
@@ -294,9 +295,10 @@ async function runDecision(db: Db, d: Delivery, payload: Record<string, unknown>
 /**
  * The three claim notifications.
  *
- * All of them re-read the claim rather than trusting the payload, so a token
- * that has since been replaced by a resend is never the one that goes out, and
- * a decision that has since been changed is never announced twice differently.
+ * All of them re-read the claim rather than trusting the payload for anything
+ * but the token itself, so a link that has since been replaced by a resend is
+ * never the one that goes out, and a decision that has since been changed is
+ * never announced twice differently.
  */
 async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<string, unknown>): Promise<void> {
   const claimId = readId(payload, "claimId");
@@ -314,16 +316,24 @@ async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<strin
     // no live credential. Retrying would bury the log and then fail the job;
     // mailing a spent link would send somebody to a dead page. Complete.
     if (claim.status !== "pending" || isTokenExpired(claim.magicTokenExpiresAt)) return;
-    if (claim.magicToken === null || claim.businessEmail === null) {
+    if (claim.magicTokenHash === null || claim.businessEmail === null) {
       throw new Retryable("The claim has no live magic link to send");
     }
+    // The token comes from the payload: the row holds only its digest. A job
+    // without one cannot send anything that works, and says so in last_error
+    // — without the token, which is never written anywhere but the email.
+    const token = readId(payload, "token");
+    if (token === null) throw new Retryable("The job carries no token");
+    // A resend minted a newer link after this job was queued: that job sends
+    // it, and this one has nothing live to send. Complete, do not retry.
+    if (hashToken(token) !== claim.magicTokenHash) return;
     // Only ever to the address on the business's own domain. Copying an admin
     // would hand a credential to somebody the claimant never authorised.
     return deliver(d, CLAIMANT, {
       to: claim.businessEmail,
       ...claimMagicLink({
         ...listing,
-        verifyUrl: siteUrl(`/claim/verify/${claim.magicToken}`),
+        verifyUrl: siteUrl(`/claim/verify/${encodeURIComponent(token)}`),
         expiresInMinutes: MAGIC_TOKEN_TTL_MINUTES,
       }),
     });

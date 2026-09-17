@@ -3,6 +3,7 @@ import { auditLog, cities, claims, listings, profiles, user } from "@/lib/db/sch
 import { publishedListings } from "@/lib/db/queries/listings";
 import { matchesListingDomain } from "@/lib/claims/domain";
 import { isTokenExpired, magicTokenExpiry, newMagicToken } from "@/lib/claims/token";
+import { hashToken } from "@/lib/security/token-hash";
 import { now } from "@/lib/clock";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { Db } from "@/lib/db/client";
@@ -178,7 +179,10 @@ export async function startDomainClaim(
     roleAtBusiness: input.roleAtBusiness,
     businessEmail: email,
     evidenceType: "domain_email" as const,
-    magicToken: token,
+    // The digest, never the token. The raw token goes out in the result — to
+    // the email job that carries it to the worker — and nowhere else; a read
+    // of this table yields nothing that opens a claim.
+    magicToken: hashToken(token),
     magicTokenExpiresAt: magicTokenExpiry(),
     ip: input.ip,
     userAgent: input.userAgent,
@@ -246,7 +250,7 @@ export async function previewClaimToken(
     .from(claims)
     .innerJoin(listings, eq(listings.id, claims.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(eq(claims.magicToken, token))
+    .where(eq(claims.magicToken, hashToken(token)))
     .limit(1);
   if (!row) return { outcome: "unknown" };
   if (row.status !== "pending") return { outcome: "unknown" };
@@ -299,7 +303,7 @@ export async function verifyClaimToken(
     .from(claims)
     .innerJoin(listings, eq(listings.id, claims.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(eq(claims.magicToken, token))
+    .where(eq(claims.magicToken, hashToken(token)))
     .limit(1);
   if (!row) return { outcome: "unknown" };
 
@@ -778,7 +782,12 @@ export interface ClaimNotification {
   businessEmail: string | null;
   /** The signed-in account's address, which is where a decision is sent. */
   accountEmail: string | null;
-  magicToken: string | null;
+  /**
+   * The digest of the live link, or null once it is spent. Not the link: the
+   * worker gets that from the job payload, and compares it against this so a
+   * link that a resend has since replaced is never the one that goes out.
+   */
+  magicTokenHash: string | null;
   magicTokenExpiresAt: Date | null;
   status: "pending" | "approved" | "rejected" | "withdrawn";
   rejectionReason: string | null;
@@ -787,7 +796,7 @@ export interface ClaimNotification {
 
 /**
  * The worker's read model. Admin-only for the same reason the queue is: it is
- * an address, a name and a live credential in one row.
+ * an address and a name, joined to the account behind the claim.
  */
 export async function claimNotification(
   tx: Db,
@@ -806,7 +815,7 @@ export async function claimNotification(
       citySlug: cities.slug,
       claimantName: claims.claimantName,
       businessEmail: claims.businessEmail,
-      magicToken: claims.magicToken,
+      magicTokenHash: claims.magicToken,
       magicTokenExpiresAt: claims.magicTokenExpiresAt,
       status: claims.status,
       rejectionReason: claims.rejectionReason,
@@ -839,7 +848,7 @@ export async function claimNotification(
     claimantName: row.claimantName,
     businessEmail: row.businessEmail,
     accountEmail,
-    magicToken: row.magicToken,
+    magicTokenHash: row.magicTokenHash,
     magicTokenExpiresAt: row.magicTokenExpiresAt,
     status: row.status,
     rejectionReason: row.rejectionReason,
