@@ -42,6 +42,12 @@ function tiles(counts: AdminQueueCounts): Tile[] {
       quiet: "Nobody is waiting on a decision.",
     },
     {
+      label: "Reviews awaiting moderation",
+      value: counts.reviewsAwaitingModeration,
+      href: "/admin/reviews",
+      quiet: "Nothing is held.",
+    },
+    {
       label: "Reports open",
       value: counts.openReports,
       href: "/admin/reports",

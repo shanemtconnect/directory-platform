@@ -14,6 +14,7 @@ describe("AdminNav", () => {
     ["/admin", "Dashboard"],
     ["/admin/submissions", "Submissions"],
     ["/admin/claims", "Claims"],
+    ["/admin/reviews", "Reviews"],
     ["/admin/cities", "Towns"],
     ["/admin/reports", "Reports"],
     ["/admin/removals", "Removals"],

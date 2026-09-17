@@ -15,6 +15,7 @@ const COUNTS: AdminQueueCounts = {
   pendingClaims: 4,
   openReports: 1,
   openRemovals: 0,
+  reviewsAwaitingModeration: 5,
 };
 
 describe("QueueCounts", () => {
@@ -22,6 +23,7 @@ describe("QueueCounts", () => {
     ["Submissions waiting", "/admin/submissions"],
     ["Towns without intro copy", "/admin/cities"],
     ["Claims pending", "/admin/claims"],
+    ["Reviews awaiting moderation", "/admin/reviews"],
     ["Reports open", "/admin/reports"],
     ["Removal requests open", "/admin/removals"],
   ])("the %s tile links to %s", (label, href) => {
