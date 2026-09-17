@@ -83,6 +83,12 @@ export interface CheckoutListing {
  * been granted: an `owner_id` on an unclaimed row is a claim in progress, and
  * buying a plan for a listing you have not been given is how somebody else's
  * business ends up on your card.
+ *
+ * Takes `FOR UPDATE` on the listing row. Two checkouts for one listing — a
+ * double-clicked submit, or a second tab while the return page is activating
+ * the first — are serialised on it inside the caller's transaction, so the
+ * live-subscription check that follows reads committed state rather than a
+ * moment before it. Only the listing is locked (`of`), not the joined city.
  */
 export async function listingForCheckout(
   tx: TestDb,
@@ -110,7 +116,8 @@ export async function listingForCheckout(
         ne(listings.claimStatus, "unclaimed"),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .for("update", { of: listings });
   if (!row) return null;
 
   return {
@@ -121,6 +128,37 @@ export async function listingForCheckout(
     path: `/${row.citySlug}/${row.slug}`,
     cityPath: `/${row.citySlug}`,
   };
+}
+
+/** Statuses under which a listing is being billed, or about to be retried. */
+export const LIVE_SUBSCRIPTION_STATUSES = ["active", "past_due"] as const;
+
+/**
+ * The subscription that already pays for this listing, if any. Owner-scoped
+ * through the listing join, and meant to be read AFTER `listingForCheckout`
+ * has taken the row lock. A plan change is a later task; a second live
+ * subscription for one listing is two bills for one position.
+ */
+export async function liveSubscriptionForListing(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string },
+): Promise<{ id: string; status: string } | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return null;
+  const [row] = await tx
+    .select({ id: subscriptions.id, status: subscriptions.status })
+    .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
+    .where(
+      and(
+        eq(subscriptions.listingId, input.listingId),
+        eq(listings.ownerId, input.profileId),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
 }
 
 export interface CreatePendingInput {

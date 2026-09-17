@@ -5,9 +5,10 @@ import {
   attachProviderSubscription,
   createPendingSubscription,
   listingForCheckout,
+  liveSubscriptionForListing,
   subscriptionForEvent,
 } from "@/lib/db/queries/billing";
-import { redeemCoupon } from "@/lib/db/queries/coupons";
+import { attachRedemptionSubscription, redeemCoupon } from "@/lib/db/queries/coupons";
 import type { TierName } from "@/config/types";
 import type { Interval } from "@/lib/pricing";
 import type { Viewer } from "@/lib/db/viewer";
@@ -44,6 +45,7 @@ export interface StartCheckoutInput {
 export type StartCheckoutResult =
   | { outcome: "not-configured" }
   | { outcome: "not-owner" }
+  | { outcome: "already-subscribed"; subscriptionId: string }
   | { outcome: "no-plan" }
   | { outcome: "coupon-rejected"; reason: CouponRejection }
   | { outcome: "approval"; subscriptionId: string; approveUrl: string | null };
@@ -78,11 +80,21 @@ export async function startCheckout(
   });
   if (listing === null) return { outcome: "not-owner" };
 
+  // Under the row lock listingForCheckout just took: an owner on Essential
+  // choosing Premium, or a double-clicked submit, must not create a second
+  // PayPal subscription for a listing that already has one billing.
+  const live = await liveSubscriptionForListing(tx, input.viewer, {
+    listingId: input.listingId,
+    profileId: input.profileId,
+  });
+  if (live !== null) return { outcome: "already-subscribed", subscriptionId: live.id };
+
   const planId = planIdFor(input.tier, input.interval, env);
   if (planId === null) return { outcome: "no-plan" };
 
   let planOverride: PlanOverride | null = null;
   let couponCode: string | null = null;
+  let redemptionId: string | null = null;
 
   if (input.couponCode !== null && input.couponCode.trim() !== "") {
     const redeemed = await redeemCoupon(tx, input.viewer, {
@@ -96,6 +108,7 @@ export async function startCheckout(
       return { outcome: "coupon-rejected", reason: redeemed.reason };
     }
     couponCode = redeemed.coupon.code;
+    redemptionId = redeemed.redemptionId;
     planOverride = {
       billing_cycles: [
         {
@@ -117,6 +130,11 @@ export async function startCheckout(
     ip: input.ip,
     couponCode,
   });
+  if (redemptionId !== null) {
+    // The redemption was taken before the row existed (a rejected code must
+    // leave no pending row); now the row exists, point the redemption at it.
+    await attachRedemptionSubscription(tx, input.viewer, { redemptionId, subscriptionId });
+  }
 
   // Deliberately not wrapped: a PayPal failure THROWS, the caller's
   // transaction rolls back, and there is no pending row and no burned coupon
