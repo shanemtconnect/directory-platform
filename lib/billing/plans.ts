@@ -102,11 +102,11 @@ export function planAmount(tier: TierName, interval: Interval): PayPalAmount {
  * Which billing cycle a first-cycle coupon discounts.
  *
  * `scripts/paypal-setup.ts` builds every plan with the same shape: an optional
- * free TRIAL cycle, then a REGULAR cycle of exactly one iteration at full
- * price, then an open-ended REGULAR cycle at full price. That middle cycle is
- * the only reason a percentage off the FIRST payment can be expressed as a
- * PayPal plan override at all — overriding a single open-ended cycle would
- * discount every renewal for ever.
+ * free TRIAL cycle, then a PRICED TRIAL cycle of exactly one iteration at full
+ * price, then the single open-ended REGULAR cycle. That middle cycle is the
+ * only reason a percentage off the FIRST payment can be expressed as a PayPal
+ * plan override at all — overriding the open-ended cycle would discount every
+ * renewal for ever.
  */
 export function firstPaidCycleSequence(tier: TierName): number {
   return trialDaysFor(tier) > 0 ? 2 : 1;
@@ -148,7 +148,7 @@ export interface PlanBillingCycle {
   readonly frequency: PlanFrequency;
   readonly tenure_type: "TRIAL" | "REGULAR";
   readonly sequence: number;
-  /** 0 means "for ever". Exactly one cycle in a plan may say it. */
+  /** 0 means "for ever". Only the one REGULAR cycle may say it. */
   readonly total_cycles: number;
   readonly pricing_scheme: { readonly fixed_price: PayPalAmount };
 }
@@ -176,16 +176,19 @@ const FREQUENCY: Record<Interval, PlanFrequency> = {
  *
  * The cycle list has a shape the rest of this codebase depends on:
  *
- *   1. TRIAL, free, one cycle        — only when the tier has trial days.
- *   2. REGULAR, full price, ONE cycle — the cycle a coupon discounts.
- *   3. REGULAR, full price, for ever  — every renewal after that.
+ *   1. TRIAL, free, one cycle           — only when the tier has trial days.
+ *   2. TRIAL, full price, ONE cycle     — the first payment; the cycle a
+ *                                         coupon discounts.
+ *   3. REGULAR, full price, for ever    — every renewal after that.
  *
- * Two regular cycles rather than one, because PayPal's subscription-level
- * plan override can only rewrite a cycle the plan already has. With a single
- * open-ended cycle, "25% off the first payment" would be 25% off every payment
- * for the life of the subscription. Splitting the first payment into its own
- * finite cycle is what makes a first-cycle discount expressible at all — see
- * `firstPaidCycleSequence`.
+ * PayPal's Subscriptions API allows a plan AT MOST TWO trial cycles and
+ * EXACTLY ONE regular cycle (`billing_cycle_list`), so the first payment
+ * cannot be a second REGULAR cycle — it is a priced trial. A trial cycle only
+ * has to be free when it has no pricing scheme; a priced one is PayPal's own
+ * documented way to express an introductory price. Splitting the first
+ * payment into its own finite cycle is what makes a first-cycle discount
+ * expressible at all, because the subscription-level plan override can only
+ * rewrite a cycle the plan already has — see `firstPaidCycleSequence`.
  *
  * No `taxes` block: the seller is in Jersey and is not VAT registered, so a
  * tax percentage here would be inventing a charge.
@@ -212,8 +215,9 @@ export function planRequestBody(
   const firstPaid = firstPaidCycleSequence(tier);
   cycles.push(
     {
+      // Priced TRIAL, not a second REGULAR: PayPal permits one regular cycle.
       frequency: FREQUENCY[interval],
-      tenure_type: "REGULAR",
+      tenure_type: "TRIAL",
       sequence: firstPaid,
       total_cycles: 1,
       pricing_scheme: { fixed_price: amount },
