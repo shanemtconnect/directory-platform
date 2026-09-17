@@ -184,3 +184,17 @@ export const FORGOT_PASSWORD_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as c
  * token is minted: a different answer would be the enumeration oracle.
  */
 export const FORGOT_PASSWORD_EMAIL_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
+ * 300 a minute per address, in front of /api/webhooks/paypal.
+ *
+ * Every POST there used to cost a verify call to PayPal's API before any
+ * throttle, so anyone who could guess the URL could spend our PayPal quota —
+ * and the verify endpoint's rate limit is the one that, once tripped, rejects
+ * the genuine event behind the flood. PayPal delivers from a small set of
+ * addresses and retries with backoff, so 300 a minute is far above anything a
+ * real burst of renewals produces and far below what a loop can spend. The
+ * check sits before the body is read and before verification: a blocked
+ * delivery costs a header lookup and a Redis INCR, nothing else.
+ */
+export const PAYPAL_WEBHOOK_RATE_LIMIT = { limit: 300, windowSeconds: 60 } as const;
