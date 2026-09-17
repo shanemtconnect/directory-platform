@@ -24,6 +24,10 @@ export const RESERVED_SLUGS = [
   "leave-review", "page", "post-a-job", "pricing", "privacy", "robots", "safety",
   "search", "select-listing-type", "shortlist", "sitemap", "sitemaps", "terms",
   "tools", "trust", "_next",
+  // Phases 3–7: every top-level route added since, including the ones behind
+  // flags, so a city or category can never shadow /report, /checkout or /login.
+  "checkout", "login", "signup", "logout", "forgot-password", "reset-password",
+  "verify-email", "remove", "report", "review", "reviews", "billing",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);
