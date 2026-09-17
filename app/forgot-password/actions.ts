@@ -1,8 +1,14 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { headers } from "next/headers";
 import { getAuth } from "@/lib/auth/server";
-import { FORGOT_PASSWORD_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
+import { rateLimit } from "@/lib/spam/rate-limit";
+import {
+  FORGOT_PASSWORD_EMAIL_RATE_LIMIT,
+  FORGOT_PASSWORD_RATE_LIMIT,
+  limitPublicWrite,
+} from "@/lib/spam/write-limit";
 
 /**
  * "Send me a reset link."
@@ -20,6 +26,13 @@ import { FORGOT_PASSWORD_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-l
  * lookup for an unknown address, so the timing matches); saying "no such
  * account" here would hand back the account-enumeration oracle it went to that
  * trouble to close.
+ *
+ * Two counters, not one. Per connection, so a single client cannot lean on the
+ * form; and per address, so a client rotating connections cannot point it at
+ * one inbox — each request past the first would otherwise mint another live
+ * token for that account. Only the connection budget reports itself: an
+ * address that is over budget gets the ordinary "sent" reply, because "this
+ * address has been asked about too often" is an answer about the address.
  */
 
 export interface ForgotPasswordState {
@@ -58,6 +71,15 @@ export async function requestPasswordResetAction(
       status: "error",
       message: `Too many requests from this connection. Please try again in ${Math.ceil(limit.retryAfterSeconds / 60)} minutes.`,
     };
+  }
+
+  // Hashed so the Redis key holds no address. Lowercased first: Better Auth
+  // matches the address case-insensitively, so `Sam@` and `sam@` are one inbox.
+  const emailKey = createHash("sha256").update(email.toLowerCase()).digest("hex");
+  const perEmail = await rateLimit(`forgot-password:email:${emailKey}`, FORGOT_PASSWORD_EMAIL_RATE_LIMIT);
+  if (!perEmail.allowed) {
+    // Same sentence as success, and no token minted. See the note above.
+    return { status: "sent", message: SENT };
   }
 
   try {

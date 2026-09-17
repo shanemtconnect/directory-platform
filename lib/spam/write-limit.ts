@@ -125,3 +125,16 @@ export function retryMessage(result: RateLimitResult): string {
  * /api/auth directly, so AUTH_RATE_LIMIT already counts it.
  */
 export const FORGOT_PASSWORD_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as const;
+
+/**
+ * Three an hour per ADDRESS, alongside the per-connection budget above.
+ *
+ * The ip counter stops one client leaning on the form; it does nothing about
+ * a botnet, or anyone rotating addresses, pointing the form at one victim's
+ * inbox — and every request past the first mints another live reset token
+ * for that account, because Better Auth does not revoke the previous one.
+ * Keyed by a hash of the lowercased address so the Redis key is not personal
+ * data. When this one is spent the reply is the same "sent" sentence and no
+ * token is minted: a different answer would be the enumeration oracle.
+ */
+export const FORGOT_PASSWORD_EMAIL_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
