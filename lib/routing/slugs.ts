@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import {
   slugs, redirects, cities, verticals, areas, categories, listings,
 } from "@/lib/db/schema";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import { slugify, isReserved, RESERVED_SLUGS } from "./slugify";
 
 export const ROOT_SCOPE = "root";

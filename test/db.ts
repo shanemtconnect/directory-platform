@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
-import type { Db } from "@/lib/db/client";
+import type { TestDb } from "@/lib/db/types";
 
 const url =
   process.env.TEST_DATABASE_URL ??
@@ -10,13 +10,11 @@ const url =
 class RollbackSignal extends Error {}
 
 /**
- * The production handle type, re-exported under the name the test helpers use.
- *
- * These were two structurally different types, which is why every call site
- * wrote `db as never`. One alias means the real `db` and a test transaction are
- * interchangeable and the casts go away.
+ * The shared handle type lives in lib/db/types.ts (production code must not
+ * import from test/ — see the comment there); re-exported here so the 33 test
+ * files that import it alongside `withTestDb` keep one import.
  */
-export type TestDb = Db;
+export type { TestDb } from "@/lib/db/types";
 
 /**
  * Runs `fn` inside a transaction that is always rolled back, so integration

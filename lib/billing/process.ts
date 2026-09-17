@@ -5,7 +5,7 @@ import {
   subscriptionForEvent,
   type AppliedEffect,
 } from "@/lib/db/queries/billing";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
 import type { PayPalClient } from "./paypal";
 import { customIdFor, decide, HANDLED_EVENTS, parseEvent, providerSubscriptionIdFor } from "./webhooks";

@@ -7,7 +7,7 @@ import { now } from "@/lib/clock";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { flagReview } from "@/lib/reviews/moderation";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Every read and write of a review.

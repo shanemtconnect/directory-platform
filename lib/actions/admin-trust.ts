@@ -13,7 +13,7 @@ import {
   type ReportDecision,
 } from "@/lib/db/queries/trust";
 import { submissionDetail } from "@/lib/db/queries/admin/submissions";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The four decisions behind /admin/reports and /admin/removals.

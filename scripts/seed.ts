@@ -11,7 +11,7 @@ import { siteConfig } from "@/config/site.config";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The seed set is named after the entity, not the niche.

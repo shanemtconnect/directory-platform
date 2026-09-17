@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { coupons } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { couponCode } from "./tokens";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The single-use codes a claim-outreach batch carries.

@@ -10,7 +10,7 @@ import {
 import { now } from "@/lib/clock";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { Segment } from "@/lib/outreach/segment";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Who a claim-outreach batch may contact, and what happened to it.

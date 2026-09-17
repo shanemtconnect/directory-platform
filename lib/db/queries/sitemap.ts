@@ -2,7 +2,7 @@ import { and, eq, asc, sql } from "drizzle-orm";
 import { cities, categories, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 export interface SitemapEntry {
   path: string;

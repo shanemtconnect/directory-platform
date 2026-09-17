@@ -6,7 +6,7 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { verifyReviewToken } from "@/lib/db/queries/reviews";
 import { notifyReviewVerified } from "@/lib/email/notify";
 import { siteOrigin } from "@/lib/site-env";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * POST /review/verify/<token>/confirm — the button on the landing page.

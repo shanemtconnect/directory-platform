@@ -294,9 +294,12 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
 
 9. **Wire up automatic deploys from GitHub Actions (optional, recommended).**
    `.github/workflows/deploy.yml` calls Coolify's deploy API for both
-   applications above once `.github/workflows/ci.yml` passes on `main` (or on
-   demand from the Actions tab), then runs `scripts/smoke.sh` against the live
-   site and fails the job if it isn't actually serving. It needs four
+   applications above — web first, then worker, because migrations run at
+   web boot — once `.github/workflows/ci.yml` passes on `main` (or on demand
+   from the Actions tab, which re-deploys the branch Coolify is configured
+   with; it cannot deploy any other branch), then runs `scripts/smoke.sh`
+   against the live site and fails the job if it isn't actually serving or
+   is still `noindex`. It needs four
    **repository secrets** (repo → Settings → Secrets and variables → Actions
    → Secrets) and never has them printed anywhere:
 

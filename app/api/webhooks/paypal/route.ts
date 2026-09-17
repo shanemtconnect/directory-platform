@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { getPayPalClient } from "@/lib/billing/paypal";
 import { processPayPalWebhook } from "@/lib/billing/process";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * PayPal's delivery endpoint.

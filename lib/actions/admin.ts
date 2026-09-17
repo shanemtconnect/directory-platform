@@ -13,7 +13,7 @@ import {
   type DecisionResult,
 } from "@/lib/db/queries/admin/submissions";
 import { saveCityIntro, setCityPublished } from "@/lib/db/queries/admin/cities";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The admin console's four writes.

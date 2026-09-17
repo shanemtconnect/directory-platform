@@ -1,7 +1,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { listingStatsDaily, listings, profiles } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import type { TierName } from "@/config/types";
 import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";

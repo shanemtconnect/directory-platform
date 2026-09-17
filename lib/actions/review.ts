@@ -20,7 +20,7 @@ import {
 } from "@/lib/spam/write-limit";
 import { validateReview } from "@/lib/reviews/validate";
 import { isUuid, stripCrlf, normaliseBody } from "@/lib/actions/validation";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The two review mutations.

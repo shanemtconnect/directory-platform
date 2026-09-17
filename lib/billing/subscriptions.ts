@@ -11,7 +11,7 @@ import { redeemCoupon } from "@/lib/db/queries/coupons";
 import type { TierName } from "@/config/types";
 import type { Interval } from "@/lib/pricing";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import { applyDiscount, type CouponRejection } from "./coupons";
 import { firstPaidCycleSequence, planAmount, planIdFor } from "./plans";
 import type { PayPalClient, PlanOverride } from "./paypal";

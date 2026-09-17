@@ -6,7 +6,7 @@ import { notifyDecision } from "@/lib/email/notify";
 import { now } from "@/lib/clock";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { ListingStatus } from "@/lib/db/queries/submissions";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The moderation queue: reading it, and the two decisions that empty it.

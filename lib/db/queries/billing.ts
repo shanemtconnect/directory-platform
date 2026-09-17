@@ -12,7 +12,7 @@ import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TierName } from "@/config/types";
 import type { Interval } from "@/lib/pricing";
 import type { CurrentSubscription, Effect } from "@/lib/billing/webhooks";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Every database access billing makes.

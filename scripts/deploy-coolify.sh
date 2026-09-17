@@ -10,9 +10,14 @@
 #   POST {COOLIFY_BASE}/api/v1/deploy?uuid=<uuid>&force=true
 #     -> {"deployments":[{"deployment_uuid":"..."}]}
 #   GET  {COOLIFY_BASE}/api/v1/deployments/<deployment_uuid>
-#     -> {"status":"queued"|"in_progress"|"finished"|"failed"}
+#     -> {"status":"queued"|"in_progress"|"finished"|"failed"|"cancelled-by-user"}
 #
 # Both take `Authorization: Bearer <token>`.
+#
+# `force=true` is Coolify's "rebuild without cache", not "force a deploy": it
+# costs a full cold Next.js build per app every time. It matches the
+# redeploy.sh already in use for the other sites, and a cache miss is the
+# price of never shipping a stale layer.
 #
 # Usage:
 #
@@ -20,16 +25,25 @@
 #     scripts/deploy-coolify.sh web:$COOLIFY_WEB_UUID worker:$COOLIFY_WORKER_UUID
 #
 # Each argument is `<label>:<uuid>`. The label is only for readable log
-# output — Coolify never sees it. All apps are triggered up front (so a
-# rolling deploy of both starts at the same time) and then polled to
-# completion one at a time; a failure or timeout on one is still reported for
-# all before the script exits non-zero.
+# output — Coolify never sees it. Arguments deploy IN ORDER, one at a time:
+# each is triggered and polled to a terminal status before the next is
+# triggered, and the first failure or timeout stops the script (non-zero exit)
+# without touching the apps after it.
+#
+# Put the app that migrates first. Schema migrations run at web boot
+# (docker-entrypoint.sh, MIGRATE_ON_BOOT=true, web role only); a worker
+# container built from the same commit and started concurrently would come
+# up — and start draining job_queue — before the web container had applied
+# the migration the new worker code expects. Sequential also means a worker
+# is never rolled onto a web deploy that failed.
 #
 #   CURL                    curl binary to use (default "curl"). Overridden by
 #                           tests to point at test/fake-curl.sh — no network
 #                           involved in scripts/deploy-coolify.test.sh.
 #   POLL_INTERVAL_SECONDS   seconds between polls (default 5)
-#   POLL_TIMEOUT_SECONDS    per-deployment timeout before giving up (default 600)
+#   POLL_TIMEOUT_SECONDS    per-deployment timeout before giving up (default
+#                           600). The clock starts when that app is triggered,
+#                           so it is per app, not for the whole run.
 #
 # jq parses the JSON. It ships on ubuntu-latest GitHub runners and is not worth
 # vendoring a Node fallback for here.
@@ -102,6 +116,10 @@ poll() {
         echo "==> $label: failed" >&2
         return 1
         ;;
+      cancelled-by-user)
+        echo "==> $label: cancelled in Coolify's UI while this run was waiting on it" >&2
+        return 1
+        ;;
       queued | in_progress)
         echo "==> $label: $status (${elapsed}s elapsed)"
         ;;
@@ -121,7 +139,6 @@ poll() {
 
 declare -a LABELS=()
 declare -a UUIDS=()
-declare -a DEP_UUIDS=()
 
 for arg in "$@"; do
   label="${arg%%:*}"
@@ -134,31 +151,28 @@ for arg in "$@"; do
   UUIDS+=("$uuid")
 done
 
-echo "==> triggering ${#UUIDS[@]} deployment(s)"
-FAILED=0
-for i in "${!UUIDS[@]}"; do
-  if dep_uuid=$(trigger "${UUIDS[$i]}"); then
-    echo "==> ${LABELS[$i]}: deployment $dep_uuid triggered"
-    DEP_UUIDS+=("$dep_uuid")
+# Called on the first failure: names what was NOT deployed because of it, then
+# exits non-zero. $1 = failed label, $2 = index of the failed app.
+abort() {
+  local label="$1" i="$2"
+  local rest="${LABELS[*]:$((i + 1))}"
+  if [ -n "$rest" ]; then
+    echo "Deployment of $label failed; not deploying $rest." >&2
   else
-    echo "==> ${LABELS[$i]}: failed to trigger" >&2
-    DEP_UUIDS+=("")
-    FAILED=1
+    echo "Deployment of $label failed." >&2
   fi
-done
-
-for i in "${!UUIDS[@]}"; do
-  if [ -z "${DEP_UUIDS[$i]}" ]; then
-    continue
-  fi
-  if ! poll "${LABELS[$i]}" "${DEP_UUIDS[$i]}"; then
-    FAILED=1
-  fi
-done
-
-if [ "$FAILED" -ne 0 ]; then
-  echo "One or more deployments failed." >&2
   exit 1
-fi
+}
+
+echo "==> deploying ${#UUIDS[@]} application(s) in order: ${LABELS[*]}"
+for i in "${!UUIDS[@]}"; do
+  label="${LABELS[$i]}"
+  if ! dep_uuid=$(trigger "${UUIDS[$i]}"); then
+    echo "==> $label: failed to trigger" >&2
+    abort "$label" "$i"
+  fi
+  echo "==> $label: deployment $dep_uuid triggered"
+  poll "$label" "$dep_uuid" || abort "$label" "$i"
+done
 
 echo "All deployments finished."

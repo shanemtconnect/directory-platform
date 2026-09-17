@@ -18,7 +18,7 @@ import type { reportReason } from "@/lib/db/schema/enums";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { publishedListings } from "./listings";
 import { setListingStatus } from "./submissions";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The trust-and-safety queue: reports, removal requests, and the suppression

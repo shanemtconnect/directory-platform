@@ -10,7 +10,7 @@ import {
 import type { TierName } from "@/config/types";
 import type { Interval } from "@/lib/pricing";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Coupon lookup and redemption.

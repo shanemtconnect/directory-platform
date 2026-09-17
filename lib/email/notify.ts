@@ -6,7 +6,7 @@ import type {
   CreateReviewResult, ResendReviewResult, VerifyReviewResult,
 } from "@/lib/db/queries/reviews";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The two lines the server actions add.

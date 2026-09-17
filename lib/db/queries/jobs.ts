@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 import { jobQueue } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The queue's four operations.

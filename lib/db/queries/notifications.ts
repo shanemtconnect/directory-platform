@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { auditLog, cities, enquiries, listings } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { PARKED_SUBMISSION_ACTION } from "./submissions";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The read models the notification job sends from.

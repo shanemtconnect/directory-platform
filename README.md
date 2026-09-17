@@ -184,13 +184,23 @@ Coolify is git-connected and builds the image itself; the manual `docker
 build` above is for a local check, not what production runs. What triggers
 Coolify is `.github/workflows/deploy.yml`, firing automatically once
 `.github/workflows/ci.yml` finishes green on `main`, or on demand via the
-Actions tab (**Run workflow** on `Deploy`, pick a branch — the escape hatch
-for redeploying an old commit or shipping a hotfix branch before it merges).
-It never builds anything itself: `scripts/deploy-coolify.sh` calls Coolify's
-deploy API for the web and worker apps and polls each to `finished`/`failed`,
-then `scripts/smoke.sh` hits the live site and fails the job if `/api/health`
-doesn't report `db: ok`, or `/`, `/sitemap.xml`, or a real listing page pulled
-out of that sitemap don't come back 200.
+Actions tab (**Run workflow** on `Deploy`). The manual run re-deploys whatever
+Coolify's configured branch — `main` — currently points at, which is the
+escape hatch after fixing a secret or a failed smoke test. It **cannot** deploy
+another branch: the workflow's `branch` input only picks which ref its own
+scripts are checked out from, and Coolify always rebuilds the branch set on
+each application. Shipping a hotfix means merging it to `main`. The workflow
+never builds anything itself: `scripts/deploy-coolify.sh` calls Coolify's
+deploy API for the web app, polls it to `finished`/`failed`, then does the
+same for the worker (in that order — migrations run at web boot, and a worker
+must not start on a schema the web container hasn't applied; a failed web
+deploy leaves the worker untouched). Then `scripts/smoke.sh` waits up to 90 s
+for `/api/health` to answer 200 and fails the job if it doesn't report
+`db: ok`, if `/`, `/sitemap.xml` or a real listing page pulled out of that
+sitemap don't come back 200, or if `/` carries an `X-Robots-Tag: noindex`
+header (an image built without `--build-arg SITE_ENV=production`; set
+`SMOKE_EXPECT_NOINDEX=1` to smoke a staging site, where the header is
+required instead). One deploy runs at a time; a second push queues behind it.
 
 Four **repository secrets** (Settings → Secrets and variables → Actions →
 Secrets), never committed anywhere:
@@ -331,6 +341,17 @@ to detect.
 The two `NEXT_PUBLIC_` ones are inlined into the client bundle by `next build`.
 Setting either at boot does nothing at all; adding Sentry or Plausible to a
 running site is a **rebuild**, with `--build-arg`, exactly like `SITE_ENV`.
+
+**Sentry source maps are not uploaded**, so browser stack traces show minified
+frames. CI cannot do it: Coolify builds the production image itself from the
+Dockerfile, and a `.next` uploaded from the CI runner is a different build
+(different chunks, different debug IDs) that no production event would ever
+match. `lib/observability/sentry.ts` deliberately does not use
+`withSentryConfig` either. Turning this on means doing it where the bytes are
+made — a `sentry-cli sourcemaps inject` + `upload` in the Dockerfile `builder`
+stage behind `--mount=type=secret,id=sentry_token` (a Coolify build secret),
+with `SENTRY_RELEASE` set from Coolify's `SOURCE_COMMIT` at runtime. Not done
+yet.
 
 ### `GET /api/health`
 

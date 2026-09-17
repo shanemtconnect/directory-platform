@@ -44,6 +44,20 @@
 #                                  <code> is the HTTP status, <body> is
 #                                  everything after the first ":". A path with
 #                                  no matching var 404s.
+#   FAKE_CURL_ROUTE_SEQ_<K>=<code>:<body>|<code>:<body>|...
+#                                  same, but stepped: the Nth request for that
+#                                  path gets the Nth entry, holding at the last
+#                                  one once exhausted (needs
+#                                  FAKE_CURL_STATE_DIR, like polls). Takes
+#                                  precedence over FAKE_CURL_ROUTE_<K>. Lets a
+#                                  test play a container that is not serving
+#                                  yet and then is. `|` is the separator, so
+#                                  bodies here cannot contain one.
+#   FAKE_CURL_HEADERS_<K>         extra response header lines for path <K>
+#                                  (e.g. "X-Robots-Tag: noindex, nofollow"),
+#                                  written after the status line to the file
+#                                  named by `-D <file>` when the caller passes
+#                                  one — the way smoke.sh reads headers.
 #   FAKE_CURL_FAIL_<K>=1          make the call for path/uuid <K> fail the way a
 #                                  real network error would: curl itself exits
 #                                  non-zero and prints nothing.
@@ -53,11 +67,13 @@ sanitize() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
 
 method="GET"
 url=""
+dump_headers=""
 prev=""
 for arg in "$@"; do
-  if [ "$prev" = "-X" ]; then
-    method="$arg"
-  fi
+  case "$prev" in
+    -X) method="$arg" ;;
+    -D) dump_headers="$arg" ;;
+  esac
   prev="$arg"
   # curl's URL is always the last argument in every call these scripts make.
   url="$arg"
@@ -141,12 +157,39 @@ if [ "${!failvar:-0}" = "1" ]; then
   exit 7
 fi
 
+seqvar="FAKE_CURL_ROUTE_SEQ_${key}"
 routevar="FAKE_CURL_ROUTE_${key}"
-route="${!routevar:-}"
-if [ -z "$route" ]; then
-  emit "not found: $path" "404"
-  exit 0
+route=""
+if [ -n "${!seqvar:-}" ]; then
+  : "${FAKE_CURL_STATE_DIR:?FAKE_CURL_STATE_DIR must be set for a FAKE_CURL_ROUTE_SEQ_* route}"
+  mkdir -p "$FAKE_CURL_STATE_DIR"
+  statefile="${FAKE_CURL_STATE_DIR}/route_${key}"
+  idx=0
+  [ -f "$statefile" ] && idx=$(cat "$statefile")
+  IFS='|' read -ra parts <<<"${!seqvar}"
+  last=$(( ${#parts[@]} - 1 ))
+  use=$idx
+  [ "$use" -gt "$last" ] && use=$last
+  route="${parts[$use]}"
+  echo $((idx + 1)) > "$statefile"
+else
+  route="${!routevar:-}"
 fi
-code="${route%%:*}"
-body="${route#*:}"
+
+if [ -z "$route" ]; then
+  code=404
+  body="not found: $path"
+else
+  code="${route%%:*}"
+  body="${route#*:}"
+fi
+
+if [ -n "$dump_headers" ]; then
+  headersvar="FAKE_CURL_HEADERS_${key}"
+  {
+    printf 'HTTP/1.1 %s\r\n' "$code"
+    if [ -n "${!headersvar:-}" ]; then printf '%s\r\n' "${!headersvar}"; fi
+    printf 'content-type: text/html\r\n\r\n'
+  } > "$dump_headers"
+fi
 emit "$body" "$code"

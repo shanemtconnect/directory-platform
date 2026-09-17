@@ -3,7 +3,7 @@ import { cities } from "@/lib/db/schema";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
 import { writeAudit } from "@/lib/db/queries/audit";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The city queue: which pages are thin, which are waiting on copy, and the two

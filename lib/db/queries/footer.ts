@@ -3,7 +3,7 @@ import { cities, categories, listings, slugs } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import { publishedListings } from "@/lib/db/queries/listings";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 export interface FooterCityLink {
   /** Display name only — the URL is already built. */

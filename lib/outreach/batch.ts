@@ -6,7 +6,7 @@ import { createOutreachCoupons } from "./coupons";
 import { magicToken } from "./tokens";
 import { describeSegment, type Segment } from "./segment";
 import type { OutreachRow } from "./csv";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * One claim-outreach batch, end to end: pick the businesses, mint a token and

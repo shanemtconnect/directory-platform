@@ -7,7 +7,7 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { getPayPalClient } from "@/lib/billing/paypal";
 import { reconcileSubscription } from "@/lib/billing/subscriptions";
 import { subscriptionForEvent } from "@/lib/db/queries/billing";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Where PayPal sends the buyer after they approve.

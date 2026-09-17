@@ -14,7 +14,7 @@ import { parseBillingInterval, parseTier } from "@/lib/billing/plans";
 import { startCheckout } from "@/lib/billing/subscriptions";
 import { requestCancellation, subscriptionForOwner } from "@/lib/db/queries/billing";
 import { isUuid } from "@/lib/actions/validation";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The two things an owner can do with money.
