@@ -14,7 +14,7 @@ import { expect, test } from "@playwright/test";
 async function aPublishedListing(
   request: import("@playwright/test").APIRequestContext,
 ): Promise<{ path: string; id: string }> {
-  const index = await request.get("/sitemaps/listings-1.xml");
+  const index = await request.get("/sitemaps/listings-0.xml");
   expect(index.ok()).toBe(true);
   const xml = await index.text();
   const loc = /<loc>([^<]+)<\/loc>/.exec(xml);

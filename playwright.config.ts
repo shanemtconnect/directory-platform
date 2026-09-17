@@ -67,6 +67,13 @@ const SERVER_ENV: Record<string, string> = {
    */
   SITE_ENV: process.env.SITE_ENV ?? "production",
   /**
+   * Better Auth's own per-process limiter caps sign-ups at 3 per 10 s per
+   * address, and every worker here is 127.0.0.1. Off for this server only —
+   * see the comment on `rateLimit` in lib/auth/server.ts. The Redis limiter in
+   * app/api/auth/[...all]/route.ts is untouched.
+   */
+  BETTER_AUTH_RATE_LIMIT: "off",
+  /**
    * Cloudflare's published testing keys: the widget always passes and
    * siteverify always accepts. They are needed because this suite runs a
    * production build, and in production a missing secret now fails closed

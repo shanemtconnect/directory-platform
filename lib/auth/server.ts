@@ -173,9 +173,15 @@ function build() {
      * "database" storage was not chosen: it writes a row per request per
      * subject to the auth database, which is a write amplifier on exactly the
      * traffic pattern a limiter exists to survive.
+     *
+     * BETTER_AUTH_RATE_LIMIT=off exists for one caller: the Playwright server
+     * (playwright.config.ts). Eight workers signing up from 127.0.0.1 inside
+     * ten seconds is what the sign-up rule (3 per 10 s per address) is there
+     * to stop, and a suite that only passes serially proves less. Nothing in
+     * a deploy sets it; the Redis limiter in the route is unaffected by it.
      */
     rateLimit: {
-      enabled: true,
+      enabled: process.env.BETTER_AUTH_RATE_LIMIT !== "off",
       window: 60,
       max: 100,
       storage: "memory",
