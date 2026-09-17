@@ -157,18 +157,31 @@ session cookies the next boot cannot verify, and `BETTER_AUTH_URL` because the
 callbacks otherwise point at the wrong origin: both are quietly broken logins
 rather than visible failures.
 
-**Later phases** — set them when the phase that reads them lands. They are
-listed as `RUNTIME_ENV_PHASE5` in `config/validate.ts` with the phase against
-each group, and nothing fails a boot over them yet:
+**Required once billing is on** — `PAYPAL_CLIENT_ID` is the switch. Leave it
+blank and the site runs free listings only. Set it and `PAYPAL_CLIENT_SECRET`,
+`PAYPAL_WEBHOOK_ID` and one `PAYPAL_PLAN_<TIER>_<INTERVAL>` per paid tier and
+interval (`PAYPAL_PLAN_ESSENTIAL_MONTHLY`, `…_ESSENTIAL_ANNUAL`,
+`…_PREMIUM_MONTHLY`, `…_PREMIUM_ANNUAL` for the shipped tiers) become required
+on both services (`BILLING_ENV` in `config/validate.ts`). `PAYPAL_ENV` stays
+optional: sandbox unless it is the literal `live`. §3b walks through getting
+each value.
 
-`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_MEDIA`,
-`R2_BUCKET_CLAIM_DOCS` (Phase 2, media and claim documents) · `PAYPAL_CLIENT_ID`,
-`PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` (Phase 5, subscriptions) ·
-`RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_NOTIFICATION_EMAIL` (transactional email
-— wired, but a site without them still boots and still takes enquiries).
+**Wired but never a boot requirement** — listed as `RUNTIME_ENV_PHASE5` in
+`config/validate.ts`: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_BUCKET_MEDIA`, `R2_BUCKET_CLAIM_DOCS` (images and
+claim documents) · `RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_NOTIFICATION_EMAIL`
+(transactional email). A site without them boots, still takes enquiries, and
+logs one warning for the mail it is not sending.
 
-`PAYPAL_WEBHOOK_ID` unset does not fail loudly at the point it matters — it
-stops renewals silently. Set it before you take a payment.
+A `PAYPAL_WEBHOOK_ID` that is *wrong* — or a webhook registered against the
+wrong URL or events — does not fail loudly at the point it matters: every
+delivery is rejected and renewals stop until the hourly sync catches them,
+three days late. Check it against a sandbox purchase before you take a
+payment (README → Operating the site).
+
+The README's [Environment variables](../README.md#environment-variables)
+table lists every variable the code reads, which module reads it, and what
+each one costs when unset.
 
 **Never a boot requirement** — `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`,
 `MAPTILER_KEY`. Both features degrade rather than break. But note that
@@ -240,6 +253,86 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
 
 ---
 
+## 3b. Third-party services (45 minutes, mostly waiting on DNS)
+
+Each of these is optional in the sense that the site boots without it. None
+is optional for a site that is taking claims, enquiries or money. Do them in
+this order — the DNS ones first, so the verification has propagated by the
+time you need it.
+
+**Secrets.** Generate every one the same way and never reuse one across sites:
+
+```bash
+openssl rand -hex 32     # BETTER_AUTH_SECRET
+openssl rand -hex 32     # INTERNAL_REVALIDATE_SECRET — same value on web AND worker
+```
+
+`INTERNAL_REVALIDATE_SECRET` is how the worker tells the web container which
+ISR pages a tier lapse or a badge boost left stale. Set it on both services
+or nothing is revalidated; set it on one and the other silently disagrees.
+
+**Resend (transactional email).** Add the site's domain in Resend, publish the
+DKIM and SPF records it gives you, and wait for **Verified**. Then set
+`RESEND_API_KEY`, `EMAIL_FROM` (an address on that verified domain — a sender
+elsewhere is rejected) and `ADMIN_NOTIFICATION_EMAIL` (where new submissions,
+claims, reports and enquiries are copied to). Until all three are set the
+worker warns once and drops the mail; enquiries are still saved, so nothing
+looks wrong. Verified-email claims and review confirmations depend on this
+going out.
+
+**Cloudflare R2 (images and claim documents).** Two buckets: one for listing
+media (`R2_BUCKET_MEDIA`, behind a public CDN hostname that becomes the
+`NEXT_PUBLIC_MEDIA_URL` build arg) and a private one for claim documents
+(`R2_BUCKET_CLAIM_DOCS`), which are utility bills and the like and must never
+be public. One API token with object read/write on both gives
+`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`. **The claim-docs
+bucket needs a CORS rule**: the browser POSTs the file straight to the bucket
+with a presigned form (`components/claim/DocumentClaimForm.tsx`), so allow
+origin `NEXT_PUBLIC_SITE_URL`, method `POST`, and the `Content-Type` header;
+without it every document upload fails in the browser and the server sees
+nothing. With `R2_BUCKET_CLAIM_DOCS` unset the document route is simply not
+offered and owners can only claim by email. The worker deletes documents thirty
+days after a decision (`purge-claim-docs`) — the privacy notice promises it.
+
+**Cloudflare Turnstile (forms).** Create a widget for the site's hostname —
+add the staging hostname too, or use the always-pass test keys there
+(§3) — and set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`. Remember
+that production **fails closed**: a production build with no secret key
+rejects every listing submission, review, report and removal request.
+
+**PayPal (billing).** Only when the site is ready to charge; a directory can
+run for months on free listings first, and the boot does not ask for any of
+this until `PAYPAL_CLIENT_ID` is set.
+
+1. Create a REST app in the PayPal developer dashboard — sandbox first — and
+   note the client id and secret.
+2. Create the plans from the tiers in `config/site.config.ts`:
+
+   ```bash
+   PAYPAL_CLIENT_ID=… PAYPAL_CLIENT_SECRET=… corepack pnpm tsx scripts/paypal-setup.ts
+   ```
+
+   It creates one product and one plan per paid tier and interval, reuses
+   anything already there by name, and prints the `PAYPAL_PLAN_*` lines to
+   paste into the environment. `PAYPAL_ENV=live` runs it against the live
+   account; run it once per account.
+3. In the dashboard add a **webhook** at
+   `https://<domain>/api/webhooks/paypal` subscribed to
+   `BILLING.SUBSCRIPTION.*` and `PAYMENT.SALE.COMPLETED`, and put its id in
+   `PAYPAL_WEBHOOK_ID`. The script does not do this for you and says so.
+4. Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, the
+   four `PAYPAL_PLAN_*` ids and `PAYPAL_ENV` on **both** the web and the
+   worker service. From this point a missing one refuses to boot.
+5. Buy a plan in the sandbox and watch `/account/billing` and the webhook
+   route's log line before switching `PAYPAL_ENV=live` with the live app's
+   credentials and a live webhook.
+
+Changing a price later is a **new plan**, not an edit — the script matches by
+name and never touches an existing plan's price. Rename via `planNameFor`,
+re-run, swap the id.
+
+---
+
 ## 4. Deploy on Coolify (30 minutes)
 
 1. **New application** → the site's Git repo, branch `main`.
@@ -251,8 +344,8 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
 4. **Persistent volume** for the static asset directory. Mount a volume and
    point `STATIC_ASSETS_DIR` at it, otherwise generated assets live in the
    container filesystem and every redeploy throws them away.
-   *(`STATIC_ASSETS_DIR` is read by the media layer; add it to `.env.example`
-   when that lands, and set it here in the meantime.)*
+   *(`STATIC_ASSETS_DIR` is read by `docker-entrypoint.sh`, web role only;
+   a mount it cannot write to refuses to boot rather than serve dead assets.)*
 5. **Environment:** set `MIGRATE_ON_BOOT=true` on this (web) service. Coolify's
    pre-deployment command runs inside the *previous* running container, so it
    never runs on a first deploy and on later deploys it would run the OLD
@@ -327,6 +420,27 @@ response still carries `X-Robots-Tag: noindex`, and nothing in the logs says so.
    Coolify's UI instead. Without the secrets, `deploy.yml` still runs on every
    push to `main` but fails immediately and loudly (`COOLIFY_BASE is not
    set`) rather than doing nothing or doing the wrong thing.
+
+---
+
+## 4b. Make the first admin (5 minutes)
+
+There is no UI for this and there is not going to be one: `profiles.role` is
+the only thing `/admin` checks, and nothing a browser sends can set it. Sign
+up through the deployed site's `/signup`, then run this
+against the production database (`psql "$DATABASE_URL"`, or the database
+container's terminal in Coolify):
+
+```sql
+insert into profiles (user_id, role)
+select id, 'admin' from "user" where email = 'you@example.co.uk'
+on conflict (user_id) do update set role = 'admin';
+```
+
+`profiles` is created on the first write, not at signup, which is why this
+inserts rather than updates. Reload `/admin`; a non-admin gets a 404 there,
+so a 404 after this means the email did not match. Use `'owner'` in the same
+statement, plus `listings.owner_id`, to hand a listing to a business by hand.
 
 ---
 
