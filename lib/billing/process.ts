@@ -86,9 +86,10 @@ export async function processPayPalWebhook(
   const event = parseEvent(body);
   if (event === null) return { status: 400, outcome: "bad-request", detail: "not an event" };
 
-  // Verification FIRST, before a single row is written. The body is passed
-  // exactly as parsed, because that is what PayPal signed.
-  const verified = await req.client.verifyWebhookSignature(req.headers, body);
+  // Verification FIRST, before a single row is written. The RAW body goes to
+  // PayPal, not the parsed one: the signature is over the bytes it sent, and
+  // the parse above only proves those bytes are a document worth asking about.
+  const verified = await req.client.verifyWebhookSignature(req.headers, req.raw);
   if (!verified) {
     console.error(`[billing] rejected unverified webhook ${event.id} (${event.type})`);
     return { status: 401, outcome: "unverified" };
