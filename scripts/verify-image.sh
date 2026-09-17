@@ -35,7 +35,7 @@
 #    pre-deployment command runs in the PREVIOUS container, so it never runs
 #    on a first deploy and would run the OLD image's migrator on later ones —
 #    the entrypoint of the NEW container is the only correct place. Checked
-#    end to end: a fresh throwaway database gets all 8 migrations applied and
+#    end to end: a fresh throwaway database gets every migration applied and
 #    `/pricing` returns 200 once the container is up, and a wrong
 #    `DATABASE_URL` exits the container non-zero instead of serving anyway.
 #
@@ -241,7 +241,7 @@ BOOT_CONTAINER=$(docker run -d --add-host=host.docker.internal:host-gateway \
   -p 127.0.0.1::3000 "$IMAGE")
 BOOT_PORT=$(docker port "$BOOT_CONTAINER" 3000/tcp | head -n1 | cut -d: -f2)
 
-# Poll rather than sleep-and-hope: migrating 8 files then booting Next.js takes
+# Poll rather than sleep-and-hope: migrating every file then booting Next.js takes
 # a variable few seconds, and a container that dies mid-migration must fail
 # this loop (not time out looking like a slow success).
 ready=""
@@ -270,8 +270,11 @@ ROWS=$(docker run --rm --add-host=host.docker.internal:host-gateway \
     console.log(rows[0].n);
     await sql.end();
   ')
-[ "$ROWS" = "8" ] || fail "expected 8 rows in drizzle.__drizzle_migrations after boot, got $ROWS"
-echo "ok: drizzle.__drizzle_migrations has 8 rows"
+# Counted from the journal, not hardcoded: every new migration would otherwise
+# fail this step for the wrong reason.
+EXPECTED_MIGRATIONS=$(grep -c '"idx"' drizzle/meta/_journal.json)
+[ "$ROWS" = "$EXPECTED_MIGRATIONS" ] || fail "expected $EXPECTED_MIGRATIONS rows in drizzle.__drizzle_migrations after boot, got $ROWS"
+echo "ok: drizzle.__drizzle_migrations has $EXPECTED_MIGRATIONS rows"
 
 docker rm -f "$BOOT_CONTAINER" > /dev/null 2>&1 || true
 BOOT_CONTAINER=""
