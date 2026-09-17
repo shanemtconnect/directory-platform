@@ -112,7 +112,14 @@ test.describe("claiming a listing", () => {
     // Nothing owned yet.
     await expect(page.locator('[data-testid="no-listings"]')).toBeVisible();
 
-    await page.goto(`/claim/${target.id}`);
+    // The public page must be how people get here: a claim flow nobody can
+    // reach from the listing is a claim flow that does not exist. Went
+    // missing once in a merge, hence the assertion on the href itself.
+    await page.goto(target.path);
+    await expect(page.locator('[data-testid="claim-link"]'))
+      .toHaveAttribute("href", `/claim/${target.id}`);
+    await page.locator('[data-testid="claim-link"]').click();
+    await page.waitForURL(new RegExp(`/claim/${target.id}$`));
     const form = page.locator('[data-testid="claim-domain-form"]');
     await expect(form, "the domain rung must be offered for a listing with a website")
       .toBeVisible();

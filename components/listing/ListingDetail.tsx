@@ -95,7 +95,10 @@ export function ListingDetail({
           {listing.claimStatus === "unclaimed" && (
             <section data-testid="claim-cta" className="card bg-raised">
               <h2 className="mt-0">Is this your {e.singular}?</h2>
-              <p><a href={mailto(`Claim ${listing.name}`)}>Claim it free</a> to edit the details.</p>
+              <p>
+                <a href={`/claim/${listing.id}`} data-testid="claim-link">Claim it free</a> to edit
+                the details and see every enquiry it receives.
+              </p>
             </section>
           )}
 
@@ -165,10 +168,6 @@ export function ListingDetail({
   );
 }
 
-/** A support mailto with the subject already filled in. */
-function mailto(subject: string): string {
-  return `mailto:${siteConfig.supportEmail}?subject=${encodeURIComponent(subject)}`;
-}
 
 function monthYear(d: Date): string {
   return d.toLocaleDateString(siteConfig.locale, { month: "long", year: "numeric" });
