@@ -50,8 +50,8 @@ export default async function ResetPasswordPage({
       <div className="mx-auto max-w-md">
         <h1>Set a new password</h1>
         <p className="text-muted">
-          Choose something you don&rsquo;t use anywhere else. Signing in on your other
-          devices will need the new one.
+          Choose something you don&rsquo;t use anywhere else. Your other devices are signed
+          out within a minute and will need the new one.
         </p>
         <ResetPasswordForm token={token} />
       </div>

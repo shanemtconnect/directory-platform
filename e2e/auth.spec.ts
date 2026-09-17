@@ -227,7 +227,7 @@ test.describe("auth polish", () => {
 
     // `revokeSessionsOnPasswordReset`: the session this file has been using is
     // gone from the database. Checked there rather than by loading a page,
-    // because the session cookie cache (five minutes) can outlive the row.
+    // because the session cookie cache (up to a minute) can outlive the row.
     const sessions = await withE2eDb(
       async (sql) => (await sql`select 1 from session where user_id = ${userId}`).length,
     );

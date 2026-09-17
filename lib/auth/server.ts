@@ -142,7 +142,19 @@ function build() {
     session: {
       expiresIn: 60 * 60 * 24 * 30,
       updateAge: 60 * 60 * 24,
-      cookieCache: { enabled: true, maxAge: 60 * 5 },
+      /**
+       * Sixty seconds, not the five minutes it used to be. The cache is a
+       * signed copy of the session in the cookie, and while it is fresh
+       * `currentViewer()` believes it without reading the `session` table —
+       * so a session deleted by `revokeSessionsOnPasswordReset` or
+       * `revokeOtherSessions` keeps working for up to `maxAge` more. That is
+       * the revocation window. A person resetting their password because
+       * they suspect somebody else is signed in is promised those sessions
+       * end "within a minute" (reset and change-password copy), and this
+       * number is what makes the promise true. One DB read a minute per
+       * signed-in visitor is the price.
+       */
+      cookieCache: { enabled: true, maxAge: 60 },
     },
 
     /**

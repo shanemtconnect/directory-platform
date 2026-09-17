@@ -53,7 +53,7 @@ export function ChangePasswordForm() {
     }
     setMessage({
       kind: "ok",
-      text: "Password changed. Any other devices you were signed in on have been signed out.",
+      text: "Password changed. Any other devices you were signed in on are signed out within a minute.",
     });
   }
 
