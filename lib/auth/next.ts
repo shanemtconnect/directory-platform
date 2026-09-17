@@ -49,7 +49,9 @@ function isSafePath(value: string): boolean {
   // we generated ourselves.
   if (path.split("/").includes("..")) return false;
 
-  return !AUTH_PATHS.includes(path);
+  // Next normalises `/login/` to `/login` before routing, so the trailing
+  // slash must not be enough to slip an auth page past the list.
+  return !AUTH_PATHS.includes(path.replace(/\/+$/, "") || "/");
 }
 
 /**

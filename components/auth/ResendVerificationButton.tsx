@@ -13,10 +13,20 @@ import { authClient } from "@/lib/auth/client";
  *
  * The reply is the same whatever happens, for the same reason the
  * forgot-password page's is — and because there is nothing useful a person can
- * do with "the provider said no" anyway.
+ * do with "the provider said no" anyway. The one exception is a 429 from our
+ * own auth budget: "wait a few minutes" says nothing about the address, and
+ * it is the one thing the person CAN act on.
  */
 export function ResendVerificationButton({ email }: { email: string }) {
-  const [state, setState] = useState<"idle" | "sending" | "done">("idle");
+  const [state, setState] = useState<"idle" | "sending" | "done" | "throttled">("idle");
+
+  if (state === "throttled") {
+    return (
+      <span role="status" data-testid="verification-throttled">
+        Too many requests just now. Try again in a few minutes.
+      </span>
+    );
+  }
 
   if (state === "done") {
     return (
@@ -34,8 +44,11 @@ export function ResendVerificationButton({ email }: { email: string }) {
       data-testid="resend-verification"
       onClick={async () => {
         setState("sending");
-        await authClient.sendVerificationEmail({ email, callbackURL: "/verify-email" });
-        setState("done");
+        const { error } = await authClient.sendVerificationEmail({
+          email,
+          callbackURL: "/verify-email",
+        });
+        setState(error?.status === 429 ? "throttled" : "done");
       }}
     >
       {state === "sending" ? "Sending…" : "Send it again"}
