@@ -108,3 +108,20 @@ export const AUTH_RATE_LIMIT = { limit: 20, windowSeconds: 600 } as const;
 export function retryMessage(result: RateLimitResult): string {
   return `Too many changes from this connection. Please try again in ${Math.ceil(result.retryAfterSeconds / 60)} minutes.`;
 }
+
+/**
+ * Five an hour, in front of /forgot-password.
+ *
+ * This one is NOT covered by AUTH_RATE_LIMIT: the page posts to a server
+ * action, which reaches Better Auth through `auth.api` rather than through
+ * app/api/auth/[...all], so the counter on that route never sees it. Sized for
+ * a person who mistypes their address once and asks again, because the abuse
+ * it stops is not a break-in — every reply is identical whether the address
+ * exists or not — but the mail it causes US to send to a third party. An
+ * unlimited form here is a free emailer pointed at anyone's inbox, signed with
+ * our domain.
+ *
+ * Resending a verification email needs no budget of its own: the button calls
+ * /api/auth directly, so AUTH_RATE_LIMIT already counts it.
+ */
+export const FORGOT_PASSWORD_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as const;

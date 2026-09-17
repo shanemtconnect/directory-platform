@@ -23,13 +23,23 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const next = safeNext((await searchParams).next);
+  const params = await searchParams;
+  const next = safeNext(params.next);
+  // Where /reset-password sends somebody once their new password is saved.
+  // The reset signed out every session, so the confirmation belongs on the
+  // form they have to fill in next, not on a page they have already left.
+  const justReset = params.reset !== undefined;
 
   return (
     <main>
       <div className="mx-auto max-w-md">
         <h1>Sign in</h1>
         <p className="text-muted">Manage your {siteConfig.entity.singular} listing.</p>
+        {justReset && (
+          <p role="status" className="card" data-testid="password-reset-done">
+            Your new password is saved. Sign in with it below.
+          </p>
+        )}
         <LoginForm next={next} />
         <p className="mt-4 text-sm">
           No account yet?{" "}
