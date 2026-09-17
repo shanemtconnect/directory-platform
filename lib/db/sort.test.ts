@@ -29,6 +29,40 @@ describe("listingRankOrder", () => {
     });
   });
 
+  it("adds backlink_boost to rank_boost instead of letting either one win", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: "admin three", rankBoost: 3, backlinkBoost: 0 });
+      await makeListing(tx, ctx, { name: "badge five", rankBoost: 0, backlinkBoost: 5 });
+      await makeListing(tx, ctx, { name: "two and two", rankBoost: 2, backlinkBoost: 2 });
+      const rows = await tx.select({ name: listings.name }).from(listings).orderBy(...listingRankOrder(TZ));
+      expect(rows.map((r) => r.name)).toEqual(["badge five", "two and two", "admin three"]);
+    });
+  });
+
+  it("lets an admin outrank a verified backlink — rank_boost has no ceiling", async () => {
+    // The whole reason the two columns are separate. When the badge reward
+    // was written into rank_boost it had to be clamped to 0..5, so an admin's
+    // deliberate +40 came back as 5 the moment a badge verified.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: "hand-promoted", rankBoost: 40, backlinkBoost: 0 });
+      await makeListing(tx, ctx, { name: "has a backlink", rankBoost: 0, backlinkBoost: 5 });
+      const rows = await tx.select({ name: listings.name }).from(listings).orderBy(...listingRankOrder(TZ));
+      expect(rows[0]?.name).toBe("hand-promoted");
+    });
+  });
+
+  it("lets an admin penalty survive a badge verification", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: "penalised", rankBoost: -10, backlinkBoost: 5 });
+      await makeListing(tx, ctx, { name: "ordinary", rankBoost: 0, backlinkBoost: 0 });
+      const rows = await tx.select({ name: listings.name }).from(listings).orderBy(...listingRankOrder(TZ));
+      expect(rows[0]?.name).toBe("ordinary");
+    });
+  });
+
   it("ranks verified above claimed above unclaimed at equal tier and boost", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);

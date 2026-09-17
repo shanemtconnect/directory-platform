@@ -32,6 +32,18 @@ export function badgeImageUrl(listingId: string, style: BadgeStyle): string {
   return siteUrl(`/badge/${encodeURIComponent(listingId)}?style=${style}`);
 }
 
+/**
+ * The click endpoint. `/api/badge-click?id={listingId}`
+ *
+ * Only the tracked snippet variant points here, and `badges.click_count` only
+ * ever moves for embeds that use it. The default snippet's anchor goes
+ * straight to the listing and is invisible to the counter — deliberately, see
+ * `badgeTrackedSnippetHtml`.
+ */
+export function badgeClickUrl(listingId: string): string {
+  return siteUrl(`/api/badge-click?id=${encodeURIComponent(listingId)}`);
+}
+
 /** Where the badge points. Always the canonical listing page, always tagged. */
 export function badgeTargetUrl(listingPath: string): string {
   const path = listingPath.startsWith("/") ? listingPath : `/${listingPath}`;
@@ -111,6 +123,44 @@ export function badgeSnippetHtml(input: SnippetInput): string {
   ].join("\n");
 }
 
+/**
+ * The tracked variant: the same image, but the anchor goes through
+ * `/api/badge-click` instead of straight at the listing.
+ *
+ * This is offered as a choice rather than made the default, because the two
+ * options are genuinely in tension and the owner is the one who should pick:
+ *
+ *   - the DEFAULT snippet's anchor is a real link to a real page, which is
+ *     the whole point of a badge programme and the only version that passes
+ *     any authority. It is also uncountable: the visitor goes from their site
+ *     to ours without touching anything we can measure;
+ *   - this variant is countable, and `rel="nofollow"` is on it because that
+ *     is the honest label for a redirect through our own endpoint. A link
+ *     laundered through a counter is not a citation, and dressing one up as
+ *     the other is what gets a link programme treated as a scheme.
+ *
+ * So: `badges.click_count` stays at zero for every listing whose owner pasted
+ * the default snippet. That number is "clicks on tracked embeds", not
+ * "clicks", and anything rendering it has to say so.
+ */
+export function badgeTrackedSnippetHtml(input: SnippetInput): string {
+  const { width, height } = badgeDimensions(input.style);
+  const href = escapeHtml(badgeClickUrl(input.listingId));
+  const src = escapeHtml(badgeImageUrl(input.listingId, input.style));
+  const alt = escapeHtml(
+    `${input.listingName} is listed on ${siteConfig.name}, the ${siteConfig.entity.singular} directory`,
+  );
+  const title = escapeHtml(`${input.listingName} on ${siteConfig.name}`);
+
+  return [
+    `<a href="${href}" title="${title}" rel="noopener nofollow">`,
+    `  <img src="${src}"`,
+    `       alt="${alt}"`,
+    `       width="${width}" height="${height}" loading="lazy" decoding="async">`,
+    `</a>`,
+  ].join("\n");
+}
+
 /** The text-link alternative, for owners who would rather not embed an image. */
 export function anchorSnippetHtml(input: SnippetInput, key: AnchorVariant["key"]): string {
   const variants = anchorVariants(input);
@@ -126,6 +176,10 @@ export function badgeKit(input: SnippetInput) {
     imageUrl: badgeImageUrl(input.listingId, input.style),
     targetUrl: badgeTargetUrl(input.listingPath),
     embed: badgeSnippetHtml(input),
+    // The countable alternative. Offered, never substituted: see
+    // badgeTrackedSnippetHtml for why the default keeps its direct anchor.
+    trackedEmbed: badgeTrackedSnippetHtml(input),
+    clickUrl: badgeClickUrl(input.listingId),
     anchors: anchorVariants(input),
   };
 }

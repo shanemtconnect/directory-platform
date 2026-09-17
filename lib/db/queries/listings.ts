@@ -65,6 +65,7 @@ export const publicListingColumns = {
   customFields: sql<unknown>`${listings.customFields} - 'submission'`.as("custom_fields"),
   priceRange: listings.priceRange,
   rankBoost: listings.rankBoost,
+  backlinkBoost: listings.backlinkBoost,
   ratingAvg: listings.ratingAvg,
   ratingCount: listings.ratingCount,
   verifiedAt: listings.verifiedAt,

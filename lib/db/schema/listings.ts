@@ -42,6 +42,16 @@ export const listings = pgTable("listings", {
   priceRange: text("price_range"),
 
   rankBoost: integer("rank_boost").notNull().default(0),
+  /**
+   * The badge programme's own lever, kept apart from rank_boost.
+   *
+   * Writing the backlink reward into rank_boost meant clamping it to 0..5 to
+   * stop a weekly job stacking it — which quietly destroyed the admin's
+   * column: a hand-set +40 came back as 5 the first time a badge verified,
+   * and an admin's -10 penalty was floored to 0. Two columns, two owners.
+   * The ranking adds them (see lib/db/sort.ts).
+   */
+  backlinkBoost: integer("backlink_boost").notNull().default(0),
   // Trigger-maintained. NEVER seeded and NEVER written by hand.
   ratingAvg: numeric("rating_avg", { precision: 2, scale: 1 }),
   ratingCount: integer("rating_count").notNull().default(0),
