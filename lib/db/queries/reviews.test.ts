@@ -245,6 +245,59 @@ describe("verifyReviewToken", () => {
     });
   });
 
+  it("leaves a moderator-rejected review rejected after the click, and the rating untouched", async () => {
+    // The confirm used to set the status by id alone, so a review an admin had
+    // already thrown out came back as published the moment its author found
+    // the email. The click proves an address; it does not overrule a person.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId, { rating: 1 }));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      const admin = await adminViewer(tx);
+      await moderateReview(tx, admin, created.reviewId, { status: "rejected" });
+      // A sentinel the recompute would overwrite (there are no published
+      // reviews, so it would reset this to nothing).
+      await tx.update(listings).set({ ratingAvg: "4.2", ratingCount: 7 })
+        .where(eq(listings.id, listingId));
+
+      const result = await verifyReviewToken(tx, PUBLIC_VIEWER, created.token);
+
+      // Reported as a repeat, never as a fresh verification: nothing to
+      // announce to the owner, and the page says a person is reading it.
+      expect(result.outcome).toBe("verified");
+      if (result.outcome !== "verified") return;
+      expect(result.repeat).toBe(true);
+      expect(result.status).toBe("pending");
+
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, created.reviewId));
+      expect(row!.status).toBe("rejected");
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing!.ratingCount).toBe(7);
+      expect(Number(listing!.ratingAvg)).toBe(4.2);
+    });
+  });
+
+  it("refuses to publish a review on a listing that is no longer published", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      await tx.update(listings).set({ status: "archived" }).where(eq(listings.id, listingId));
+
+      const result = await verifyReviewToken(tx, PUBLIC_VIEWER, created.token);
+
+      expect(result.outcome).toBe("unknown-token");
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, created.reviewId));
+      expect(row!.status).toBe("pending");
+      expect(row!.emailVerifiedAt).toBeNull();
+      const [invite] = await tx
+        .select().from(reviewInvites).where(eq(reviewInvites.token, created.token));
+      expect(invite!.usedAt).toBeNull();
+    });
+  });
+
   it("rejects a token nobody issued", async () => {
     await withTestDb(async (tx) => {
       expect((await verifyReviewToken(tx, PUBLIC_VIEWER, "not-a-token")).outcome)
@@ -364,6 +417,17 @@ describe("previewReviewToken", () => {
       expect((await previewReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("expired");
       expect((await previewReviewToken(tx, PUBLIC_VIEWER, "made-up")).outcome).toBe("unknown");
       expect((await previewReviewToken(tx, PUBLIC_VIEWER, "")).outcome).toBe("unknown");
+    });
+  });
+
+  it("reports a link for a listing that is no longer published as unknown", async () => {
+    // The landing page and the confirm behind it must agree: a page that
+    // says "confirmable" for a review the confirm will refuse is a loop.
+    await withTestDb(async (tx) => {
+      const { token, listingId } = await invited(tx);
+      await tx.update(listings).set({ status: "archived" }).where(eq(listings.id, listingId));
+
+      expect((await previewReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("unknown");
     });
   });
 
