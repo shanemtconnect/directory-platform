@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
+import { E2E_DATABASE_URL } from "./database";
 
 /**
  * Claiming a listing by domain email, end to end.
@@ -19,8 +20,8 @@ import postgres from "postgres";
  * the account, profile, claim and queued jobs it created are deleted.
  */
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev";
+// The same database the server under test runs on — never directory_dev.
+const DATABASE_URL = E2E_DATABASE_URL;
 
 /** A domain nobody owns, reserved for documentation. */
 const DOMAIN = "claim-e2e.example";

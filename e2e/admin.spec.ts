@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
+import { E2E_DATABASE_URL } from "./database";
 
 /**
  * The moderation round trip: a stranger submits, an admin approves, the public
@@ -20,8 +21,8 @@ import postgres from "postgres";
  * is the app behaving correctly, not a flake.
  */
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev";
+// The same database the server under test runs on — never directory_dev.
+const DATABASE_URL = E2E_DATABASE_URL;
 
 /**
  * Richmond in Greater London, not the North Yorkshire one: it holds a single

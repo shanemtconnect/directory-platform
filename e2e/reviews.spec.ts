@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
+import { E2E_DATABASE_URL } from "./database";
 
 const CITY = "/richmond-north-yorkshire";
 
@@ -24,8 +25,8 @@ const CITY = "/richmond-north-yorkshire";
 
 const FLAGS_OFF = process.env.SITE_FLAGS_OVERRIDE === "off";
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev";
+// The same database the server under test runs on — never directory_dev.
+const DATABASE_URL = E2E_DATABASE_URL;
 
 /** Letters only: a digit run or a URL in the body would be held for moderation. */
 function marker(): string {

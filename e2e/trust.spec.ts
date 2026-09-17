@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
+import { E2E_DATABASE_URL } from "./database";
 
 const CITY = "/richmond-north-yorkshire";
 
@@ -8,8 +9,8 @@ const CITY = "/richmond-north-yorkshire";
  * confirmation page alone would pass for an action that renders a thanks page
  * and files nothing, which is precisely the regression worth catching here.
  */
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_dev";
+// The same database the server under test runs on — never directory_dev.
+const DATABASE_URL = E2E_DATABASE_URL;
 
 async function rowExists(sql: string, value: string): Promise<boolean> {
   const client = postgres(DATABASE_URL, { max: 1 });
