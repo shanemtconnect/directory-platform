@@ -1,4 +1,5 @@
 import { siteConfig } from "@/config/site.config";
+import { now } from "@/lib/clock";
 import { siteUrl } from "@/lib/schema/builders";
 import {
   claimNextJob,
@@ -58,6 +59,11 @@ export async function enqueueDueReminders(db: Db): Promise<number> {
             offsetDays: target.offsetDays,
             periodEnd: target.currentPeriodEnd.toISOString(),
           },
+          // The producer and the consumer read the same clock. Left to the
+          // database default, run_after is the wall clock while claimNextJob
+          // compares against lib/clock — a job queued under a moved clock is
+          // never due.
+          runAfter: now(),
         });
         await markReminderSent(tx, ADMIN_VIEWER, target);
       });
