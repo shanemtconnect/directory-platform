@@ -17,6 +17,14 @@ export const metadata: Metadata = {
  * token had expired or been used. So this page reports an outcome; it never
  * performs one, and reloading it cannot change anything.
  *
+ * The absence of `?error` is not, on its own, proof of anything: the page can
+ * be typed, bookmarked or reached from a link. So "confirmed" is only said
+ * when the `user` row agrees (`emailVerified`, read fresh, not from the
+ * session cookie), or when nobody is signed in and there is no row to ask —
+ * the link a signed-out person just followed is the only way they got here
+ * without an error. A signed-in viewer whose address is still unverified sees
+ * the resend branch instead, whatever the URL says.
+ *
  * The resend button only appears for somebody signed in, because resending
  * needs an address and the only trustworthy source of one is their session. A
  * signed-out visitor with a dead link is sent to sign in, where the banner on
@@ -32,8 +40,9 @@ export default async function VerifyEmailPage({
 
   const viewer = await currentViewer();
   const profile = viewer.role === "public" ? null : await ownProfile(db, viewer);
+  const confirmed = !failed && (profile === null || profile.emailVerified);
 
-  if (!failed) {
+  if (confirmed) {
     return (
       <main>
         <div className="mx-auto max-w-md">
@@ -54,10 +63,13 @@ export default async function VerifyEmailPage({
   return (
     <main>
       <div className="mx-auto max-w-md">
-        <h1>That link has expired</h1>
+        <h1>{failed ? "That link has expired" : "Not confirmed yet"}</h1>
         <p className="text-muted" data-testid="verify-email-failed">
-          Confirmation links work once, and for an hour. Nothing is wrong with your
-          account — you just need a fresh one.
+          {failed
+            ? "Confirmation links work once, and for an hour. Nothing is wrong with your " +
+              "account — you just need a fresh one."
+            : "Your address has not been confirmed yet. Open the link in the email we sent, " +
+              "or ask for a new one below."}
         </p>
         {profile === null ? (
           <p>
