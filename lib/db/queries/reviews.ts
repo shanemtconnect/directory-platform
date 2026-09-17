@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
 import {
   auditLog, cities, listings, profiles, reviews, reviewInvites, reviewReplies,
 } from "@/lib/db/schema";
@@ -513,7 +513,12 @@ export async function moderateReview(
   tx: TestDb,
   viewer: Viewer,
   reviewId: string,
-  input: { status: "published" | "rejected" | "pending" | "disputed"; note?: string },
+  input: {
+    status: "published" | "rejected" | "pending" | "disputed";
+    note?: string;
+    /** The moderator's own IP for the audit row (constraint 22); null when unknown. */
+    ip?: string | null;
+  },
 ): Promise<ModerateReviewResult> {
   if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
   if (!UUID.test(reviewId)) return { outcome: "unknown-review" };
@@ -559,6 +564,7 @@ export async function moderateReview(
     entityType: "review",
     entityId: reviewId,
     meta: { from: review.status, to: input.status, note: input.note ?? null, clearedFlag },
+    ip: input.ip ?? null,
     createdAt: now(),
     updatedAt: now(),
   });
@@ -838,4 +844,84 @@ export async function reviewNotification(
       path: `/${row.citySlug}/${row.listingSlug}`,
     },
   };
+}
+
+/* --------------------------------------------------------- moderation queue */
+
+/**
+ * A review waiting for a human: the address clicked the link AND the
+ * heuristics held it. A pending review nobody has verified is not in the
+ * queue — most of those are spam that will never click, and listing them
+ * would bury the real ones. Once decided (published, rejected, disputed) a
+ * review leaves the queue; `moderateReview` is what decides it.
+ */
+function awaitingModeration(): SQL {
+  return and(eq(reviews.status, "pending"), isNotNull(reviews.emailVerifiedAt))!;
+}
+
+export interface ReviewAwaitingModeration {
+  id: string;
+  createdAt: Date;
+  rating: number;
+  title: string | null;
+  body: string | null;
+  displayName: string | null;
+  /** Why the heuristics held it. */
+  flaggedReason: string | null;
+  listingId: string;
+  listingName: string;
+  /** Site-relative path of the listing's public page. */
+  listingPath: string;
+}
+
+/**
+ * The moderation queue, newest first. Admin-only, and projected like
+ * `publicReviewColumns` plus the listing: the author's address and IP stay on
+ * the row, where the one-per-listing rule needs them, and out of the console.
+ */
+export async function listReviewsAwaitingModeration(
+  tx: TestDb,
+  viewer: Viewer,
+): Promise<ReviewAwaitingModeration[]> {
+  if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
+
+  const rows = await tx
+    .select({
+      id: reviews.id,
+      createdAt: reviews.createdAt,
+      rating: reviews.rating,
+      title: reviews.title,
+      body: reviews.body,
+      displayName: reviews.authorDisplayName,
+      flaggedReason: reviews.flaggedReason,
+      listingId: listings.id,
+      listingName: listings.name,
+      listingSlug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(reviews)
+    .innerJoin(listings, eq(listings.id, reviews.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(awaitingModeration())
+    .orderBy(desc(reviews.createdAt), desc(reviews.id));
+
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.createdAt,
+    rating: r.rating,
+    title: r.title,
+    body: r.body,
+    displayName: r.displayName,
+    flaggedReason: r.flaggedReason,
+    listingId: r.listingId,
+    listingName: r.listingName,
+    listingPath: `/${r.citySlug}/${r.listingSlug}`,
+  }));
+}
+
+/** How many the list above would return. For the dashboard tile. */
+export async function countReviewsAwaitingModeration(tx: TestDb, viewer: Viewer): Promise<number> {
+  if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
+  const [row] = await tx.select({ n: count() }).from(reviews).where(awaitingModeration());
+  return row?.n ?? 0;
 }

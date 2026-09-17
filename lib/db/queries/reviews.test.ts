@@ -18,6 +18,8 @@ import {
   reviewNotification,
   previewReviewToken,
   resendReviewVerification,
+  listReviewsAwaitingModeration,
+  countReviewsAwaitingModeration,
   REVIEWS_PER_PAGE,
   REVIEW_TOKEN_TTL_DAYS,
 } from "./reviews";
@@ -791,6 +793,142 @@ describe("reviewNotification", () => {
 
       await expect(reviewNotification(tx, PUBLIC_VIEWER, created.reviewId))
         .rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+});
+
+describe("moderateReview — the audit row", () => {
+  it("records the moderator's IP on the audit row when given one", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const { verified } = await published(tx, listingId, { body: "Fine." });
+      if (verified.outcome !== "verified") return;
+      const admin = await adminViewer(tx);
+
+      await moderateReview(tx, admin, verified.reviewId, {
+        status: "published", ip: "203.0.113.9",
+      });
+
+      const [entry] = await tx
+        .select().from(auditLog).where(eq(auditLog.entityId, verified.reviewId));
+      expect(entry!.ip).toBe("203.0.113.9");
+    });
+  });
+
+  it("writes a null IP rather than a placeholder when none was given", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const { verified } = await published(tx, listingId, { body: "Fine." });
+      if (verified.outcome !== "verified") return;
+      const admin = await adminViewer(tx);
+
+      await moderateReview(tx, admin, verified.reviewId, { status: "rejected" });
+
+      const [entry] = await tx
+        .select().from(auditLog).where(eq(auditLog.entityId, verified.reviewId));
+      expect(entry!.ip).toBeNull();
+    });
+  });
+});
+
+describe("the moderation queue", () => {
+  /**
+   * What "awaiting moderation" means: the address clicked the link AND the
+   * heuristics held it. A pending review nobody has verified is not work for
+   * anybody — most of those are spam that will never click — and a published
+   * or rejected one has been decided.
+   */
+  async function queueFixture(tx: TestDb) {
+    const ctx = await makeScaffold(tx);
+    const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+
+    setClock(new Date("2026-09-10T10:00:00Z"));
+    const older = await published(tx, listingId, { body: "Fine.", displayName: "Older" });
+    setClock(new Date("2026-09-11T10:00:00Z"));
+    const newer = await published(tx, listingId, {
+      body: `${GOOD_BODY} Book direct at https://example.com/cheaper`, displayName: "Newer",
+    });
+    // Verified and clean: published, not waiting.
+    await published(tx, listingId, { displayName: "Live" });
+    // Never verified: not waiting either.
+    await createReview(tx, PUBLIC_VIEWER, input(listingId, { body: "Fine.", displayName: "Unverified" }));
+
+    if (older.verified.outcome !== "verified" || newer.verified.outcome !== "verified") {
+      throw new Error("fixture did not verify");
+    }
+    return { ctx, listingId, older: older.verified.reviewId, newer: newer.verified.reviewId };
+  }
+
+  afterEach(() => resetClock());
+
+  it("lists verified-but-held reviews only, newest first, with the listing", async () => {
+    await withTestDb(async (tx) => {
+      const f = await queueFixture(tx);
+      const admin = await adminViewer(tx);
+
+      const rows = await listReviewsAwaitingModeration(tx, admin);
+      const ours = rows.filter((r) => r.listingId === f.listingId);
+
+      expect(ours.map((r) => r.id)).toEqual([f.newer, f.older]);
+      expect(ours[0]).toMatchObject({
+        listingName: "The Old Barn",
+        displayName: "Newer",
+        flaggedReason: "link",
+        rating: 5,
+      });
+      expect(ours[0]!.listingPath).toMatch(/^\/[a-z0-9-]+\/the-old-barn$/);
+      expect(ours[1]!.flaggedReason).toBe("too-short");
+    });
+  });
+
+  it("never carries the author's address or IP", async () => {
+    await withTestDb(async (tx) => {
+      await queueFixture(tx);
+      const admin = await adminViewer(tx);
+
+      const [row] = await listReviewsAwaitingModeration(tx, admin);
+      expect(row).toBeDefined();
+      expect(row).not.toHaveProperty("authorEmail");
+      expect(row).not.toHaveProperty("ip");
+    });
+  });
+
+  it("drops a review from the queue once it is decided", async () => {
+    await withTestDb(async (tx) => {
+      const f = await queueFixture(tx);
+      const admin = await adminViewer(tx);
+
+      await moderateReview(tx, admin, f.newer, { status: "published" });
+      await moderateReview(tx, admin, f.older, { status: "rejected" });
+
+      const rows = await listReviewsAwaitingModeration(tx, admin);
+      expect(rows.filter((r) => r.listingId === f.listingId)).toHaveLength(0);
+    });
+  });
+
+  it("counts what the list would show", async () => {
+    await withTestDb(async (tx) => {
+      const f = await queueFixture(tx);
+      const admin = await adminViewer(tx);
+
+      const before = await countReviewsAwaitingModeration(tx, admin);
+      expect(before).toBe((await listReviewsAwaitingModeration(tx, admin)).length);
+      expect(before).toBeGreaterThanOrEqual(2);
+
+      await moderateReview(tx, admin, f.newer, { status: "published" });
+      expect(await countReviewsAwaitingModeration(tx, admin)).toBe(before - 1);
+    });
+  });
+
+  it("refuses anyone who is not an admin", async () => {
+    await withTestDb(async (tx) => {
+      const owner = await makeOwner(tx);
+      await expect(listReviewsAwaitingModeration(tx, owner.viewer)).rejects.toThrow(/FORBIDDEN/);
+      await expect(listReviewsAwaitingModeration(tx, PUBLIC_VIEWER)).rejects.toThrow(/FORBIDDEN/);
+      await expect(countReviewsAwaitingModeration(tx, owner.viewer)).rejects.toThrow(/FORBIDDEN/);
+      await expect(countReviewsAwaitingModeration(tx, PUBLIC_VIEWER)).rejects.toThrow(/FORBIDDEN/);
     });
   });
 });
