@@ -15,6 +15,7 @@ import {
   invoiceHistory,
   listingForCheckout,
   markReminderSent,
+  ownerCheckoutListings,
   ownerSubscriptions,
   recordProcessedEvent,
   reminderContext,
@@ -90,6 +91,39 @@ describe("listingForCheckout", () => {
       await expect(
         listingForCheckout(tx, s.viewer, { listingId: "not-a-uuid", profileId: s.profileId }),
       ).resolves.toBeNull();
+    });
+  });
+});
+
+describe("ownerCheckoutListings", () => {
+  it("lists only the viewer's own claimed listings, published or not", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      const draft = await makeListing(tx, s.ctx, {
+        ownerId: s.profileId,
+        claimStatus: "verified",
+        status: "draft",
+      });
+      // Named as owner but the claim has not been granted: not buyable.
+      await makeListing(tx, s.ctx, { ownerId: s.profileId, claimStatus: "unclaimed" });
+      // Somebody else's.
+      const stranger = await makeOwner(tx);
+      const theirs = await makeListing(tx, s.ctx, {
+        ownerId: stranger.profileId,
+        claimStatus: "claimed",
+      });
+
+      const mine = await ownerCheckoutListings(tx, s.viewer, s.profileId);
+      expect(mine.map((l) => l.id).sort()).toEqual([s.listingId, draft].sort());
+      expect(mine[0]!.path).toMatch(/^\/[^/]+\/[^/]+$/);
+
+      // The profile id is the scope, and the page derives it from the viewer.
+      expect((await ownerCheckoutListings(tx, stranger.viewer, stranger.profileId)).map((l) => l.id))
+        .toEqual([theirs]);
+      expect(await ownerCheckoutListings(tx, s.viewer, "not-a-uuid")).toEqual([]);
+      await expect(ownerCheckoutListings(tx, { role: "public" }, s.profileId)).rejects.toThrow(
+        "FORBIDDEN",
+      );
     });
   });
 });

@@ -163,6 +163,46 @@ export async function liveSubscriptionForListing(
   return row ?? null;
 }
 
+export interface OwnerCheckoutListing {
+  readonly id: string;
+  readonly name: string;
+  readonly tier: TierName;
+  readonly path: string;
+}
+
+/**
+ * What the checkout page offers when the URL names no listing: the viewer's
+ * own claimed listings, so they can pick the one the plan is for. Published
+ * or not — the owner is buying for their own row. Same ownership rule as
+ * `listingForCheckout`, so nothing offered here is refused a step later.
+ */
+export async function ownerCheckoutListings(
+  tx: TestDb,
+  viewer: Viewer,
+  profileId: string,
+): Promise<OwnerCheckoutListing[]> {
+  assertSignedIn(viewer);
+  if (!UUID.test(profileId)) return [];
+  const rows = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      tier: listings.tier,
+      slug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(and(eq(listings.ownerId, profileId), ne(listings.claimStatus, "unclaimed")))
+    .orderBy(asc(listings.name));
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    tier: r.tier,
+    path: `/${r.citySlug}/${r.slug}`,
+  }));
+}
+
 export interface CreatePendingInput {
   listingId: string;
   profileId: string;
