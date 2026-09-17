@@ -5,6 +5,7 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { ensureProfile } from "@/lib/auth/profile";
 import { ownerListings, ownerUnreadCount } from "@/lib/db/queries/owner";
 import { claimsForViewer } from "@/lib/db/queries/claims";
+import { UnverifiedEmailBanner } from "@/components/auth/UnverifiedEmailBanner";
 
 export const metadata: Metadata = {
   title: "Your account",
@@ -46,6 +47,10 @@ export default async function AccountPage({ searchParams }: Props) {
     <main>
       <h1>Your account</h1>
       <p data-testid="viewer-role" className="sr-only">Signed in as: {viewer.role}</p>
+      <UnverifiedEmailBanner />
+      <p className="text-sm text-muted">
+        <a href="/account/settings">Account settings</a> — name, phone, password.
+      </p>
 
       {message && (
         <p role="status" data-testid="claim-outcome" className="card bg-raised">{message}</p>
