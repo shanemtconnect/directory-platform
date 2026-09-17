@@ -2,15 +2,16 @@ import type { ReactNode } from "react";
 import type { AdminQueueCounts } from "@/lib/db/queries/admin/dashboard";
 
 /**
- * The dashboard's five tiles: where the work is.
+ * The dashboard's tiles: where the work is.
  *
  * A queue with nothing in it is shown as a zero rather than hidden — "no open
  * reports" and "the reports page is broken" look identical when the tile is
  * missing.
  *
- * `href` is null for the queues whose console page is not built yet. A tile
+ * `href` may be null for a queue whose console page is not built yet. A tile
  * that links nowhere is better than one that links to a 404: the number still
- * tells an admin the work exists, which is the point of counting it.
+ * tells an admin the work exists, which is the point of counting it. Every
+ * queue counted today has its page, so every tile links.
  */
 interface Tile {
   label: string;
@@ -37,7 +38,7 @@ function tiles(counts: AdminQueueCounts): Tile[] {
     {
       label: "Claims pending",
       value: counts.pendingClaims,
-      href: null,
+      href: "/admin/claims",
       quiet: "Nobody is waiting on a decision.",
     },
     {
