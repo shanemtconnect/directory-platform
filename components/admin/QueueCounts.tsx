@@ -43,13 +43,13 @@ function tiles(counts: AdminQueueCounts): Tile[] {
     {
       label: "Reports open",
       value: counts.openReports,
-      href: null,
+      href: "/admin/reports",
       quiet: "Nothing has been reported.",
     },
     {
       label: "Removal requests open",
       value: counts.openRemovals,
-      href: null,
+      href: "/admin/removals",
       quiet: "Nothing is waiting to come down.",
     },
   ];
