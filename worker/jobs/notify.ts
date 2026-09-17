@@ -57,6 +57,7 @@ import { claimNotification } from "@/lib/db/queries/claims";
 import { MAGIC_TOKEN_TTL_MINUTES, isTokenExpired } from "@/lib/claims/token";
 import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
 import { authEmailRecipient } from "@/lib/db/queries/profile";
+import { hashToken } from "@/lib/security/token-hash";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -76,6 +77,9 @@ const BATCH = 25;
 
 /** Thrown to mark a job for retry. The message becomes `last_error`. */
 class Retryable extends Error {}
+
+/** How much of a failure message reaches the log line. */
+const LOGGED_ERROR_CHARS = 200;
 
 let warnedNoAdmin = false;
 
@@ -297,9 +301,10 @@ async function runDecision(db: Db, d: Delivery, payload: Record<string, unknown>
 /**
  * The three claim notifications.
  *
- * All of them re-read the claim rather than trusting the payload, so a token
- * that has since been replaced by a resend is never the one that goes out, and
- * a decision that has since been changed is never announced twice differently.
+ * All of them re-read the claim rather than trusting the payload for anything
+ * but the token itself, so a link that has since been replaced by a resend is
+ * never the one that goes out, and a decision that has since been changed is
+ * never announced twice differently.
  */
 async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<string, unknown>): Promise<void> {
   const claimId = readId(payload, "claimId");
@@ -317,16 +322,24 @@ async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<strin
     // no live credential. Retrying would bury the log and then fail the job;
     // mailing a spent link would send somebody to a dead page. Complete.
     if (claim.status !== "pending" || isTokenExpired(claim.magicTokenExpiresAt)) return;
-    if (claim.magicToken === null || claim.businessEmail === null) {
+    if (claim.magicTokenHash === null || claim.businessEmail === null) {
       throw new Retryable("The claim has no live magic link to send");
     }
+    // The token comes from the payload: the row holds only its digest. A job
+    // without one cannot send anything that works, and says so in last_error
+    // — without the token, which is never written anywhere but the email.
+    const token = readId(payload, "token");
+    if (token === null) throw new Retryable("The job carries no token");
+    // A resend minted a newer link after this job was queued: that job sends
+    // it, and this one has nothing live to send. Complete, do not retry.
+    if (hashToken(token) !== claim.magicTokenHash) return;
     // Only ever to the address on the business's own domain. Copying an admin
     // would hand a credential to somebody the claimant never authorised.
     return deliver(d, CLAIMANT, {
       to: claim.businessEmail,
       ...claimMagicLink({
         ...listing,
-        verifyUrl: siteUrl(`/claim/verify/${claim.magicToken}`),
+        verifyUrl: siteUrl(`/claim/verify/${encodeURIComponent(token)}`),
         expiresInMinutes: MAGIC_TOKEN_TTL_MINUTES,
       }),
     });
@@ -393,9 +406,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     case NOTIFY_CLAIM_DECIDED:
       return runClaim(db, d, job.kind, job.payload);
     case NOTIFY_AUTH_RESET:
-      return runAuthEmail(db, d, job.payload, passwordReset);
+      return runAuthEmail(db, d, job.payload, passwordReset, passwordResetLink);
     case NOTIFY_AUTH_VERIFY:
-      return runAuthEmail(db, d, job.payload, verifyEmailAddress);
+      return runAuthEmail(db, d, job.payload, verifyEmailAddress, verifyEmailLink);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -438,9 +451,12 @@ export async function processNotifications(db: Db): Promise<number> {
         await markDelivered(db, ADMIN_VIEWER, job.id, [...d.done, ...d.fresh]);
       }
       const outcome = await failJob(db, ADMIN_VIEWER, job.id, message);
+      // Truncated for the log: a mailer's error can quote the request it
+      // rejected, recipient address and all, and a log line is shipped to
+      // places a queue row is not. The full text is in `last_error`.
       console.error(
         `[worker] ${job.kind} ${job.id} ${outcome.status === "failed" ? "PARKED" : "failed"}` +
-          ` after ${outcome.attempts}: ${message}`,
+          ` after ${outcome.attempts}: ${message.slice(0, LOGGED_ERROR_CHARS)}`,
       );
     }
   }
@@ -468,7 +484,10 @@ function reviewsUrl(listingPath: string): string {
  * A review with no live token has already been verified — someone clicked the
  * link before the queue drained, or a retry is running after the fact — and
  * there is nothing left to send. That is a completed job, not a failure: a
- * retry would only re-send a link that no longer works.
+ * retry would only re-send a link that no longer works. The same goes for a
+ * link a resend has since replaced: the newer job sends the newer link.
+ *
+ * The token itself comes from the payload; the invite row holds its digest.
  */
 async function runReviewSubmitted(
   db: Db, d: Delivery, payload: Record<string, unknown>,
@@ -478,7 +497,11 @@ async function runReviewSubmitted(
 
   const data = await reviewNotification(db, ADMIN_VIEWER, reviewId);
   if (!data) throw new Retryable(`No review ${reviewId}`);
-  if (data.token === null) return;
+  if (data.tokenHash === null) return;
+
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+  if (hashToken(token) !== data.tokenHash) return;
 
   await deliver(d, REVIEWER, {
     to: data.authorEmail,
@@ -486,7 +509,7 @@ async function runReviewSubmitted(
       listingName: data.listing.name,
       listingUrl: siteUrl(data.listing.path),
       reviewsUrl: reviewsUrl(data.listing.path),
-      verifyUrl: siteUrl(`/review/verify/${encodeURIComponent(data.token)}`),
+      verifyUrl: siteUrl(`/review/verify/${encodeURIComponent(token)}`),
       author: data.authorDisplayName ?? "",
       rating: data.rating,
       title: data.title,
@@ -547,6 +570,7 @@ async function runReviewVerified(
  * header with everything else's.
  * ---------------------------------------------------------------------------
  */
+import { passwordResetLink, verifyEmailLink } from "@/lib/auth/links";
 
 const ACCOUNT = "account";
 
@@ -560,64 +584,38 @@ const ACCOUNT = "account";
 const TOKEN_TTL_MINUTES = Math.round(AUTH_TOKEN_TTL_SECONDS / 60);
 
 /**
- * The origins a token link may point at.
- *
- * Better Auth builds the URL from its own baseURL, so in a correctly
- * configured site this always passes. It is checked anyway because the value
- * reaches here through a jsonb column — anything that can write a row in
- * `job_queue` would otherwise be writing the href of a link we send, signed
- * with our domain, to an address we look up for it. That is a phishing kit,
- * not a notification.
- */
-function isOurUrl(url: string): boolean {
-  const allowed = [process.env.BETTER_AUTH_URL, process.env.NEXT_PUBLIC_SITE_URL]
-    .filter((v): v is string => typeof v === "string" && v.trim() !== "")
-    .map((v) => {
-      try {
-        return new URL(v).origin;
-      } catch {
-        return null;
-      }
-    })
-    .filter((v): v is string => v !== null);
-
-  try {
-    return allowed.includes(new URL(url).origin);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The part of a link that is safe to write into `last_error` or a log line:
- * the origin, never the path or query, because that is where the token is.
- */
-function originOf(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "(unparseable)";
-  }
-}
-
-/**
  * A password reset or an address confirmation. One recipient — the account
  * itself — and deliberately no admin copy: a working reset link in our own
  * inbox is a way into somebody else's account.
+ *
+ * The link is built HERE, from the payload's token and our own origin. The
+ * payload reaches this function through a jsonb column, and anything that can
+ * write a row in `job_queue` would otherwise be writing the href of a link we
+ * send, signed with our domain, to an address we look up for it. That is a
+ * phishing kit, not a notification — so a `url` in the payload is not read.
+ *
+ * Nothing thrown from here names the token: `last_error` is a column an admin
+ * reads, and a log line is a place a reset link must never appear.
  */
 async function runAuthEmail(
   db: Db,
   d: Delivery,
   payload: Record<string, unknown>,
   build: typeof passwordReset,
+  link: (token: string) => string,
 ): Promise<void> {
   const userId = readId(payload, "userId");
   if (userId === null) throw new Retryable("The job carries no userId");
 
-  const url = readId(payload, "url");
-  if (url === null) throw new Retryable("The job carries no url");
-  if (!isOurUrl(url)) {
-    throw new Retryable(`The job's url is not on this site: ${originOf(url)}`);
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+
+  let url: string;
+  try {
+    url = link(token);
+  } catch (e) {
+    // Only ever "no origin configured"; the message carries no token.
+    throw new Retryable(e instanceof Error ? e.message : "The link could not be built");
   }
 
   const recipient = await authEmailRecipient(db, ADMIN_VIEWER, userId);

@@ -6,6 +6,7 @@ import { makeListing, makeScaffold } from "@/test/factories";
 import { auditLog, claims, listings, profiles, user } from "@/lib/db/schema";
 import { resetClock, setClock } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
+import { hashToken } from "@/lib/security/token-hash";
 import {
   attachClaimDocument,
   claimNotification,
@@ -25,6 +26,7 @@ import {
 afterEach(() => resetClock());
 
 const ADMIN: Viewer = { role: "admin", userId: "admin-user" };
+const PUBLIC: Viewer = { role: "public" };
 
 async function makeUser(tx: TestDb, role: "user" | "admin" = "user") {
   const userId = `u_${randomUUID()}`;
@@ -665,9 +667,49 @@ describe("claimNotification", () => {
 
       const data = await claimNotification(tx, ADMIN, started.claimId);
       expect(data?.businessEmail).toBe("jo@oldmill.example");
-      expect(data?.magicToken).toBe(started.token);
+      // The digest, never the token: the worker gets the token from the job
+      // payload and uses this only to tell a live link from a superseded one.
+      expect(data?.magicTokenHash).toBe(hashToken(started.token));
+      expect(JSON.stringify(data)).not.toContain(started.token);
       expect(data?.listingName).toBe("The Old Mill");
       expect(data?.listingPath).toMatch(/^\//);
+    });
+  });
+});
+
+describe("the magic token at rest", () => {
+  it("is stored as a 64-hex digest, and the raw token is what the link carries", async () => {
+    await withTestDb(async (tx) => {
+      const { listingId, profileId, viewer } = await scene(tx);
+      const started = await startDomainClaim(tx, viewer, {
+        listingId, profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+
+      const [row] = await tx.select().from(claims).where(eq(claims.id, started.claimId));
+      expect(row?.magicToken).toMatch(/^[0-9a-f]{64}$/);
+      expect(row?.magicToken).toBe(hashToken(started.token));
+      expect(row?.magicToken).not.toBe(started.token);
+    });
+  });
+
+  it("verifies the raw token and refuses the stored digest or a wrong token", async () => {
+    await withTestDb(async (tx) => {
+      const { listingId, profileId, viewer } = await scene(tx);
+      const started = await startDomainClaim(tx, viewer, {
+        listingId, profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+
+      // Somebody who read the column has the digest. It must not work as a token.
+      expect((await previewClaimToken(tx, PUBLIC, hashToken(started.token))).outcome).toBe("unknown");
+      expect((await verifyClaimToken(tx, PUBLIC, hashToken(started.token))).outcome).toBe("unknown");
+      expect((await verifyClaimToken(tx, PUBLIC, "not-the-token")).outcome).toBe("unknown");
+
+      expect((await previewClaimToken(tx, PUBLIC, started.token)).outcome).toBe("confirmable");
+      expect((await verifyClaimToken(tx, PUBLIC, started.token)).outcome).toBe("approved");
     });
   });
 });

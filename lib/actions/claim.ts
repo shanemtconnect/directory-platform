@@ -97,7 +97,9 @@ export async function requestClaimLink(
     });
     // Enqueued inside the same transaction that wrote the token: no email for
     // a claim that rolled back, and no lost email for one that did not.
-    if (started.outcome === "sent") await notifyClaimLink(handle, viewer, started.claimId);
+    if (started.outcome === "sent") {
+      await notifyClaimLink(handle, viewer, started.claimId, started.token);
+    }
     return started;
   });
 

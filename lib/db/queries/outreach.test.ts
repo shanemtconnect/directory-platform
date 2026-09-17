@@ -10,6 +10,7 @@ import {
   unsubscribes,
 } from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { hashToken } from "@/lib/security/token-hash";
 import {
   makeListing,
   makeScaffold,
@@ -221,7 +222,7 @@ describe("createOutreachCampaign", () => {
         .where(eq(campaignMessages.campaignId, campaignId));
       expect(messages).toHaveLength(1);
       expect(messages[0]).toMatchObject({
-        listingId, toAddress: "a@a.example", magicToken: "tok-1", clickedAt: null, sentAt: null,
+        listingId, toAddress: "a@a.example", magicToken: hashToken("tok-1"), clickedAt: null, sentAt: null,
       });
 
       const [entry] = await tx
@@ -310,7 +311,7 @@ describe("recordOutreachClick", () => {
       const [row] = await tx
         .select()
         .from(campaignMessages)
-        .where(eq(campaignMessages.magicToken, "tok-live"));
+        .where(eq(campaignMessages.magicToken, hashToken("tok-live")));
       expect(row?.clickedAt).not.toBeNull();
     });
   });
@@ -325,7 +326,7 @@ describe("recordOutreachClick", () => {
       const [row] = await tx
         .select()
         .from(campaignMessages)
-        .where(eq(campaignMessages.magicToken, "tok-twice"));
+        .where(eq(campaignMessages.magicToken, hashToken("tok-twice")));
       expect(row?.clickedAt?.toISOString()).toBe(at.toISOString());
     });
   });
@@ -335,6 +336,22 @@ describe("recordOutreachClick", () => {
       await seedMessage(tx, "tok-real");
       expect(await recordOutreachClick(tx, PUBLIC_VIEWER, "tok-guessed")).toBeNull();
       expect(await recordOutreachClick(tx, PUBLIC_VIEWER, "")).toBeNull();
+    });
+  });
+
+  it("stores the digest, and the digest itself is not a token", async () => {
+    await withTestDb(async (tx) => {
+      const listingId = await seedMessage(tx, "tok-at-rest");
+      const [row] = await tx
+        .select({ magicToken: campaignMessages.magicToken })
+        .from(campaignMessages)
+        .where(eq(campaignMessages.listingId, listingId));
+      expect(row?.magicToken).toMatch(/^[0-9a-f]{64}$/);
+      expect(row?.magicToken).toBe(hashToken("tok-at-rest"));
+
+      // Somebody who read the column has the digest. It must not resolve.
+      expect(await recordOutreachClick(tx, PUBLIC_VIEWER, hashToken("tok-at-rest"))).toBeNull();
+      expect(await recordOutreachClick(tx, PUBLIC_VIEWER, "tok-at-rest")).toEqual({ listingId });
     });
   });
 

@@ -198,6 +198,16 @@ export async function notifyDecision(
 export type ReviewJobPayload = { reviewId: string };
 
 /**
+ * The verification job also carries the token, because it has to:
+ * `review_invites.token` holds only the digest (lib/security/token-hash.ts),
+ * so there is nowhere the worker could re-read the link from. It rides in the
+ * payload only while the job is pending and `completeJob` scrubs it once the
+ * email has gone (lib/db/queries/jobs.ts). The worker still re-reads the
+ * review, so a link that has been used or replaced by a resend is never sent.
+ */
+export type ReviewLinkJobPayload = { reviewId: string; token: string };
+
+/**
  * The verification email. Enqueued inside the transaction that wrote the
  * review, so a review row without a link to confirm it cannot exist.
  */
@@ -207,7 +217,7 @@ export async function notifyReviewSubmitted(
   result: CreateReviewResult,
 ): Promise<void> {
   if (result.outcome !== "created") return;
-  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  const payload: ReviewLinkJobPayload = { reviewId: result.reviewId, token: result.token };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }
 
@@ -227,8 +237,10 @@ export async function notifyReviewVerified(
 
 /**
  * A replacement verification link. Same job kind as the first one — the worker
- * re-reads the review and picks up whatever token is live on the invite now —
- * so there is no second template and no second handler to keep in step.
+ * checks the payload's token against whatever is live on the invite now, so
+ * the earlier job, if still queued, finds its link superseded and sends
+ * nothing — and there is no second template and no second handler to keep in
+ * step.
  */
 export async function notifyReviewResent(
   tx: TestDb,
@@ -236,26 +248,32 @@ export async function notifyReviewResent(
   result: ResendReviewResult,
 ): Promise<void> {
   if (result.outcome !== "sent") return;
-  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  const payload: ReviewLinkJobPayload = { reviewId: result.reviewId, token: result.token };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }
 
-/**
- * The claim payload is the claim id and nothing else — not the token.
- *
- * A magic token in a queue row is a live credential sitting in a table that
- * outlives the thing it unlocks, readable by anything that can read the queue.
- * The worker re-reads the claim when it runs, so an expired or superseded
- * token is never sent.
- */
+/** The submitted and decided payloads are the claim id and nothing else. */
 export type ClaimJobPayload = { claimId: string };
+
+/**
+ * The link job is the one payload that carries a credential, because it has
+ * to: `claims.magic_token` holds only the digest (lib/security/token-hash.ts),
+ * so the raw token exists nowhere the worker could re-read it from. It rides
+ * in the payload for exactly as long as the job is pending — the queue is
+ * admin-only and the token lives thirty minutes — and `completeJob` scrubs
+ * it the moment the email has gone (lib/db/queries/jobs.ts). The worker still
+ * re-reads the claim, so a link that has expired, been decided, or been
+ * replaced by a resend is never the one that goes out.
+ */
+export type ClaimLinkJobPayload = { claimId: string; token: string };
 
 export async function notifyClaimLink(
   tx: TestDb,
   viewer: Viewer,
   claimId: string,
+  token: string,
 ): Promise<void> {
-  const payload: ClaimJobPayload = { claimId };
+  const payload: ClaimLinkJobPayload = { claimId, token };
   await enqueueJob(tx, viewer, { kind: NOTIFY_CLAIM_LINK, payload });
 }
 
@@ -333,20 +351,24 @@ export async function notifyRenewal(
 export const AUTH_TOKEN_TTL_SECONDS = 60 * 60;
 
 /**
- * A user id and a link — never the address, and never the name.
+ * A user id and a token — never the address, never the name, and never a URL.
  *
- * The URL has to be in the payload: it carries a single-use token that exists
- * only for the length of this one callback, so there is nothing to re-derive
- * it from later. Everything else follows the rule the other payloads follow
- * and is re-read at send time (lib/db/queries/profile.ts), which keeps a
- * personal address out of a queue table that outlives the email and means an
- * account deleted between enqueue and send is simply never written to.
+ * The token has to be in the payload: it is single-use and exists only for
+ * the length of this one callback, so there is nothing to re-derive it from
+ * later. The link is built by the worker from the token and our own origin
+ * (lib/auth/links.ts), so a queue row never carries an href that something
+ * writing to the queue could point elsewhere. Everything else follows the
+ * rule the other payloads follow and is re-read at send time
+ * (lib/db/queries/profile.ts), which keeps a personal address out of a queue
+ * table that outlives the email and means an account deleted between enqueue
+ * and send is simply never written to.
  *
- * The token in the row is the reason these jobs matter operationally: they are
- * short-lived by design (an hour), so a queue that has stalled for longer than
- * that is sending links that are already dead.
+ * The token is scrubbed from the row when the job completes
+ * (lib/db/queries/jobs.ts). Until then it is the reason these jobs matter
+ * operationally: they are short-lived by design (an hour), so a queue that
+ * has stalled for longer than that is sending links that are already dead.
  */
-export type AuthEmailJobPayload = { userId: string; url: string };
+export type AuthEmailJobPayload = { userId: string; token: string };
 
 export async function notifyAuthEmail(
   tx: TestDb,

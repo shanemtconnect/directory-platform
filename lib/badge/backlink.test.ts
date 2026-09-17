@@ -1,9 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { LookupFunction } from "node:net";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import {
   isPrivateAddress,
   assertPublicUrl,
   hasBacklink,
   checkBacklink,
+  pinnedLookup,
   MAX_BODY_BYTES,
   SsrfRefusal,
   type Resolver,
@@ -36,6 +41,11 @@ describe("isPrivateAddress", () => {
     "fc00::1",
     "fd12:3456::1",
     "fe80::1",
+    // Site-local, deprecated by RFC 3879 but still routed by stacks that
+    // predate it, and still "inside" by any reading.
+    "fec0::1",
+    "fec0::",
+    "feff:ffff::1",
     "::ffff:127.0.0.1",
     "::ffff:169.254.169.254",
     // The same two addresses as WHATWG URL re-serialises them. A dotted-quad
@@ -413,5 +423,153 @@ describe("checkBacklink", () => {
     });
     expect(result.verified).toBe(false);
     expect(MAX_BODY_BYTES).toBeLessThanOrEqual(2_000_000);
+  });
+});
+
+/** Calls a Node-style lookup and returns what a socket would connect to. */
+function resolveVia(lookup: LookupFunction, hostname: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    lookup(hostname, { all: true }, (err, address) => {
+      if (err) return reject(err);
+      resolve(Array.isArray(address) ? address.map((a) => a.address) : [address]);
+    });
+  });
+}
+
+describe("pinnedLookup", () => {
+  it("answers only with the addresses pinned for that host, in both callback shapes", async () => {
+    const pins = new Map<string, string[]>([["client.example", ["93.184.216.34", "2606:4700::1"]]]);
+    const lookup = pinnedLookup(pins);
+
+    expect(await resolveVia(lookup, "client.example")).toEqual(["93.184.216.34", "2606:4700::1"]);
+    expect(await resolveVia(lookup, "CLIENT.example")).toEqual(["93.184.216.34", "2606:4700::1"]);
+
+    const single = await new Promise<[string, number | undefined]>((resolve, reject) => {
+      lookup("client.example", {}, (err, address, family) => {
+        if (err) return reject(err);
+        resolve([address as string, family]);
+      });
+    });
+    expect(single).toEqual(["93.184.216.34", 4]);
+  });
+
+  it("refuses a host nothing approved, so the socket cannot go anywhere the guard did not", async () => {
+    const lookup = pinnedLookup(new Map([["client.example", ["93.184.216.34"]]]));
+    await expect(resolveVia(lookup, "metadata.example")).rejects.toThrow(/not approved/);
+    await expect(resolveVia(lookup, "client.example.evil")).rejects.toThrow(/not approved/);
+  });
+
+  it("is what the socket actually uses: a real Agent connects to the pinned address", async () => {
+    // A local server, and a hostname that does not exist in any DNS. The only
+    // way the request can arrive is if the connector took its address from
+    // the pin — which is the whole of the DNS-rebinding defence.
+    const server: Server = createServer((req, res) => {
+      res.end(`host=${req.headers.host ?? ""} from=${req.socket.remoteAddress ?? ""}`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const pins = new Map<string, string[]>([["pinned.invalid", ["127.0.0.1"]]]);
+    const agent: Dispatcher = new Agent({ connect: { lookup: pinnedLookup(pins) } });
+    try {
+      const response = await undiciFetch(`http://pinned.invalid:${port}/`, { dispatcher: agent });
+      expect(await response.text()).toBe(`host=pinned.invalid:${port} from=127.0.0.1`);
+
+      // And an unpinned name never opens a socket at all.
+      await expect(undiciFetch(`http://unpinned.invalid:${port}/`, { dispatcher: agent }))
+        .rejects.toThrow();
+    } finally {
+      await agent.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe("checkBacklink — pinned connections", () => {
+  /** Captures the lookup each hop's socket would use, and what it answers. */
+  function capture() {
+    let lookup: LookupFunction | null = null;
+    const dispatcher = { kind: "fake-dispatcher", close: async () => {} } as unknown as Dispatcher;
+    const factory = (fn: LookupFunction): Dispatcher => {
+      lookup = fn;
+      return dispatcher;
+    };
+    return { factory, dispatcher, resolveNow: (host: string) => resolveVia(lookup!, host) };
+  }
+
+  it("fetches through a dispatcher whose lookup answers the address the guard approved", async () => {
+    const { factory, dispatcher, resolveNow } = capture();
+    const inits: Array<RequestInit & { dispatcher?: Dispatcher }> = [];
+    const answered: string[][] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit & { dispatcher?: Dispatcher }) => {
+      inits.push(init);
+      // What the socket would connect to AT THIS MOMENT, not later.
+      answered.push(await resolveNow("client.example"));
+      return ok(`<a href="https://dir.example/">x</a>`);
+    }) as unknown as typeof fetch;
+
+    const result = await checkBacklink("https://client.example/about", TARGETS, {
+      resolve: async () => ["93.184.216.34"],
+      fetchImpl,
+      agentFactory: factory,
+    });
+
+    expect(result.verified).toBe(true);
+    expect(inits[0]!.dispatcher).toBe(dispatcher);
+    expect(answered).toEqual([["93.184.216.34"]]);
+    // A second answer from DNS after the check would change nothing: the pin
+    // is what the connector reads, not the resolver.
+    expect(await resolveNow("client.example")).toEqual(["93.184.216.34"]);
+  });
+
+  it("re-resolves, re-checks and re-pins on every redirect hop", async () => {
+    const { factory, resolveNow } = capture();
+    const resolve: Resolver = async (host) =>
+      host === "client.example" ? ["93.184.216.34"] : ["198.51.100.7"].map(() => "104.16.0.1");
+    const answered: Array<Record<string, string[] | string>> = [];
+    const fetchImpl = (async (url: string) => {
+      const host = new URL(url).hostname;
+      const other = host === "client.example" ? "cdn.example" : "client.example";
+      answered.push({
+        host,
+        pinned: await resolveNow(host),
+        // The previous hop's host is no longer pinned once we have moved on.
+        stale: await resolveNow(other).catch((e: Error) => e.message),
+      });
+      return url.includes("cdn.example")
+        ? ok(`<a href="https://dir.example/">x</a>`)
+        : redirect("https://cdn.example/page");
+    }) as unknown as typeof fetch;
+
+    const result = await checkBacklink("https://client.example/a", TARGETS, {
+      resolve, fetchImpl, agentFactory: factory,
+    });
+
+    expect(result.verified).toBe(true);
+    expect(answered).toEqual([
+      { host: "client.example", pinned: ["93.184.216.34"], stale: expect.stringMatching(/not approved/) },
+      { host: "cdn.example", pinned: ["104.16.0.1"], stale: expect.stringMatching(/not approved/) },
+    ]);
+  });
+
+  it("pins a literal address to itself, so no name is ever looked up for it", async () => {
+    const { factory, resolveNow } = capture();
+    const fetchImpl = (async () => ok(`<a href="https://dir.example/">x</a>`)) as unknown as typeof fetch;
+    await checkBacklink("http://93.184.216.34/", TARGETS, {
+      resolve: async () => { throw new Error("must not resolve a literal"); },
+      fetchImpl,
+      agentFactory: factory,
+    });
+    expect(await resolveNow("93.184.216.34")).toEqual(["93.184.216.34"]);
+  });
+
+  it("closes the agent it built once the check is over", async () => {
+    const close = vi.fn(async () => {});
+    const fetchImpl = (async () => ok(`<a href="https://dir.example/">x</a>`)) as unknown as typeof fetch;
+    await checkBacklink("https://client.example/a", TARGETS, {
+      resolve: PUBLIC,
+      fetchImpl,
+      agentFactory: () => ({ close } as unknown as Dispatcher),
+    });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

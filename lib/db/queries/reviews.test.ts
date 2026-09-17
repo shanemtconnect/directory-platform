@@ -6,6 +6,7 @@ import { makeScaffold, makeListing } from "@/test/factories";
 import { auditLog, listings, profiles, reviews, reviewInvites, user } from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { setClock, resetClock } from "@/lib/clock";
+import { hashToken } from "@/lib/security/token-hash";
 import {
   createReview,
   verifyReviewToken,
@@ -82,7 +83,7 @@ describe("createReview", () => {
       expect(row!.emailVerifiedAt).toBeNull();
 
       const [invite] = await tx
-        .select().from(reviewInvites).where(eq(reviewInvites.token, result.token));
+        .select().from(reviewInvites).where(eq(reviewInvites.token, hashToken(result.token)));
       expect(invite!.listingId).toBe(listingId);
       expect(invite!.usedAt).toBeNull();
     });
@@ -223,7 +224,7 @@ describe("verifyReviewToken", () => {
       if (created.outcome !== "created") return;
 
       const [invite] = await tx
-        .select().from(reviewInvites).where(eq(reviewInvites.token, created.token));
+        .select().from(reviewInvites).where(eq(reviewInvites.token, hashToken(created.token)));
       expect(invite!.usedAt).not.toBeNull();
     });
   });
@@ -295,7 +296,7 @@ describe("verifyReviewToken", () => {
       expect(row!.status).toBe("pending");
       expect(row!.emailVerifiedAt).toBeNull();
       const [invite] = await tx
-        .select().from(reviewInvites).where(eq(reviewInvites.token, created.token));
+        .select().from(reviewInvites).where(eq(reviewInvites.token, hashToken(created.token)));
       expect(invite!.usedAt).toBeNull();
     });
   });
@@ -349,7 +350,7 @@ describe("verifyReviewToken", () => {
         expect(listing!.ratingCount).toBe(0);
         // And the link is not burned — it stays expired rather than becoming a repeat.
         const [invite] = await tx
-          .select().from(reviewInvites).where(eq(reviewInvites.token, token));
+          .select().from(reviewInvites).where(eq(reviewInvites.token, hashToken(token)));
         expect(invite!.usedAt).toBeNull();
       });
     });
@@ -358,7 +359,7 @@ describe("verifyReviewToken", () => {
       await withTestDb(async (tx) => {
         const { token } = await invited(tx);
         await tx.update(reviewInvites).set({ sentAt: null })
-          .where(eq(reviewInvites.token, token));
+          .where(eq(reviewInvites.token, hashToken(token)));
         expect((await verifyReviewToken(tx, PUBLIC_VIEWER, token)).outcome).toBe("expired");
       });
     });
@@ -405,7 +406,7 @@ describe("previewReviewToken", () => {
       expect(row!.status).toBe("pending");
       expect(row!.emailVerifiedAt).toBeNull();
       const [invite] = await tx
-        .select().from(reviewInvites).where(eq(reviewInvites.token, token));
+        .select().from(reviewInvites).where(eq(reviewInvites.token, hashToken(token)));
       expect(invite!.usedAt).toBeNull();
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing!.ratingCount).toBe(0);
@@ -515,7 +516,7 @@ describe("resendReviewVerification", () => {
       const rows = await tx.select().from(reviewInvites)
         .where(eq(reviewInvites.listingId, listingId));
       expect(rows, "the invite is rewritten in place, not stacked up").toHaveLength(1);
-      expect(rows[0]!.token).toBe(second.token);
+      expect(rows[0]!.token).toBe(hashToken(second.token));
     });
   });
 });
@@ -852,7 +853,10 @@ describe("reviewNotification", () => {
       const data = await reviewNotification(tx, admin, created.reviewId);
       expect(data).not.toBeNull();
       expect(data!.authorEmail).toBe("reviewer@example.test");
-      expect(data!.token).toBe(created.token);
+      // The digest, never the token: the worker gets the token from the job
+      // payload and uses this only to tell a live link from a superseded one.
+      expect(data!.tokenHash).toBe(hashToken(created.token));
+      expect(JSON.stringify(data)).not.toContain(created.token);
       expect(data!.listing.name).toBe("The Old Barn");
 
       await expect(reviewNotification(tx, PUBLIC_VIEWER, created.reviewId))
@@ -993,6 +997,61 @@ describe("the moderation queue", () => {
       await expect(listReviewsAwaitingModeration(tx, PUBLIC_VIEWER)).rejects.toThrow(/FORBIDDEN/);
       await expect(countReviewsAwaitingModeration(tx, owner.viewer)).rejects.toThrow(/FORBIDDEN/);
       await expect(countReviewsAwaitingModeration(tx, PUBLIC_VIEWER)).rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+});
+
+describe("the verification token at rest", () => {
+  it("is stored as a 64-hex digest, and the raw token is what the link carries", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") throw new Error("not created");
+
+      const [invite] = await tx.select().from(reviewInvites)
+        .where(eq(reviewInvites.listingId, listingId));
+      expect(invite?.token).toMatch(/^[0-9a-f]{64}$/);
+      expect(invite?.token).toBe(hashToken(created.token));
+      expect(invite?.token).not.toBe(created.token);
+    });
+  });
+
+  it("verifies the raw token and refuses the stored digest or a wrong token", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") throw new Error("not created");
+
+      // Somebody who read the column has the digest. It must not work as a token.
+      const digest = hashToken(created.token);
+      expect((await previewReviewToken(tx, PUBLIC_VIEWER, digest)).outcome).toBe("unknown");
+      expect((await verifyReviewToken(tx, PUBLIC_VIEWER, digest)).outcome).toBe("unknown-token");
+      expect((await resendReviewVerification(tx, PUBLIC_VIEWER, digest)).outcome)
+        .toBe("not-resendable");
+      expect((await verifyReviewToken(tx, PUBLIC_VIEWER, "wrong")).outcome).toBe("unknown-token");
+
+      expect((await previewReviewToken(tx, PUBLIC_VIEWER, created.token)).outcome)
+        .toBe("confirmable");
+      expect((await verifyReviewToken(tx, PUBLIC_VIEWER, created.token)).outcome).toBe("verified");
+    });
+  });
+
+  it("stores the resent token as a digest too", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") throw new Error("not created");
+      await tx.update(reviewInvites).set({ sentAt: new Date("2020-01-01T00:00:00Z") })
+        .where(eq(reviewInvites.listingId, listingId));
+
+      const resent = await resendReviewVerification(tx, PUBLIC_VIEWER, created.token);
+      if (resent.outcome !== "sent") throw new Error("not resent");
+      const [invite] = await tx.select().from(reviewInvites)
+        .where(eq(reviewInvites.listingId, listingId));
+      expect(invite?.token).toBe(hashToken(resent.token));
     });
   });
 });

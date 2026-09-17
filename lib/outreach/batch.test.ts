@@ -7,6 +7,8 @@ import {
 } from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeListing, makeScaffold } from "@/test/factories";
+import { hashToken } from "@/lib/security/token-hash";
+import { recordOutreachClick } from "@/lib/db/queries/outreach";
 import { buildOutreachBatch } from "./batch";
 import { outreachCsv, OUTREACH_CSV_HEADER } from "./csv";
 
@@ -45,10 +47,19 @@ describe("buildOutreachBatch", () => {
         .from(campaignMessages)
         .where(eq(campaignMessages.campaignId, batch.campaignId!));
       expect(messages).toHaveLength(3);
-      // The token in the file is the token in the row, or the link 404s.
+      // The token in the file is the token whose digest is in the row, or the
+      // link 404s. The file carries the RAW token: it is the link that is sent.
+      const tokensInFile = batch.rows.map((r) => decodeURIComponent(r.magicUrl.split("/").pop()!));
       for (const message of messages) {
-        expect(batch.rows.some((r) => r.magicUrl.endsWith(message.magicToken!))).toBe(true);
+        expect(message.magicToken).toMatch(/^[0-9a-f]{64}$/);
+        expect(tokensInFile.some((t) => hashToken(t) === message.magicToken)).toBe(true);
       }
+      // And a link from the file works as sent.
+      const first = batch.rows[0]!;
+      const clicked = await recordOutreachClick(tx, PUBLIC_VIEWER, tokensInFile[0]!);
+      expect(clicked).not.toBeNull();
+      expect(messages.map((m) => m.listingId)).toContain(clicked!.listingId);
+      expect(first.magicUrl).not.toContain(hashToken(tokensInFile[0]!));
       expect(await tx.select().from(coupons).where(eq(coupons.batchId, batch.batchId!))).toHaveLength(3);
     });
   });

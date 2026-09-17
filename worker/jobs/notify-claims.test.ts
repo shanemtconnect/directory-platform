@@ -7,6 +7,7 @@ import { makeListing, makeScaffold } from "@/test/factories";
 import type { SendResult } from "@/lib/email/sender";
 import { resetClock } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
+import { hashToken } from "@/lib/security/token-hash";
 
 const sendEmail = vi.fn<(m: Record<string, unknown>) => Promise<SendResult>>();
 
@@ -75,12 +76,84 @@ describe("notify.claimLink", () => {
         claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
       });
       if (started.outcome !== "sent") throw new Error("setup failed");
-      await notifyClaimLink(tx, jo.viewer, started.claimId);
+      await notifyClaimLink(tx, jo.viewer, started.claimId, started.token);
 
       expect(await processNotifications(tx)).toBe(1);
       // Never the admin: the link IS the credential.
       expect(sentTo()).toEqual(["jo@oldmill.example"]);
       expect(bodies()).toContain(`https://example.co.uk/claim/verify/${started.token}`);
+    });
+  });
+
+  it("carries the raw token in the payload only until the job is done", async () => {
+    await withTestDb(async (tx) => {
+      const listingId = await listing(tx);
+      const jo = await claimant(tx);
+      const started = await startDomainClaim(tx, jo.viewer, {
+        listingId, profileId: jo.profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+      await notifyClaimLink(tx, jo.viewer, started.claimId, started.token);
+
+      // The row holds a digest, so the payload is the only place the worker
+      // can get the link from — until it has sent it.
+      const [before] = await tx.select().from(jobQueue);
+      expect(before?.payload).toEqual({ claimId: started.claimId, token: started.token });
+      const [claim] = await tx.select().from(claims).where(eq(claims.id, started.claimId));
+      expect(claim?.magicToken).toBe(hashToken(started.token));
+
+      expect(await processNotifications(tx)).toBe(1);
+      const [after] = await tx.select().from(jobQueue);
+      expect(after?.status).toBe("done");
+      expect(after?.payload).toEqual({ claimId: started.claimId });
+      expect(JSON.stringify(after?.payload)).not.toContain(started.token);
+    });
+  });
+
+  it("completes without sending a link that a resend has since replaced", async () => {
+    await withTestDb(async (tx) => {
+      const listingId = await listing(tx);
+      const jo = await claimant(tx);
+      const input = {
+        listingId, profileId: jo.profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      };
+      const first = await startDomainClaim(tx, jo.viewer, input);
+      if (first.outcome !== "sent") throw new Error("setup failed");
+      await notifyClaimLink(tx, jo.viewer, first.claimId, first.token);
+      // "The email never arrived" — the form is submitted again before the
+      // worker has drained the first job. Only the newer link works.
+      const second = await startDomainClaim(tx, jo.viewer, input);
+      if (second.outcome !== "sent") throw new Error("setup failed");
+      await notifyClaimLink(tx, jo.viewer, second.claimId, second.token);
+
+      expect(await processNotifications(tx)).toBe(2);
+      expect(sentTo()).toEqual(["jo@oldmill.example"]);
+      expect(bodies()).not.toContain(first.token);
+      expect(bodies()).toContain(second.token);
+    });
+  });
+
+  it("retries a link job that carries no token rather than mailing a dead page", async () => {
+    await withTestDb(async (tx) => {
+      const listingId = await listing(tx);
+      const jo = await claimant(tx);
+      const started = await startDomainClaim(tx, jo.viewer, {
+        listingId, profileId: jo.profileId, businessEmail: "jo@oldmill.example",
+        claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
+      });
+      if (started.outcome !== "sent") throw new Error("setup failed");
+      const { enqueueJob } = await import("@/lib/db/queries/jobs");
+      await enqueueJob(tx, { role: "admin", userId: "x" }, {
+        kind: "notify.claimLink", payload: { claimId: started.claimId },
+      });
+
+      expect(await processNotifications(tx)).toBe(0);
+      expect(sendEmail).not.toHaveBeenCalled();
+      const [job] = await tx.select().from(jobQueue);
+      expect(job?.lastError).toMatch(/token/);
+      expect(job?.lastError).not.toContain(started.token);
     });
   });
 
@@ -93,7 +166,7 @@ describe("notify.claimLink", () => {
         claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
       });
       if (started.outcome !== "sent") throw new Error("setup failed");
-      await notifyClaimLink(tx, jo.viewer, started.claimId);
+      await notifyClaimLink(tx, jo.viewer, started.claimId, started.token);
       // A resend, or a worker that was behind: by the time the job runs the
       // claim is settled. Mailing a live-looking link at that point is at best
       // confusing and at worst a credential nobody needs any more.
@@ -115,7 +188,7 @@ describe("notify.claimLink", () => {
         claimantName: "Jo", roleAtBusiness: null, ip: null, userAgent: null,
       });
       if (started.outcome !== "sent") throw new Error("setup failed");
-      await notifyClaimLink(tx, jo.viewer, started.claimId);
+      await notifyClaimLink(tx, jo.viewer, started.claimId, started.token);
       // Aged in the row rather than on the clock: `job_queue.run_after` is a
       // database default, so winding the application clock back past it would
       // make the job not due yet and nothing would run at all.
