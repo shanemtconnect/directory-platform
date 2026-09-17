@@ -327,6 +327,30 @@ describe("applyStatDeltas", () => {
     });
   });
 
+  it("drops a delta for a listing that is not published instead of counting it", async () => {
+    // The beacon takes any uuid. A pending, rejected or archived listing has no
+    // public page to be viewed from, so a view against it is either a stale
+    // cache or a forgery — and either way not a number its owner should be
+    // asked to renew on.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const live = await makeListing(tx, ctx);
+      const archived = await makeListing(tx, ctx, { status: "archived" });
+      const pending = await makeListing(tx, ctx, { status: "pending" });
+      const delta = { day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
+
+      const written = await applyStatDeltas(tx, ADMIN_VIEWER, [
+        { listingId: archived, ...delta },
+        { listingId: pending, ...delta },
+        { listingId: live, ...delta },
+      ]);
+
+      expect(written).toBe(1);
+      const rows = await tx.select({ listingId: listingStatsDaily.listingId }).from(listingStatsDaily);
+      expect(rows).toEqual([{ listingId: live }]);
+    });
+  });
+
   it("is a no-op for an empty batch", async () => {
     await withTestDb(async (tx) => {
       expect(await applyStatDeltas(tx, ADMIN_VIEWER, [])).toBe(0);

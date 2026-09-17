@@ -186,6 +186,13 @@ export async function listingStats(
  * otherwise raise a foreign-key violation and take the entire batch — every
  * other listing's counts included — down with it.
  *
+ * The join takes published listings only. The beacon accepts any well-formed
+ * uuid, so a delta can name a listing that is pending, rejected or archived;
+ * nothing public renders those, so a view against one is a stale cache or a
+ * forgery, and a row here would be a number nobody earned. Reading history
+ * (`listingStats`) is deliberately NOT gated the same way: months a listing
+ * was live stay visible to its owner after it comes down.
+ *
  * @returns how many (listing, day) rows were written.
  */
 export async function applyStatDeltas(
@@ -218,7 +225,7 @@ export async function applyStatDeltas(
     select v.listing_id, v.day, v.views, v.impressions, v.enquiries, v.shortlist_adds, v.badge_clicks
       from (values ${rows})
         as v(listing_id, day, views, impressions, enquiries, shortlist_adds, badge_clicks)
-      join listings l on l.id = v.listing_id
+      join listings l on l.id = v.listing_id and l.status = 'published'
     on conflict (listing_id, day) do update set
       views          = listing_stats_daily.views          + excluded.views,
       impressions    = listing_stats_daily.impressions    + excluded.impressions,
