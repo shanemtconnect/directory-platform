@@ -332,6 +332,17 @@ The two `NEXT_PUBLIC_` ones are inlined into the client bundle by `next build`.
 Setting either at boot does nothing at all; adding Sentry or Plausible to a
 running site is a **rebuild**, with `--build-arg`, exactly like `SITE_ENV`.
 
+**Sentry source maps are not uploaded**, so browser stack traces show minified
+frames. CI cannot do it: Coolify builds the production image itself from the
+Dockerfile, and a `.next` uploaded from the CI runner is a different build
+(different chunks, different debug IDs) that no production event would ever
+match. `lib/observability/sentry.ts` deliberately does not use
+`withSentryConfig` either. Turning this on means doing it where the bytes are
+made — a `sentry-cli sourcemaps inject` + `upload` in the Dockerfile `builder`
+stage behind `--mount=type=secret,id=sentry_token` (a Coolify build secret),
+with `SENTRY_RELEASE` set from Coolify's `SOURCE_COMMIT` at runtime. Not done
+yet.
+
 ### `GET /api/health`
 
 ```json
