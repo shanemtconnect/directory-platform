@@ -27,27 +27,29 @@ async function aPublishedListing(
   expect(loc, "the listings sitemap has at least one URL").not.toBeNull();
   const path = new URL(loc![1]!).pathname;
 
-  // The badge page resolves its own id from ?id=, so the id has to come from
-  // the page that hands owners their snippet.
+  // The listing page does not advertise its own badge (that lives on
+  // /advertise/badge, keyed by ?id=), but it does render the listing id for the
+  // stats beacon — a real attribute on the real page, not a database read.
   const page = await request.get(path);
   expect(page.ok()).toBe(true);
   const html = await page.text();
-  const id = /\/badge\/([0-9a-f-]{36})/.exec(html)?.[1] ?? null;
-  // A FAILURE, not a skip. A listing page that stopped rendering a badge URL
-  // is the badge feature being broken — which is precisely what this spec
-  // exists to catch, and a skipped test reports it as a green run.
-  expect(id, `${path} renders a /badge/{id} URL`).not.toBeNull();
+  const id = /data-dp-listing="([0-9a-f-]{36})"/.exec(html)?.[1] ?? null;
+  // A FAILURE, not a skip: a listing page with no id on it means the stats
+  // beacon is gone too, and a skipped test reports that as a green run.
+  expect(id, `${path} renders its listing id`).not.toBeNull();
   return { path, id: id! };
 }
 
 test.describe("badge", () => {
   test("serves an SVG that a third-party site can embed", async ({ request }) => {
-    const { path } = await aPublishedListing(request);
-    const badgePage = await request.get(`/advertise/badge`);
+    const { path, id: listingId } = await aPublishedListing(request);
+    // Without ?id= the page shows a placeholder badge for a nil id, which the
+    // image endpoint rightly 404s; the owner's real snippet needs the real id.
+    const badgePage = await request.get(`/advertise/badge?id=${listingId}`);
     expect(badgePage.ok()).toBe(true);
 
     const html = await badgePage.text();
-    const id = /\/badge\/([0-9a-f-]{36})/.exec(html)?.[1];
+    const id = new RegExp(`/badge/(${listingId})`).exec(html)?.[1];
     expect(id, "the badge page offers a snippet pointing at /badge/{id}").toBeTruthy();
 
     const svg = await request.get(`/badge/${id}`);
