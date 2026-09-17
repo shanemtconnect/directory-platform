@@ -3,6 +3,13 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import {
+  AUTH_TOKEN_TTL_SECONDS,
+  NOTIFY_AUTH_RESET,
+  NOTIFY_AUTH_VERIFY,
+  notifyAuthEmail,
+} from "@/lib/email/notify";
 
 /**
  * Self-hosted auth: sessions live in our own Postgres, so a site can be sold or
@@ -26,6 +33,36 @@ const googleConfigured =
  */
 let instance: ReturnType<typeof build> | null = null;
 
+/**
+ * The link we put in the email, built here rather than used as handed over.
+ *
+ * Better Auth composes the URL from its own baseURL and whatever `callbackURL`
+ * or `redirectTo` the CALLER supplied — which, for anything that can POST to
+ * /api/auth, is a stranger. Rebuilding it from the token alone means both
+ * links always land on our own two pages, whoever started the flow.
+ *
+ * `/api/auth` is Better Auth's default basePath and matches the route at
+ * app/api/auth/[...all]. Both move together or neither does.
+ */
+function authLink(path: string): string {
+  const base = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? "";
+  return `${base.replace(/\/$/, "")}/api/auth${path}`;
+}
+
+/**
+ * Neither callback sends anything. Both write a job row and return — see
+ * lib/email/notify.ts. Better Auth calls them inside the request that asked
+ * for the reset, and a request that waits on a mail provider is a sign-up form
+ * that hangs when Resend is slow and a lost email when it is down.
+ */
+async function queueAuthEmail(
+  kind: typeof NOTIFY_AUTH_RESET | typeof NOTIFY_AUTH_VERIFY,
+  userId: string,
+  url: string,
+): Promise<void> {
+  await notifyAuthEmail(db, PUBLIC_VIEWER, kind, { userId, url });
+}
+
 function build() {
   return betterAuth({
     database: drizzleAdapter(db, { provider: "pg", schema }),
@@ -39,6 +76,58 @@ function build() {
       // signup. Phase 4's claim ladder leans on the address being real.
       requireEmailVerification: false,
       minPasswordLength: 10,
+
+      /**
+       * Stated in the email body too, from the same constant — a message that
+       * promises an hour for a token that lasted fifteen minutes is a support
+       * ticket nobody can answer.
+       */
+      resetPasswordTokenExpiresIn: AUTH_TOKEN_TTL_SECONDS,
+
+      /**
+       * A reset is what somebody does when they think the account may not be
+       * theirs alone any more. Leaving every other session signed in would
+       * defeat the point of the exercise.
+       */
+      revokeSessionsOnPasswordReset: true,
+
+      sendResetPassword: async ({ user, token }) => {
+        await queueAuthEmail(
+          NOTIFY_AUTH_RESET,
+          user.id,
+          authLink(`/reset-password/${token}?callbackURL=${encodeURIComponent("/reset-password")}`),
+        );
+      },
+    },
+
+    /**
+     * Verification is sent, but not required: `requireEmailVerification` above
+     * stays false on purpose. An owner who has just paid attention to a claim
+     * must not be locked out by a verification email that went to spam, and
+     * the claim ladder has its own proof of ownership — a verified signup
+     * address proves nothing about the business anyway. What verification buys
+     * us is a working address to reach them on, so the consequence of not
+     * doing it is a banner, not a wall.
+     */
+    emailVerification: {
+      sendOnSignUp: true,
+      expiresIn: AUTH_TOKEN_TTL_SECONDS,
+      /**
+       * The person clicking the link is, in the overwhelming case, already
+       * signed in on the device they signed up on. Minting a session from a
+       * link in an email for anyone who is not is a bigger door than this
+       * feature needs.
+       */
+      autoSignInAfterVerification: false,
+      sendVerificationEmail: async ({ user, token }) => {
+        await queueAuthEmail(
+          NOTIFY_AUTH_VERIFY,
+          user.id,
+          authLink(
+            `/verify-email?token=${token}&callbackURL=${encodeURIComponent("/verify-email")}`,
+          ),
+        );
+      },
     },
 
     socialProviders: googleConfigured
