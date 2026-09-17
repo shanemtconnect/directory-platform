@@ -338,6 +338,13 @@ to detect.
 | `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` | **build** | `app/layout.tsx` — the analytics script's `data-domain` |
 | `UPTIME_PUSH_URL` | boot, **worker only** | `worker/index.ts` — the heartbeat push |
 
+One more optional runtime variable sits outside that list because it is not
+monitoring:
+
+| Variable | Read at | Read by |
+| --- | --- | --- |
+| `INTERNAL_REVALIDATE_SECRET` | boot, **web and worker**, same value | `app/api/internal/revalidate/route.ts` and `lib/revalidate/client.ts` — the worker POSTs the ISR paths a tier change (hourly subscription sync) or backlink boost (backlink check) left stale, and the web container calls `revalidatePath`. Unset, the route 404s and the worker logs once and skips; pages then catch up only when their ISR window turns over. |
+
 The two `NEXT_PUBLIC_` ones are inlined into the client bundle by `next build`.
 Setting either at boot does nothing at all; adding Sentry or Plausible to a
 running site is a **rebuild**, with `--build-arg`, exactly like `SITE_ENV`.

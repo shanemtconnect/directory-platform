@@ -185,6 +185,16 @@ that container only.
 
 **Optional** — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GEOCODING_API_KEY`.
 
+**Optional, but set it** — `INTERNAL_REVALIDATE_SECRET`, the same random value
+on the web service AND the worker. The worker cannot touch the web container's
+ISR cache directly, so when the hourly subscription sync lands a tier change
+(an expiry, or a renewal whose webhook was missed) or the backlink check grants
+or withdraws a boost, it POSTs the affected paths to
+`/api/internal/revalidate` with this as a bearer token. Without it the route
+404s, the worker logs once and skips, and a lapsed listing keeps its paid tier
+on the cached page until the ISR window turns over. Generate it like
+`BETTER_AUTH_SECRET` (`openssl rand -hex 32`).
+
 **Monitoring** — all four optional, none ever enforced, listed together as
 `OBSERVABILITY_ENV_OPTIONAL` in `config/validate.ts`. A site with none of them
 set boots, serves and reports nothing, which is the right default for a clone

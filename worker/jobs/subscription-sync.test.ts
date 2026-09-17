@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { auditLog, listings, subscriptions, user } from "@/lib/db/schema";
+import { auditLog, cities, listings, subscriptions, user } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { ensureProfile } from "@/lib/auth/profile";
@@ -64,7 +64,7 @@ describe("syncSubscriptions", () => {
       const s = await lapsedRow(tx);
       setClock(new Date("2026-10-20T00:00:00Z"));
       const out = await syncSubscriptions(tx, { client: null, env: ENV });
-      expect(out).toEqual({ checked: 0, reconciled: 0, skipped: true });
+      expect(out).toEqual({ checked: 0, reconciled: 0, skipped: true, revalidate: [] });
 
       const [row] = await tx.select().from(subscriptions).where(eq(subscriptions.id, s.id));
       expect(row!.status).toBe("active");
@@ -96,6 +96,18 @@ describe("syncSubscriptions", () => {
         env: ENV,
       });
       expect(out).toMatchObject({ checked: 1, reconciled: 1 });
+      // The pages the restored tier changes, for the scheduler to revalidate
+      // once this transaction has committed.
+      const [page] = await tx
+        .select({ slug: listings.slug, citySlug: cities.slug })
+        .from(listings)
+        .innerJoin(cities, eq(cities.id, listings.cityId))
+        .where(eq(listings.id, s.listingId));
+      expect(out.revalidate).toEqual([
+        `/${page!.citySlug}/${page!.slug}`,
+        `/${page!.citySlug}/${page!.slug}/reviews`,
+        `/${page!.citySlug}`,
+      ]);
 
       const [row] = await tx.select().from(subscriptions).where(eq(subscriptions.id, s.id));
       expect(row!.currentPeriodEnd?.toISOString()).toBe("2027-10-12T09:00:00.000Z");
@@ -120,6 +132,33 @@ describe("syncSubscriptions", () => {
       const [listing] = await tx.select().from(listings).where(eq(listings.id, s.listingId));
       expect(listing!.tier).toBe("free");
       expect(listing!.claimStatus).toBe("claimed");
+    });
+  });
+
+  it("names the lapsed listing's pages for revalidation — the lapse is the stale-cache case", async () => {
+    await withTestDb(async (tx) => {
+      const s = await lapsedRow(tx);
+      setClock(new Date("2026-10-20T00:00:00Z"));
+
+      const out = await syncSubscriptions(tx, {
+        client: client({
+          id: SUB, status: "EXPIRED", planId: "P-1", nextBillingTime: null, lastPaymentTime: null,
+        }),
+        env: ENV,
+      });
+
+      expect(out.revalidate).toHaveLength(3);
+      expect(out.revalidate.every((p) => p.startsWith("/"))).toBe(true);
+      expect(out.revalidate[1]).toMatch(/\/reviews$/);
+    });
+  });
+
+  it("names nothing when PayPal cannot be reached — nothing changed, nothing is stale", async () => {
+    await withTestDb(async (tx) => {
+      await lapsedRow(tx);
+      setClock(new Date("2026-10-20T00:00:00Z"));
+      const out = await syncSubscriptions(tx, { client: client("throw"), env: ENV });
+      expect(out).toMatchObject({ checked: 1, reconciled: 0, revalidate: [] });
     });
   });
 
