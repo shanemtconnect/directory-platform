@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
@@ -29,9 +30,15 @@ export default async function AccountPage({ searchParams }: Props) {
   const viewer = await currentViewer();
   const e = siteConfig.entity;
 
-  // The layout has already redirected an anonymous viewer to /login. The
-  // profile is ensured rather than read so a brand-new account has one before
-  // anything tries to scope by it.
+  // The layout redirects an anonymous viewer to /login, but a layout and its
+  // page render concurrently, so this page must not assume the redirect ran
+  // first: without its own check, ensureProfile threw on every anonymous hit
+  // and the boot log filled with a stack trace for a request that was already
+  // being redirected.
+  if (viewer.role === "public") redirect("/login?next=/account");
+
+  // The profile is ensured rather than read so a brand-new account has one
+  // before anything tries to scope by it.
   await ensureProfile(db, viewer);
   const [listings, unread, claims] = await Promise.all([
     ownerListings(db, viewer),
