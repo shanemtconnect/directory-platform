@@ -1,6 +1,6 @@
 import type { TierName } from "@/config/types";
 import type { Interval } from "@/lib/pricing";
-import { tierForPlanId } from "./plans";
+import { tierForPlanId, trialDaysFor } from "./plans";
 
 /**
  * The webhook state machine, as a pure function.
@@ -45,6 +45,8 @@ export interface CurrentSubscription {
   readonly status: string;
   readonly currentPeriodEnd: Date | null;
   readonly trialEndsAt: Date | null;
+  /** Set by the owner's own cancel request; carried until the row lapses. */
+  readonly cancelAtPeriodEnd: boolean;
 }
 
 export interface Effect {
@@ -121,7 +123,22 @@ export function addInterval(from: Date, interval: Interval): Date {
 interface DecideOpts {
   readonly env: Record<string, string | undefined>;
   readonly at: Date;
+  /**
+   * Trial length per tier. Defaults to the config; injectable so the
+   * no-trial path can be proved on a deploy whose config has trials.
+   */
+  readonly trialDays?: (tier: TierName) => number;
 }
+
+const DAY_MS = 86_400_000;
+
+/**
+ * How close to the stored period end a sale has to land to count as the
+ * renewal of that period rather than the payment FOR it. PayPal's own retry
+ * window is three days, so a first-payment webhook redelivered late still
+ * falls on the right side.
+ */
+const RENEWAL_WINDOW_MS = 3 * DAY_MS;
 
 /** Plan id -> tier, or the row's own tier. Never a guess at a higher one. */
 function resolvePlan(
@@ -148,12 +165,16 @@ export function decide(
   opts: DecideOpts,
 ): Decision {
   const { tier, interval, planId } = resolvePlan(event, current, opts.env);
+  const trialDays = (opts.trialDays ?? trialDaysFor)(tier);
   const base = {
     tier,
     interval,
     providerPlanId: planId,
     trialEndsAt: current.trialEndsAt,
-    cancelAtPeriodEnd: false,
+    // The owner's cancel request is written to the row BEFORE PayPal's
+    // CANCELLED event lands. An UPDATED, PAYMENT.FAILED or SALE arriving in
+    // between must not flip it back and hide the cancellation.
+    cancelAtPeriodEnd: current.cancelAtPeriodEnd,
     dropVerified: false,
     openVerificationCheck: false,
   } as const;
@@ -163,14 +184,19 @@ export function decide(
       const periodEnd = nextBillingTime(event) ?? current.currentPeriodEnd;
       // PayPal's first next_billing_time IS the end of the free trial when the
       // plan has one, so that date is both the period end and the trial end.
+      // A tier with no trial is charged at activation: nothing ends, and the
+      // billing page must not announce a trial that never existed.
       const trialEndsAt =
-        current.trialEndsAt ?? (current.status === "approval_pending" ? periodEnd : null);
+        current.trialEndsAt ??
+        (trialDays > 0 && current.status === "approval_pending" ? periodEnd : null);
       return {
         ...base,
         action: "activate",
         status: "active",
         currentPeriodEnd: periodEnd,
         trialEndsAt,
+        // A fresh activation is not cancelling, whatever the row said before.
+        cancelAtPeriodEnd: false,
         listingTier: tier,
         // Only on the first activation. The query refuses to open a second
         // check for a listing that already has one.
@@ -234,21 +260,35 @@ export function decide(
     }
 
     case "PAYMENT.SALE.COMPLETED": {
-      // The sale carries no next_billing_time, so the period is extended by
-      // the interval from wherever it currently ends. Extending from `now`
-      // instead would walk the billing date forward by the webhook's own
-      // latency every single renewal.
+      // Idempotent by construction: the period end is derived from what we
+      // already know, never blindly extended.
       //
-      // The fallback is for a row that is stale by more than one whole
-      // interval — a renewal webhook that was never delivered — where one
-      // interval from the old end is still in the past and would leave the
-      // customer lapsed the moment they had paid.
-      const fromStored =
-        current.currentPeriodEnd === null ? null : addInterval(current.currentPeriodEnd, interval);
-      const currentPeriodEnd =
-        fromStored !== null && fromStored.getTime() > opts.at.getTime()
-          ? fromStored
-          : addInterval(opts.at, interval);
+      //   1. A sale that carries next_billing_time says exactly when the next
+      //      one is due; that wins.
+      //   2. A sale that lands while the stored period still has more than
+      //      the renewal window to run is the payment FOR that period — the
+      //      first charge of a no-trial plan, whose ACTIVATED already set the
+      //      end — and moves nothing. Without this the row runs one interval
+      //      ahead for ever.
+      //   3. Otherwise it is the renewal, and the period is extended by one
+      //      interval from where it ends. Extending from `now` instead would
+      //      walk the billing date forward by the webhook's own latency on
+      //      every renewal.
+      //   4. A row stale by more than a whole interval — a renewal webhook
+      //      that was never delivered — gets one interval from now, so the
+      //      customer is not left lapsed the moment they have paid.
+      const stored = current.currentPeriodEnd;
+      const known = nextBillingTime(event);
+      let currentPeriodEnd: Date;
+      if (known !== null) {
+        currentPeriodEnd = known;
+      } else if (stored !== null && stored.getTime() - opts.at.getTime() > RENEWAL_WINDOW_MS) {
+        currentPeriodEnd = stored;
+      } else if (stored !== null && addInterval(stored, interval).getTime() > opts.at.getTime()) {
+        currentPeriodEnd = addInterval(stored, interval);
+      } else {
+        currentPeriodEnd = addInterval(opts.at, interval);
+      }
       return {
         ...base,
         action: "renew",
