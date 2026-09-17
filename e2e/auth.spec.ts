@@ -81,7 +81,7 @@ test.describe("auth polish", () => {
       expect(u, "the account exists").toBeDefined();
       userId = u!.id;
       const profiles = await sql<{ id: string }[]>`select id from profiles where user_id = ${userId}`;
-      const jobs = await sql<{ kind: string; payload: { url?: string } }[]>`
+      const jobs = await sql<{ kind: string; payload: { token?: string } }[]>`
         select kind, payload from job_queue where payload->>'userId' = ${userId}`;
       return { verified: u!.email_verified, profiles, jobs };
     });
@@ -98,9 +98,9 @@ test.describe("auth polish", () => {
     expect(profileCount).toBe(1);
 
     expect(rows.jobs.map((j) => j.kind)).toEqual(["notify.auth-verify"]);
-    // The link points at Better Auth's own endpoint on this origin: the token
-    // is verified there, and only then does the person reach /verify-email.
-    expect(rows.jobs[0]!.payload.url).toMatch(/^http:\/\/localhost:\d+\/api\/auth\/verify-email\?token=/);
+    // The queue carries the token and the user id; the worker builds the link
+    // (lib/auth/links.ts) and the payload is scrubbed once it has been sent.
+    expect(rows.jobs[0]!.payload.token).toMatch(/^\S{16,}$/);
     // And the queue carries an id, never the address.
     expect(JSON.stringify(rows.jobs[0]!.payload)).not.toContain(EMAIL);
   });
@@ -113,11 +113,12 @@ test.describe("auth polish", () => {
     await expect(banner.locator('[data-testid="resend-verification"]')).toBeVisible();
 
     const url = await withE2eDb(async (sql) => {
-      const [job] = await sql<{ payload: { url: string } }[]>`
+      const [job] = await sql<{ payload: { token: string } }[]>`
         select payload from job_queue
         where kind = 'notify.auth-verify' and payload->>'userId' = ${userId}
         order by created_at desc limit 1`;
-      return job!.payload.url;
+      // The same URL the worker builds — see verifyEmailLink in lib/auth/links.ts.
+      return `/api/auth/verify-email?token=${encodeURIComponent(job!.payload.token)}&callbackURL=%2Fverify-email`;
     });
 
     await page.goto(url);
@@ -189,7 +190,7 @@ test.describe("auth polish", () => {
       const tokens = await sql<{ identifier: string }[]>`
         select identifier from verification
         where value = ${userId} and identifier like 'reset-password:%'`;
-      const jobs = await sql<{ payload: { url: string } }[]>`
+      const jobs = await sql<{ payload: { token: string } }[]>`
         select payload from job_queue
         where kind = 'notify.auth-reset' and payload->>'userId' = ${userId}`;
       return { tokens, jobs };
@@ -197,17 +198,18 @@ test.describe("auth polish", () => {
     expect(queued.tokens).toHaveLength(1);
     expect(queued.jobs).toHaveLength(1);
     const token = queued.tokens[0]!.identifier.slice("reset-password:".length);
-    expect(queued.jobs[0]!.payload.url).toContain(`/api/auth/reset-password/${token}`);
+    expect(queued.jobs[0]!.payload.token).toBe(token);
   });
 
   test("the reset link sets a new password and signs every other session out", async ({
     browser,
   }) => {
     const url = await withE2eDb(async (sql) => {
-      const [job] = await sql<{ payload: { url: string } }[]>`
+      const [job] = await sql<{ payload: { token: string } }[]>`
         select payload from job_queue
         where kind = 'notify.auth-reset' and payload->>'userId' = ${userId}`;
-      return job!.payload.url;
+      // The same URL the worker builds — see passwordResetLink in lib/auth/links.ts.
+      return `/api/auth/reset-password/${encodeURIComponent(job!.payload.token)}?callbackURL=%2Freset-password`;
     });
 
     const stranger = await freshPage(browser);
