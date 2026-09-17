@@ -8,6 +8,7 @@ import { features } from "@/lib/features/flags";
 import { SaveButton } from "@/components/shortlist/SaveButton";
 import { ReviewSummary } from "@/components/reviews/ReviewSummary";
 import type { ReviewSummary as Summary } from "@/lib/db/queries/reviews";
+import { StatsBeacon } from "@/components/stats/StatsBeacon";
 
 interface Props {
   detail: Detail;
@@ -155,6 +156,11 @@ export function ListingDetail({
       </div>
 
       <p className="mt-10"><small>{category?.name} in {city.name}, {city.region ?? profile.name}</small></p>
+
+      {/* This page is ISR-cached, so the server cannot count a reader: one
+          render is served to an unknown number of people. The count comes from
+          the browser, via one inline line — see components/stats/StatsBeacon. */}
+      <StatsBeacon listingId={listing.id} metric="view" />
     </main>
   );
 }

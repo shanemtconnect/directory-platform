@@ -96,5 +96,12 @@ cron.schedule(HEARTBEAT_CRON, async () => {
   if (result === "failed") console.warn("[worker] uptime push failed");
 });
 console.log(`[worker] scheduled heartbeat (${HEARTBEAT_CRON})`);
+// Every five minutes. The counters live in Redis so a page view is never a
+// database write; this is the only thing that turns them into the owner's ROI
+// numbers, and it is also what stops Redis carrying a key per listing per day.
+schedule("flush-stats", "*/5 * * * *", async (tx) => {
+  const { flushStats } = await import("./jobs/flush-stats");
+  await flushStats(tx);
+});
 
 console.log("[worker] started");

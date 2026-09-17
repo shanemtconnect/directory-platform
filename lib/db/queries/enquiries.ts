@@ -3,6 +3,7 @@ import { enquiries, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/test/db";
+import { recordStat } from "@/lib/stats/counters";
 
 /**
  * The enquiry write, behind the same published-only gate as every public read.
@@ -63,6 +64,10 @@ export async function createEnquiry(
     .update(listings)
     .set({ enquiryCount: sql`${listings.enquiryCount} + 1` })
     .where(eq(listings.id, input.listingId));
+
+  // The owner ROI counter. Redis, never a row here: `listing_stats_daily` is
+  // written once every five minutes by the worker. Never throws.
+  await recordStat(input.listingId, "enquiry");
 
   return { outcome: "created", enquiryId: row!.id };
 }
