@@ -1,10 +1,12 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, lt, lte, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
   auditLog,
   cities,
   listings,
   processedEvents,
+  profiles,
   subscriptions,
+  user,
   verificationChecks,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
@@ -83,6 +85,12 @@ export interface CheckoutListing {
  * been granted: an `owner_id` on an unclaimed row is a claim in progress, and
  * buying a plan for a listing you have not been given is how somebody else's
  * business ends up on your card.
+ *
+ * Takes `FOR UPDATE` on the listing row. Two checkouts for one listing — a
+ * double-clicked submit, or a second tab while the return page is activating
+ * the first — are serialised on it inside the caller's transaction, so the
+ * live-subscription check that follows reads committed state rather than a
+ * moment before it. Only the listing is locked (`of`), not the joined city.
  */
 export async function listingForCheckout(
   tx: TestDb,
@@ -110,7 +118,8 @@ export async function listingForCheckout(
         ne(listings.claimStatus, "unclaimed"),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .for("update", { of: listings });
   if (!row) return null;
 
   return {
@@ -121,6 +130,77 @@ export async function listingForCheckout(
     path: `/${row.citySlug}/${row.slug}`,
     cityPath: `/${row.citySlug}`,
   };
+}
+
+/** Statuses under which a listing is being billed, or about to be retried. */
+export const LIVE_SUBSCRIPTION_STATUSES = ["active", "past_due"] as const;
+
+/**
+ * The subscription that already pays for this listing, if any. Owner-scoped
+ * through the listing join, and meant to be read AFTER `listingForCheckout`
+ * has taken the row lock. A plan change is a later task; a second live
+ * subscription for one listing is two bills for one position.
+ */
+export async function liveSubscriptionForListing(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string },
+): Promise<{ id: string; status: string } | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return null;
+  const [row] = await tx
+    .select({ id: subscriptions.id, status: subscriptions.status })
+    .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
+    .where(
+      and(
+        eq(subscriptions.listingId, input.listingId),
+        eq(listings.ownerId, input.profileId),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export interface OwnerCheckoutListing {
+  readonly id: string;
+  readonly name: string;
+  readonly tier: TierName;
+  readonly path: string;
+}
+
+/**
+ * What the checkout page offers when the URL names no listing: the viewer's
+ * own claimed listings, so they can pick the one the plan is for. Published
+ * or not — the owner is buying for their own row. Same ownership rule as
+ * `listingForCheckout`, so nothing offered here is refused a step later.
+ */
+export async function ownerCheckoutListings(
+  tx: TestDb,
+  viewer: Viewer,
+  profileId: string,
+): Promise<OwnerCheckoutListing[]> {
+  assertSignedIn(viewer);
+  if (!UUID.test(profileId)) return [];
+  const rows = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      tier: listings.tier,
+      slug: listings.slug,
+      citySlug: cities.slug,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(and(eq(listings.ownerId, profileId), ne(listings.claimStatus, "unclaimed")))
+    .orderBy(asc(listings.name));
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    tier: r.tier,
+    path: `/${r.citySlug}/${r.slug}`,
+  }));
 }
 
 export interface CreatePendingInput {
@@ -247,6 +327,7 @@ export async function subscriptionForEvent(
       status: subscriptions.status,
       currentPeriodEnd: subscriptions.currentPeriodEnd,
       trialEndsAt: subscriptions.trialEndsAt,
+      cancelAtPeriodEnd: subscriptions.cancelAtPeriodEnd,
       listingSlug: listings.slug,
       citySlug: cities.slug,
       listingClaimStatus: listings.claimStatus,
@@ -267,6 +348,7 @@ export async function subscriptionForEvent(
     status: row.status,
     currentPeriodEnd: row.currentPeriodEnd,
     trialEndsAt: row.trialEndsAt,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     listingClaimStatus: row.listingClaimStatus,
     listingPath: `/${row.citySlug}/${row.listingSlug}`,
     cityPath: `/${row.citySlug}`,
@@ -375,6 +457,7 @@ export interface OwnerSubscription {
   readonly listingId: string;
   readonly listingName: string;
   readonly listingPath: string;
+  readonly cityPath: string;
   readonly tier: TierName;
   readonly interval: Interval;
   readonly status: string;
@@ -410,6 +493,7 @@ const toOwnerSubscription = (row: OwnerRow): OwnerSubscription => ({
   listingId: row.listingId,
   listingName: row.listingName,
   listingPath: `/${row.citySlug}/${row.listingSlug}`,
+  cityPath: `/${row.citySlug}`,
   tier: row.tier,
   interval: row.interval,
   status: row.status,
@@ -455,6 +539,36 @@ export async function subscriptionForOwner(
     .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(and(eq(subscriptions.id, input.id), eq(listings.ownerId, input.profileId)))
+    .limit(1);
+  return row ? toOwnerSubscription(row as OwnerRow) : null;
+}
+
+/**
+ * The checkout return page's lookup. PayPal hands the buyer back with its own
+ * `subscription_id` on the query string; this resolves it to a row ONLY when
+ * the signed-in profile owns the listing it pays for. Any other id — a guess,
+ * or somebody else's — is null before a PayPal call or an audit row can
+ * happen, and the page renders the same thing for "not yours" and "not
+ * found".
+ */
+export async function subscriptionForOwnerByProviderId(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { providerSubscriptionId: string; profileId: string },
+): Promise<OwnerSubscription | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.profileId) || input.providerSubscriptionId.trim() === "") return null;
+  const [row] = await tx
+    .select(OWNER_COLUMNS)
+    .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(
+      and(
+        eq(subscriptions.providerSubscriptionId, input.providerSubscriptionId.trim()),
+        eq(listings.ownerId, input.profileId),
+      ),
+    )
     .limit(1);
   return row ? toOwnerSubscription(row as OwnerRow) : null;
 }
@@ -562,6 +676,15 @@ export interface ReminderTarget {
 const DAY_MS = 86_400_000;
 
 /**
+ * Who a renewal notice goes to: the account that is about to be charged
+ * (`subscriptions.user_id` -> profiles -> Better Auth user), and only if that
+ * is missing, the listing's public address. The listing's email is the
+ * enquiry inbox — info@, or whoever answered the phone when the row was
+ * scraped — and a charge notice in the wrong inbox is a chargeback.
+ */
+const PAYER_EMAIL = sql<string | null>`coalesce(${user.email}, ${listings.email})`;
+
+/**
  * Subscriptions renewing on the day `offsetDays` from today.
  *
  * The window is a whole UTC DAY, aligned to midnight rather than to the moment
@@ -598,11 +721,13 @@ export async function dueRenewalReminders(
       tier: subscriptions.tier,
       interval: subscriptions.interval,
       currentPeriodEnd: subscriptions.currentPeriodEnd,
-      email: listings.email,
+      email: PAYER_EMAIL,
     })
     .from(subscriptions)
     .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(profiles, eq(profiles.id, subscriptions.userId))
+    .leftJoin(user, eq(user.id, profiles.userId))
     .where(
       and(
         eq(subscriptions.status, "active"),
@@ -701,7 +826,7 @@ export async function reminderContext(
       listingName: listings.name,
       listingSlug: listings.slug,
       citySlug: cities.slug,
-      email: listings.email,
+      email: PAYER_EMAIL,
       tier: subscriptions.tier,
       interval: subscriptions.interval,
       currentPeriodEnd: subscriptions.currentPeriodEnd,
@@ -711,6 +836,8 @@ export async function reminderContext(
     .from(subscriptions)
     .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(profiles, eq(profiles.id, subscriptions.userId))
+    .leftJoin(user, eq(user.id, profiles.userId))
     .where(eq(subscriptions.id, subscriptionId))
     .limit(1);
   if (!row) return null;
@@ -735,11 +862,24 @@ export interface StaleSubscription {
 }
 
 /**
- * Rows that say active but whose paid period ran out more than `graceDays` ago.
- * Either a renewal webhook never arrived or the subscription really has gone;
- * only PayPal can say which, which is what the sync job asks.
+ * Rows whose paid period ran out more than `graceDays` ago and that still have
+ * something to lose or restore. Either a renewal webhook never arrived or the
+ * subscription really has gone; only PayPal can say which, which is what the
+ * sync job asks.
+ *
+ * Two kinds of row qualify:
+ *   - `active` / `past_due`: the row says paid, the date says not. The usual
+ *     case — a missed renewal, or a real lapse.
+ *   - `cancelled` / `suspended` whose LISTING still carries a paid tier: a
+ *     mid-period cancellation keeps the tier until the period ends, and this
+ *     query is how the sync job finds it on the day to perform the lapse.
+ *
+ * A cancelled row whose listing is already free is done. Without the listing
+ * join it would be selected every hour for ever — one PayPal call and one
+ * audit row per tick, and with the batch ordered by period end the oldest dead
+ * rows would crowd out the stale active ones the job exists for.
  */
-export async function staleActiveSubscriptions(
+export async function staleSubscriptionsForSync(
   tx: TestDb,
   viewer: Viewer,
   input: { graceDays: number; limit?: number },
@@ -754,9 +894,16 @@ export async function staleActiveSubscriptions(
       currentPeriodEnd: subscriptions.currentPeriodEnd,
     })
     .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .where(
       and(
-        notInArray(subscriptions.status, ["expired", "approval_pending"]),
+        or(
+          inArray(subscriptions.status, ["active", "past_due"]),
+          and(
+            inArray(subscriptions.status, ["cancelled", "suspended"]),
+            ne(listings.tier, "free"),
+          ),
+        ),
         isNotNull(subscriptions.providerSubscriptionId),
         isNotNull(subscriptions.currentPeriodEnd),
         lte(subscriptions.currentPeriodEnd, cutoff),

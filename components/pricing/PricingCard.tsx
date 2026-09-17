@@ -8,8 +8,9 @@ import { annualSaving, formatMoney, isFree, priceFor, type Interval } from "@/li
  * The call to action is built from the tier's own name and the interval, so a
  * clone that adds a plan gets a working checkout link without editing this
  * file. It carries no listing id: /pricing is a public, cached page and does
- * not know whose business is reading it. The checkout page asks for the
- * listing and refuses anyone who has not claimed one.
+ * not know whose business is reading it. The checkout page sends a signed-out
+ * visitor to /login with a way back, offers a signed-in owner a pick of their
+ * claimed listings, and refuses anyone who has not claimed one.
  */
 export function PricingCard({
   name,

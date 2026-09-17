@@ -32,6 +32,10 @@ export type CouponOutcome =
   | { outcome: "ok"; coupon: CouponRecord }
   | { outcome: "rejected"; reason: CouponRejection };
 
+export type RedeemOutcome =
+  | { outcome: "ok"; coupon: CouponRecord; redemptionId: string }
+  | { outcome: "rejected"; reason: CouponRejection };
+
 export interface CouponLookup {
   code: string;
   tier: TierName;
@@ -105,7 +109,7 @@ export async function redeemCoupon(
   tx: TestDb,
   viewer: Viewer,
   input: CouponRedemption,
-): Promise<CouponOutcome> {
+): Promise<RedeemOutcome> {
   assertSignedIn(viewer);
   const code = normaliseCode(input.code);
   if (code === "") return { outcome: "rejected", reason: "unknown" };
@@ -130,13 +134,33 @@ export async function redeemCoupon(
     .set({ redemptionCount: sql`${coupons.redemptionCount} + 1`, updatedAt: now() })
     .where(eq(coupons.id, record.id));
 
-  await tx.insert(couponRedemptions).values({
-    couponId: record.id,
-    userId: input.profileId,
-    listingId: input.listingId ?? null,
-    subscriptionId: input.subscriptionId ?? null,
-    redeemedAt: now(),
-  });
+  const [redemption] = await tx
+    .insert(couponRedemptions)
+    .values({
+      couponId: record.id,
+      userId: input.profileId,
+      listingId: input.listingId ?? null,
+      subscriptionId: input.subscriptionId ?? null,
+      redeemedAt: now(),
+    })
+    .returning({ id: couponRedemptions.id });
 
-  return { outcome: "ok", coupon: record };
+  return { outcome: "ok", coupon: record, redemptionId: redemption!.id };
+}
+
+/**
+ * The redemption is taken (under its lock) BEFORE the subscription row exists,
+ * because a rejected code must leave no pending row behind. This is the second
+ * half: once the row is there, the redemption is pointed at it.
+ */
+export async function attachRedemptionSubscription(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { redemptionId: string; subscriptionId: string },
+): Promise<void> {
+  assertSignedIn(viewer);
+  await tx
+    .update(couponRedemptions)
+    .set({ subscriptionId: input.subscriptionId, updatedAt: now() })
+    .where(eq(couponRedemptions.id, input.redemptionId));
 }

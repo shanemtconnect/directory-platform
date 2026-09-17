@@ -60,6 +60,12 @@ export function CheckoutForm({
       {state.message && (
         <p role="alert" data-testid="checkout-error">
           {state.message}
+          {state.billingLink && (
+            <>
+              {" "}
+              <a href="/account/billing">Go to Billing</a>
+            </>
+          )}
         </p>
       )}
 

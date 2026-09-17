@@ -7,7 +7,7 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { updateOwnProfile } from "@/lib/db/queries/profile";
 import { clientIp } from "@/lib/spam/client-ip";
 import { stripCrlf } from "@/lib/actions/validation";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The one write behind /account/settings.

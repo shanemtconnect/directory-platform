@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { profiles, user } from "@/lib/db/schema";
 import { ensureProfile } from "@/lib/auth/profile";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import { writeAudit } from "./audit";
 
 /**

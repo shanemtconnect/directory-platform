@@ -4,7 +4,7 @@ import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { ensureProfile } from "@/lib/auth/profile";
-import { listingForCheckout } from "@/lib/db/queries/billing";
+import { listingForCheckout, ownerCheckoutListings } from "@/lib/db/queries/billing";
 import { previewCoupon } from "@/lib/db/queries/coupons";
 import { applyDiscount, discountSummary } from "@/lib/billing/coupons";
 import { planAmount } from "@/lib/billing/plans";
@@ -27,6 +27,12 @@ import { PlanSummary } from "@/components/billing/PlanSummary";
  * A tier or interval that is not a thing we sell is the only 404: those are
  * path segments, and a URL that names a plan which does not exist is not a
  * page.
+ *
+ * With no `?listing=` at all — which is how the public pricing page links
+ * here, since it cannot know whose business is reading it — the page lists
+ * the viewer's own claimed listings and lets them pick. Each option is a plain
+ * link back to this URL with the id on it. Somebody with nothing claimed gets
+ * the refusal.
  */
 
 export const dynamic = "force-dynamic";
@@ -61,6 +67,41 @@ export default async function CheckoutPage({
   const rawCoupon = Array.isArray(query.coupon) ? query.coupon[0] : query.coupon;
 
   const profile = await ensureProfile(db, viewer);
+
+  if (listingId === undefined) {
+    const mine = await ownerCheckoutListings(db, viewer, profile.id);
+    if (mine.length > 0) {
+      const withListing = (id: string) =>
+        `${here}?listing=${encodeURIComponent(id)}` +
+        (rawCoupon !== undefined && rawCoupon.trim() !== ""
+          ? `&coupon=${encodeURIComponent(rawCoupon.trim())}`
+          : "");
+      return (
+        <main data-testid="checkout-listing-picker">
+          <h1>Checkout</h1>
+          <p>
+            Which {e.singular} is the {spec.label} plan for?
+          </p>
+          <ul>
+            {mine.map((l) => (
+              <li key={l.id}>
+                <a href={withListing(l.id)} data-testid="checkout-listing-option" rel="nofollow">
+                  {l.name}
+                </a>
+                {l.tier !== "free" && (
+                  <span className="text-sm text-muted"> — already on {siteConfig.tiers[l.tier].label}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="text-sm text-muted">
+            <a href="/pricing">Compare the plans</a> · <a href="/account">Your account</a>
+          </p>
+        </main>
+      );
+    }
+  }
+
   const listing =
     listingId === undefined
       ? null

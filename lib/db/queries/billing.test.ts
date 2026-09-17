@@ -15,12 +15,15 @@ import {
   invoiceHistory,
   listingForCheckout,
   markReminderSent,
+  ownerCheckoutListings,
   ownerSubscriptions,
   recordProcessedEvent,
+  reminderContext,
   requestCancellation,
-  staleActiveSubscriptions,
+  staleSubscriptionsForSync,
   subscriptionForEvent,
   subscriptionForOwner,
+  subscriptionForOwnerByProviderId,
 } from "./billing";
 
 const ADMIN = { role: "admin" as const, userId: "worker" };
@@ -88,6 +91,39 @@ describe("listingForCheckout", () => {
       await expect(
         listingForCheckout(tx, s.viewer, { listingId: "not-a-uuid", profileId: s.profileId }),
       ).resolves.toBeNull();
+    });
+  });
+});
+
+describe("ownerCheckoutListings", () => {
+  it("lists only the viewer's own claimed listings, published or not", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      const draft = await makeListing(tx, s.ctx, {
+        ownerId: s.profileId,
+        claimStatus: "verified",
+        status: "draft",
+      });
+      // Named as owner but the claim has not been granted: not buyable.
+      await makeListing(tx, s.ctx, { ownerId: s.profileId, claimStatus: "unclaimed" });
+      // Somebody else's.
+      const stranger = await makeOwner(tx);
+      const theirs = await makeListing(tx, s.ctx, {
+        ownerId: stranger.profileId,
+        claimStatus: "claimed",
+      });
+
+      const mine = await ownerCheckoutListings(tx, s.viewer, s.profileId);
+      expect(mine.map((l) => l.id).sort()).toEqual([s.listingId, draft].sort());
+      expect(mine[0]!.path).toMatch(/^\/[^/]+\/[^/]+$/);
+
+      // The profile id is the scope, and the page derives it from the viewer.
+      expect((await ownerCheckoutListings(tx, stranger.viewer, stranger.profileId)).map((l) => l.id))
+        .toEqual([theirs]);
+      expect(await ownerCheckoutListings(tx, s.viewer, "not-a-uuid")).toEqual([]);
+      await expect(ownerCheckoutListings(tx, { role: "public" }, s.profileId)).rejects.toThrow(
+        "FORBIDDEN",
+      );
     });
   });
 });
@@ -313,6 +349,50 @@ describe("ownerSubscriptions", () => {
   });
 });
 
+describe("subscriptionForOwnerByProviderId", () => {
+  it("resolves PayPal's id only for the profile that owns the listing", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      const id = await activated(tx, s);
+
+      const mine = await subscriptionForOwnerByProviderId(tx, s.viewer, {
+        providerSubscriptionId: fx.SUB_ID,
+        profileId: s.profileId,
+      });
+      expect(mine).toMatchObject({ id, listingId: s.listingId });
+      expect(mine?.listingPath).toMatch(/^\/[^/]+\/[^/]+$/);
+
+      // A stranger who has guessed or been shown the PayPal id learns
+      // nothing — not even that it exists.
+      const stranger = await makeOwner(tx);
+      expect(
+        await subscriptionForOwnerByProviderId(tx, stranger.viewer, {
+          providerSubscriptionId: fx.SUB_ID,
+          profileId: stranger.profileId,
+        }),
+      ).toBeNull();
+    });
+  });
+
+  it("is null for an id nobody holds, and refuses the public", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      expect(
+        await subscriptionForOwnerByProviderId(tx, s.viewer, {
+          providerSubscriptionId: "I-NOBODY",
+          profileId: s.profileId,
+        }),
+      ).toBeNull();
+      await expect(
+        subscriptionForOwnerByProviderId(tx, { role: "public" }, {
+          providerSubscriptionId: fx.SUB_ID,
+          profileId: s.profileId,
+        }),
+      ).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});
+
 describe("requestCancellation", () => {
   it("marks the row and audits it, for the owner only", async () => {
     await withTestDb(async (tx) => {
@@ -426,7 +506,60 @@ describe("dueRenewalReminders", () => {
   });
 });
 
-describe("staleActiveSubscriptions", () => {
+describe("reminder recipient", () => {
+  it("is the payer's account email, not the listing's public address", async () => {
+    await withTestDb(async (tx) => {
+      // The listing's email is the enquiry inbox — info@, or whoever answered
+      // the phone when it was scraped. The person about to be charged is the
+      // account that bought the plan.
+      const s = await scenario(tx, { email: "info@venue.example" });
+      const id = await activated(tx, s);
+      await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
+      setClock(new Date("2026-09-12T12:00:00Z"));
+
+      const [due] = await dueRenewalReminders(tx, ADMIN, { offsetDays: 30 });
+      expect(due?.email).toBe(`${s.viewer.userId}@example.test`);
+      const context = await reminderContext(tx, ADMIN, id);
+      expect(context?.email).toBe(`${s.viewer.userId}@example.test`);
+    });
+  });
+
+  it("falls back to the listing's address only when there is no payer email", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx, { email: "info@venue.example" });
+      const id = await activated(tx, s);
+      await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
+      await tx.update(subscriptions).set({ userId: null }).where(eq(subscriptions.id, id));
+      setClock(new Date("2026-09-12T12:00:00Z"));
+
+      const [due] = await dueRenewalReminders(tx, ADMIN, { offsetDays: 30 });
+      expect(due?.email).toBe("info@venue.example");
+      expect((await reminderContext(tx, ADMIN, id))?.email).toBe("info@venue.example");
+    });
+  });
+});
+
+describe("staleSubscriptionsForSync", () => {
+  it("drops a cancelled row once its listing is free, keeps it while the tier is paid", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      const id = await activated(tx, s);
+      await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
+      setClock(new Date("2026-10-16T00:00:00Z"));
+
+      // Cancelled, but the listing still carries the paid tier: the sync must
+      // still see it, because the sync is what performs the lapse.
+      await tx.update(subscriptions).set({ status: "cancelled" }).where(eq(subscriptions.id, id));
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+        .toContain(id);
+
+      // Lapsed: nothing left to lose or restore, so it is never re-fetched.
+      await tx.update(listings).set({ tier: "free" }).where(eq(listings.id, s.listingId));
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+        .not.toContain(id);
+    });
+  });
+
   it("finds active rows past their period end plus the grace days", async () => {
     await withTestDb(async (tx) => {
       const s = await scenario(tx);
@@ -434,11 +567,11 @@ describe("staleActiveSubscriptions", () => {
       await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
 
       setClock(new Date("2026-10-14T00:00:00Z"));
-      expect((await staleActiveSubscriptions(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
         .not.toContain(id);
 
       setClock(new Date("2026-10-16T00:00:00Z"));
-      expect((await staleActiveSubscriptions(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
         .toContain(id);
     });
   });

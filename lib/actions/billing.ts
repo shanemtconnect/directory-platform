@@ -35,6 +35,8 @@ export interface CheckoutState {
   message?: string;
   /** Set when the code was the problem, so the field can own the message. */
   couponError?: string;
+  /** Set when the answer is "go to Billing", so the form can link there. */
+  billingLink?: boolean;
 }
 
 const GENERIC = "Something went wrong starting your subscription. Please try again.";
@@ -102,6 +104,12 @@ export async function startCheckoutAction(
       return {
         status: "error",
         message: "You can only subscribe for a listing you have claimed.",
+      };
+    case "already-subscribed":
+      return {
+        status: "error",
+        message: "This listing already has a plan — manage it in Billing.",
+        billingLink: true,
       };
     case "no-plan":
       return { status: "error", message: "That plan is not available on this site yet." };
