@@ -75,10 +75,6 @@ function schedule(name: string, expr: string, fn: (tx: Db) => Promise<JobOutcome
   console.log(`[worker] scheduled ${name} (${expr})`);
 }
 
-// Phase 1 ships the image pipeline. Later phases add:
-//   Phase 3 — city indexing gate
-//   Phase 5 — verification expiry and renewal reminders at 30/7/0 days
-//   Phase 6 — backlink verification
 schedule("derivatives", "*/1 * * * *", async (tx) => {
   const { processPendingDerivatives } = await import("./jobs/derivatives");
   await processPendingDerivatives(tx);
