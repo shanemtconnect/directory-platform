@@ -40,6 +40,11 @@ export interface StatsRedisClient {
   ttl(key: string): Promise<number>;
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
+  /**
+   * SET NX EX: writes the key only if it is absent, with a TTL, atomically.
+   * True when this call created it — the one caller that may act on it.
+   */
+  setIfAbsent(key: string, value: string, seconds: number): Promise<boolean>;
   /** One SCAN page. Never KEYS — this server also holds the page cache. */
   scan(cursor: string, match: string, count: number): Promise<ScanPage>;
   /**
@@ -69,6 +74,10 @@ function wrap(c: RedisClientType): StatsRedisClient {
     get: (key) => c.get(key) as Promise<string | null>,
     set: async (key, value) => {
       await c.set(key, value);
+    },
+    setIfAbsent: async (key, value, seconds) => {
+      const reply = await c.set(key, value, { NX: true, EX: seconds });
+      return reply === "OK";
     },
     scan: async (cursor, match, count) => {
       const reply = await c.scan(cursor, { MATCH: match, COUNT: count });

@@ -1,7 +1,14 @@
 import { siteOrigin } from "@/lib/site-env";
 import { isBotUserAgent } from "@/lib/stats/bots";
-import { MAX_BEACON_EVENTS, isBeaconMetric, isUuid } from "@/lib/stats/keys";
-import { recordStats, type StatEvent } from "@/lib/stats/counters";
+import {
+  MAX_BEACON_EVENTS,
+  MAX_BEACON_IMPRESSIONS,
+  MAX_BEACON_VIEWS,
+  isBeaconMetric,
+  isUuid,
+} from "@/lib/stats/keys";
+import { claimDailyView, recordStats, type StatEvent } from "@/lib/stats/counters";
+import { clientIp } from "@/lib/spam/client-ip";
 import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 
 /**
@@ -14,9 +21,12 @@ import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
  * one-line inline script (`components/stats/StatsBeacon.tsx`) — no library, no
  * third-party analytics, no cookie, nothing that identifies anybody.
  *
- * What reaches Redis is a listing uuid, a date and a word. This endpoint reads
- * the user agent to decide whether the caller is a person and the IP to decide
- * whether to answer at all; neither is stored.
+ * What reaches the counters is a listing uuid, a date and a word. This
+ * endpoint reads the user agent to decide whether the caller is a person and
+ * the IP to decide whether to answer at all and whether this address has
+ * already been counted as a view of this listing today. That last check is
+ * the one place an address is written: a `stats:seen:` mark that expires in a
+ * day, never read back, never joined to anything (`lib/stats/keys.ts`).
  *
  * Never touches the database. That is the whole point of the design — a view
  * costs one INCR, and the worker turns five minutes of them into one row.
@@ -61,20 +71,47 @@ interface BeaconBody {
   events?: unknown;
 }
 
-/** Both shapes: one event inline, or a page's worth under `events`. */
+/**
+ * Both shapes: one event inline, or a page's worth under `events`.
+ *
+ * What one beacon may say is bounded here, not by the client: a (listing,
+ * metric) pair counts once however many times the body repeats it, one page is
+ * one view so only the first view survives, and impressions stop at a page of
+ * cards. Everything past those lines is dropped without comment. The only
+ * client that overshoots honestly is our own script, and a 400 would cost it
+ * the whole page's counts rather than the tail; a forged batch gets nothing
+ * to react to either way.
+ */
 function readEvents(body: BeaconBody): StatEvent[] | null {
   const raw = Array.isArray(body.events)
     ? body.events
     : [{ listingId: body.listingId, metric: body.metric }];
 
   const events: StatEvent[] = [];
+  const seen = new Set<string>();
+  let views = 0;
+  let impressions = 0;
   for (const item of raw.slice(0, MAX_BEACON_EVENTS)) {
     if (typeof item !== "object" || item === null) continue;
-    const { listingId, metric } = item as BeaconBody;
+    const { listingId: rawId, metric } = item as BeaconBody;
     // `isBeaconMetric` and not `isStatMetric`: enquiries and shortlist saves
     // are counted inside the transaction that writes the row, and must not be
     // forgeable from the internet.
-    if (isUuid(listingId) && isBeaconMetric(metric)) events.push({ listingId, metric });
+    if (!isUuid(rawId) || !isBeaconMetric(metric)) continue;
+    // Lower-cased so the same uuid in two spellings is one key in Redis and
+    // one entry here.
+    const listingId = rawId.toLowerCase();
+    const key = `${listingId}|${metric}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (metric === "view") {
+      if (views >= MAX_BEACON_VIEWS) continue;
+      views += 1;
+    } else {
+      if (impressions >= MAX_BEACON_IMPRESSIONS) continue;
+      impressions += 1;
+    }
+    events.push({ listingId, metric });
   }
   return events.length > 0 ? events : null;
 }
@@ -135,9 +172,22 @@ export async function POST(request: Request): Promise<Response> {
   const events = readEvents(body as BeaconBody);
   if (!events) return badRequest();
 
+  // One address is one view of one listing per day. A reload is not a second
+  // visitor, and neither is a script posting the same beacon in a loop — the
+  // rate limit above bounds how often it may ask, this bounds what asking is
+  // worth. Skipped when the address is unknown: with nothing to key a mark
+  // under, counting is the honest default, and a shared bucket for every
+  // unidentified visitor would let one person's view cancel everybody else's.
+  const ip = clientIp(request.headers);
+  const view = events.find((e) => e.metric === "view");
+  const counted =
+    view !== undefined && ip !== null && !(await claimDailyView(ip, view.listingId))
+      ? events.filter((e) => e !== view)
+      : events;
+
   // Fire-and-forget by contract: `recordStats` never throws, and a lost count
   // is always better than a failed request.
-  await recordStats(events);
+  if (counted.length > 0) await recordStats(counted);
   return ignored();
 }
 
