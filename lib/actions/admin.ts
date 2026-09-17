@@ -46,6 +46,9 @@ function readId(form: FormData, field: string): string | null {
 function revalidateListing(citySlug: string, slug: string, categorySlug: string | null): void {
   revalidatePath(`/${citySlug}`);
   revalidatePath(`/${citySlug}/${slug}`);
+  // The reviews sub-page is its own ISR route and 404s for an unpublished
+  // listing, so it goes stale (or comes back) with the listing itself.
+  revalidatePath(`/${citySlug}/${slug}/reviews`);
   if (categorySlug !== null) revalidatePath(`/${citySlug}/${categorySlug}`);
   revalidatePath("/admin/submissions");
 }

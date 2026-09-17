@@ -213,8 +213,10 @@ describe("removal decisions", () => {
       form({ removalRequestId: REMOVAL_ID, listingId: LISTING_ID }),
     );
 
-    // Its own page, the town it was in, and the pillar page inside that town.
+    // Its own page, its reviews page, the town it was in, and the pillar
+    // page inside that town.
     expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall");
+    expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall/reviews");
     expect(revalidatePath).toHaveBeenCalledWith("/richmond");
     expect(revalidatePath).toHaveBeenCalledWith("/richmond/barns");
     expect(revalidatePath).toHaveBeenCalledWith("/admin/removals");

@@ -162,6 +162,8 @@ async function decideRemoval(form: FormData, decision: RemovalDecision): Promise
   if (decision === "actioned" && outcome.detail !== null) {
     const { citySlug, slug, categorySlug } = outcome.detail;
     revalidatePath(`/${citySlug}/${slug}`);
+    // Its reviews sub-page is a separate ISR route that must come down too.
+    revalidatePath(`/${citySlug}/${slug}/reviews`);
     revalidatePath(`/${citySlug}`);
     if (categorySlug !== null) revalidatePath(`/${citySlug}/${categorySlug}`);
   }
