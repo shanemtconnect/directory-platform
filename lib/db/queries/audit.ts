@@ -1,7 +1,7 @@
 import { auditLog } from "@/lib/db/schema";
 import { ensureProfile } from "@/lib/auth/profile";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The one way anything writes `audit_log`.

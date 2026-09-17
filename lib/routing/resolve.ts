@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { redirects } from "@/lib/db/schema";
 import type { SiteMode } from "@/config/types";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import { resolveSlug, ROOT_SCOPE } from "./slugs";
 import type { PillarScope } from "./scope";
 

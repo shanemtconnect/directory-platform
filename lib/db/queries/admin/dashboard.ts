@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { claims, cities, listings, removalRequests, reports } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The five numbers on /admin: what is waiting for somebody.

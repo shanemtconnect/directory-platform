@@ -5,7 +5,7 @@ import {
 } from "@/lib/db/schema";
 import { publicListingColumns, publishedListings } from "@/lib/db/queries/listings";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Shortlists — the logged-out path is the point.

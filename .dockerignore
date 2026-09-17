@@ -12,13 +12,23 @@ node_modules
 .superpowers
 docs
 e2e
-test
 test-results
 playwright-report
 seeds/**/*.md
 *.log
 coverage
 
+# test/ deliberately stays IN the build context. tsconfig.json includes every
+# *.ts, `next build` type-checks the whole program, and the 33 *.test.ts files
+# import `withTestDb` from test/db.ts — excluding the directory turns every one
+# of those into a TS2307 and the image never builds. Runtime modules import
+# their `TestDb` type from lib/db/types.ts, never from test/, so the only
+# reason test/ is here at all is those test files. Excluding test/ again means
+# excluding **/*.test.ts with it, and proving it with a real
+# `docker build --target runner` first — not done yet.
+#
 # The worker stage COPYs the whole scripts/ directory (it needs seed-cli.ts
-# etc. at runtime) — but not its own dry-run test harnesses.
+# etc. at runtime) — but not its own dry-run test harnesses, or the vitest
+# files nothing at runtime imports.
 scripts/*.test.sh
+scripts/*.test.ts

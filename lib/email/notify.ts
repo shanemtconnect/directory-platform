@@ -3,7 +3,7 @@ import type { EnquiryResult } from "@/lib/db/queries/enquiries";
 import type { SubmissionResult } from "@/lib/db/queries/submissions";
 import type { RemovalDecision, RemovalRequestResult, ReportResult } from "@/lib/db/queries/trust";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The two lines the server actions add.

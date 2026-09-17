@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { categories, cities, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The one lookup behind the embeddable badge, used by both the SVG route and

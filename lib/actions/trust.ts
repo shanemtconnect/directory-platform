@@ -10,7 +10,7 @@ import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
 import { REMOVAL_REQUEST_RATE_LIMIT, REPORT_RATE_LIMIT } from "@/lib/spam/write-limit";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 import { isUuid } from "./validation";
 import { validateRemovalRequest, validateReport } from "./trust-validation";
 

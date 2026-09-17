@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { enquiries, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * The enquiry write, behind the same published-only gate as every public read.

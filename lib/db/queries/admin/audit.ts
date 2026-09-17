@@ -1,7 +1,7 @@
 import { asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { auditLog, profiles, user } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Reading the audit trail.
