@@ -475,7 +475,10 @@ function reviewsUrl(listingPath: string): string {
  * A review with no live token has already been verified — someone clicked the
  * link before the queue drained, or a retry is running after the fact — and
  * there is nothing left to send. That is a completed job, not a failure: a
- * retry would only re-send a link that no longer works.
+ * retry would only re-send a link that no longer works. The same goes for a
+ * link a resend has since replaced: the newer job sends the newer link.
+ *
+ * The token itself comes from the payload; the invite row holds its digest.
  */
 async function runReviewSubmitted(
   db: Db, d: Delivery, payload: Record<string, unknown>,
@@ -485,7 +488,11 @@ async function runReviewSubmitted(
 
   const data = await reviewNotification(db, ADMIN_VIEWER, reviewId);
   if (!data) throw new Retryable(`No review ${reviewId}`);
-  if (data.token === null) return;
+  if (data.tokenHash === null) return;
+
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+  if (hashToken(token) !== data.tokenHash) return;
 
   await deliver(d, REVIEWER, {
     to: data.authorEmail,
@@ -493,7 +500,7 @@ async function runReviewSubmitted(
       listingName: data.listing.name,
       listingUrl: siteUrl(data.listing.path),
       reviewsUrl: reviewsUrl(data.listing.path),
-      verifyUrl: siteUrl(`/review/verify/${encodeURIComponent(data.token)}`),
+      verifyUrl: siteUrl(`/review/verify/${encodeURIComponent(token)}`),
       author: data.authorDisplayName ?? "",
       rating: data.rating,
       title: data.title,

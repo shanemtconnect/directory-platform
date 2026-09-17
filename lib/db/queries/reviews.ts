@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { hashToken } from "@/lib/security/token-hash";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import {
   auditLog, cities, listings, profiles, reviews, reviewInvites, reviewReplies,
@@ -199,7 +200,9 @@ export async function createReview(
   const token = mintToken();
   await tx.insert(reviewInvites).values({
     listingId: input.listingId,
-    token,
+    // The digest, never the token: a read of this table must not publish a
+    // review. The raw token goes out in the result, to the email job only.
+    token: hashToken(token),
     sentTo: input.email,
     sentAt: now(),
   });
@@ -283,7 +286,7 @@ export async function verifyReviewToken(
       usedAt: reviewInvites.usedAt,
     })
     .from(reviewInvites)
-    .where(eq(reviewInvites.token, token))
+    .where(eq(reviewInvites.token, hashToken(token)))
     .limit(1);
   if (!invite || invite.sentTo === null) return { outcome: "unknown-token" };
 
@@ -389,7 +392,7 @@ async function inviteContext(tx: TestDb, token: string) {
       usedAt: reviewInvites.usedAt,
     })
     .from(reviewInvites)
-    .where(eq(reviewInvites.token, token))
+    .where(eq(reviewInvites.token, hashToken(token)))
     .limit(1);
   if (!invite || invite.sentTo === null) return null;
 
@@ -484,7 +487,7 @@ export async function resendReviewVerification(
   const fresh = mintToken();
   await tx
     .update(reviewInvites)
-    .set({ token: fresh, sentAt: now(), usedAt: null, updatedAt: now() })
+    .set({ token: hashToken(fresh), sentAt: now(), usedAt: null, updatedAt: now() })
     .where(eq(reviewInvites.id, ctx.invite.id));
 
   return {
@@ -767,14 +770,18 @@ export interface ReviewNotification {
   body: string | null;
   status: "pending" | "published" | "rejected" | "disputed";
   flaggedReason: string | null;
-  /** Null once the link has been used; the worker has nothing to send then. */
-  token: string | null;
+  /**
+   * The digest of the live link, or null once it has been used. Not the link:
+   * the worker gets that from the job payload and compares it against this,
+   * so a link that a resend has since replaced is never the one that goes out.
+   */
+  tokenHash: string | null;
   listing: { id: string; name: string; email: string | null; claimed: boolean; path: string };
 }
 
 /**
  * The read model the notification worker sends from. Admin-only: it carries
- * the reviewer's address and the token that publishes their review.
+ * the reviewer's address.
  */
 export async function reviewNotification(
   tx: TestDb,
@@ -829,7 +836,7 @@ export async function reviewNotification(
     body: row.body,
     status: row.status,
     flaggedReason: row.flaggedReason,
-    token: invite && invite.usedAt === null ? invite.token : null,
+    tokenHash: invite && invite.usedAt === null ? invite.token : null,
     listing: {
       id: row.listingId,
       name: row.listingName,

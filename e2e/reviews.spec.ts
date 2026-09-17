@@ -15,7 +15,7 @@ const CITY = "/richmond-north-yorkshire";
  * route handler that writes and redirects, and an ISR-cached page that has to
  * be revalidated or the reviewer follows their own link and sees nothing.
  *
- * The token is read straight out of `review_invites` because there is no mail
+ * The token is read out of the queued verification job because there is no mail
  * provider in this environment. That is the same link the worker would send.
  *
  * Rate limit: the action allows 3 reviews per IP per hour. Running the suite
@@ -44,14 +44,23 @@ async function rows<T>(
   }
 }
 
+/**
+ * `review_invites.token` holds only the digest, so the raw token is read from
+ * the queued verification email that carries it to the worker (no worker runs
+ * under Playwright, so the payload is still intact).
+ */
 async function tokenFor(email: string): Promise<string> {
-  const found = await rows<{ token: string }>(
+  const found = await rows<{ token: string | null }>(
     (sql) => sql`
-      select token from review_invites where sent_to = ${email} order by created_at desc limit 1
+      select j.payload ->> 'token' as token
+      from job_queue j
+      join reviews r on r.id::text = j.payload ->> 'reviewId'
+      where j.kind = 'notify.review.submitted' and r.author_email = ${email}
+      order by j.created_at desc limit 1
     `,
   );
   const token = found[0]?.token;
-  if (!token) throw new Error(`No review_invites row for ${email}`);
+  if (!token) throw new Error(`No queued verification email for ${email}`);
   return token;
 }
 

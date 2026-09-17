@@ -181,6 +181,16 @@ NOTIFY_KINDS.push(NOTIFY_REVIEW_SUBMITTED, NOTIFY_REVIEW_VERIFIED);
 export type ReviewJobPayload = { reviewId: string };
 
 /**
+ * The verification job also carries the token, because it has to:
+ * `review_invites.token` holds only the digest (lib/security/token-hash.ts),
+ * so there is nowhere the worker could re-read the link from. It rides in the
+ * payload only while the job is pending and `completeJob` scrubs it once the
+ * email has gone (lib/db/queries/jobs.ts). The worker still re-reads the
+ * review, so a link that has been used or replaced by a resend is never sent.
+ */
+export type ReviewLinkJobPayload = { reviewId: string; token: string };
+
+/**
  * The verification email. Enqueued inside the transaction that wrote the
  * review, so a review row without a link to confirm it cannot exist.
  */
@@ -190,7 +200,7 @@ export async function notifyReviewSubmitted(
   result: CreateReviewResult,
 ): Promise<void> {
   if (result.outcome !== "created") return;
-  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  const payload: ReviewLinkJobPayload = { reviewId: result.reviewId, token: result.token };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }
 
@@ -210,8 +220,10 @@ export async function notifyReviewVerified(
 
 /**
  * A replacement verification link. Same job kind as the first one — the worker
- * re-reads the review and picks up whatever token is live on the invite now —
- * so there is no second template and no second handler to keep in step.
+ * checks the payload's token against whatever is live on the invite now, so
+ * the earlier job, if still queued, finds its link superseded and sends
+ * nothing — and there is no second template and no second handler to keep in
+ * step.
  */
 export async function notifyReviewResent(
   tx: TestDb,
@@ -219,7 +231,7 @@ export async function notifyReviewResent(
   result: ResendReviewResult,
 ): Promise<void> {
   if (result.outcome !== "sent") return;
-  const payload: ReviewJobPayload = { reviewId: result.reviewId };
+  const payload: ReviewLinkJobPayload = { reviewId: result.reviewId, token: result.token };
   await enqueueJob(tx, viewer, { kind: NOTIFY_REVIEW_SUBMITTED, payload });
 }
 
