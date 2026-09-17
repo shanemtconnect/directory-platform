@@ -76,10 +76,13 @@ and `validateEnv` refuses to start without them (`RUNTIME_ENV` in
 `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`. The last two are there because auth is
 wired: without the secret every session cookie is signed with a key the next
 boot does not have, and without the URL the callbacks point at the wrong origin.
-The rest of `.env.example` is groundwork for later phases (R2, PayPal, email)
-and is listed in `RUNTIME_ENV_PHASE5` in `config/validate.ts`, along with the
-phase that turns each group on. Turnstile and MapTiler stay optional: both
-degrade rather than break.
+One more group is required **conditionally**: set `PAYPAL_CLIENT_ID` and the
+site is taking money, so `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` and the
+`PAYPAL_PLAN_*` ids must be there too or the boot refuses (`BILLING_ENV` in
+`config/validate.ts`). Everything else — R2, email, Turnstile, MapTiler,
+monitoring — is optional and degrades rather than breaks. The full list, with
+what each unset variable costs you, is under [Environment
+variables](#environment-variables).
 
 `NEXT_PUBLIC_*` values are inlined by `next build`, so setting one at boot does
 nothing. They are build args, and a missing one warns rather than failing.
@@ -101,6 +104,94 @@ the variable per request. So changing only the container's environment gives a
 site whose `robots.txt` says `Allow: /` while every response still says
 `noindex` — **flipping staging → production is a rebuild**, with
 `--build-arg SITE_ENV=production`.
+
+## Environment variables
+
+Every variable the code reads, in one place. "Read at" is the trap to watch:
+**build** means `next build` inlines it (a `NEXT_PUBLIC_` prefix, or
+`SITE_ENV`), so setting it on the container later does nothing; **boot** means
+the container reads it, and can be changed with a restart. The authoritative
+lists are in `config/validate.ts` — `BUILD_ENV`, `BUILD_ENV_OPTIONAL`,
+`RUNTIME_ENV`, `BILLING_ENV_SWITCH` + `BILLING_ENV`, `OBSERVABILITY_ENV_OPTIONAL`
+and `RUNTIME_ENV_PHASE5` — and `validateEnv` is what refuses a build or a boot.
+
+Generate every secret the same way: `openssl rand -hex 32`.
+
+### Required
+
+| Variable | Read at | Read by | When unset |
+| --- | --- | --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | **build** and boot | Dockerfile `ARG`; `lib/site-env.ts`, `lib/auth/server.ts`, `lib/auth/client.ts`, `worker/jobs/notify.ts` — canonicals, sitemap, JSON-LD, auth origin, links in mail | Build fails (`BUILD_ENV`); boot refuses (`RUNTIME_ENV`) |
+| `DATABASE_URL` | boot | `lib/db/client.ts` (opens on first use, not on import), `scripts/migrate.mjs`, `scripts/seed-cli.ts`, `scripts/outreach-batch.ts` | Boot refuses. Never needed at build |
+| `REDIS_URL` | boot | `cache-handler.mjs` (ISR), `lib/spam/rate-limit.ts`, `lib/stats/redis.ts`, `lib/badge/counters.ts`, `/api/health` | Boot refuses. In `next dev` the health route reports `redis: "absent"` and the view counters are off |
+| `BETTER_AUTH_SECRET` | boot | `lib/auth/server.ts` — signs session cookies | Boot refuses |
+| `BETTER_AUTH_URL` | boot | `lib/auth/server.ts` (callback origin), `worker/jobs/notify.ts` (allowed link origins) | Boot refuses. The code would fall back to `NEXT_PUBLIC_SITE_URL`; `validateEnv` requires it anyway |
+| `SITE_ENV` | **build** (and re-read per request) | `next.config.ts` `headers()`, `config/validate.ts` (`staging` waives the placeholder guard), `lib/site-env.ts` (robots.txt, sitemap) | Treated as `staging`: `noindex` site-wide. Only the literal `production` is production — see [`SITE_ENV` is a build arg](#site_env-is-a-build-arg) |
+| `WORKER_ENABLED` | boot | `worker/index.ts`, `docker-entrypoint.sh` | Worker container exits 0 at once. Set `true` on the worker service **only**; on the web service leave it unset (see Deploy) |
+
+### Billing — required once `PAYPAL_CLIENT_ID` is set
+
+`PAYPAL_CLIENT_ID` is the switch (`BILLING_ENV_SWITCH`). With it blank the site
+runs free listings only and none of the rest is checked. With it set, every
+variable in `BILLING_ENV` has to be there or the boot refuses — web and worker
+both. The `PAYPAL_PLAN_*` names are derived from `config/site.config.ts`: one
+per tier with a price above zero, per interval, upper-cased. For the shipped
+config (`essential`, `premium`) that is the four below;
+`scripts/paypal-setup.ts` prints them.
+
+| Variable | Read at | Read by | When unset |
+| --- | --- | --- | --- |
+| `PAYPAL_CLIENT_ID` | boot | `lib/billing/paypal.ts` | Billing off: `/checkout/…` shows a "not set up" panel, `/api/webhooks/paypal` answers 503 (PayPal retries), `subscription-sync` and `renewal-reminders` are no-ops |
+| `PAYPAL_CLIENT_SECRET` | boot | `lib/billing/paypal.ts` | Boot refuses when the switch is set |
+| `PAYPAL_WEBHOOK_ID` | boot | `lib/billing/paypal.ts` — `verifyWebhookSignature`, which fails closed | Boot refuses when the switch is set. A *wrong* id is the dangerous case: every delivery is rejected 401 and nothing looks broken — see [Operating the site](#operating-the-site) |
+| `PAYPAL_PLAN_ESSENTIAL_MONTHLY` `PAYPAL_PLAN_ESSENTIAL_ANNUAL` `PAYPAL_PLAN_PREMIUM_MONTHLY` `PAYPAL_PLAN_PREMIUM_ANNUAL` | boot | `lib/billing/plans.ts` — maps a tier×interval to a PayPal plan id and back | Boot refuses when the switch is set. An id not in the environment never grants a tier |
+| `PAYPAL_ENV` | boot | `lib/billing/paypal.ts`, `scripts/paypal-setup.ts` | Sandbox. Only the literal `live` hits `api-m.paypal.com`; forgetting it takes test money, which is the recoverable mistake |
+
+### Optional — the feature degrades
+
+| Variable | Read at | Read by | When unset |
+| --- | --- | --- | --- |
+| `NEXT_PUBLIC_MAPTILER_KEY` | **build** | `components/map/ListingMap.tsx` | Build warns (`BUILD_ENV_OPTIONAL`); the map is not rendered, the listings still are |
+| `NEXT_PUBLIC_MEDIA_URL` | **build** | `app/[...segments]/page.tsx` | Build warns; image URLs resolve against the site's own origin |
+| `NEXT_PUBLIC_DEMO_MODE` | **build** | `lib/blog/demo.ts` | Demo posts in `content/blog/demo/` are not loaded. Only the exact string `true` loads them |
+| `TURNSTILE_SITE_KEY` | boot | `app/add-listing`, `app/leave-review/[listingId]`, `app/report/[id]`, `app/remove/[id]` — rendered into the widget | No widget on those forms |
+| `TURNSTILE_SECRET_KEY` | boot | `lib/spam/turnstile.ts` | `NODE_ENV !== "production"`: verification skipped. Production (staging included): **every form submission rejected**, logged once. Use Cloudflare's always-pass test keys on staging (see Deploy) |
+| `RESEND_API_KEY` `EMAIL_FROM` | boot | `lib/email/sender.ts` | Either blank: warns once, sends nothing, returns `not-configured`. Enquiries are still saved; the queue looks healthy |
+| `ADMIN_NOTIFICATION_EMAIL` | boot, worker | `worker/jobs/notify.ts` | Warns once; admin-facing notifications (new submission, claim, report…) are dropped. Owner-facing mail is unaffected |
+| `R2_ACCOUNT_ID` `R2_ACCESS_KEY_ID` `R2_SECRET_ACCESS_KEY` | boot | `lib/media/r2.ts`, `lib/media/claim-docs.ts` | Claim-by-document is not offered (`claimDocsConfigured()` is false); any media call fails |
+| `R2_BUCKET_MEDIA` | boot, worker | `worker/jobs/derivatives.ts` | The derivatives job fails on every pending image, every minute, until it is set |
+| `R2_BUCKET_CLAIM_DOCS` | boot | `lib/media/claim-docs.ts`, `worker/jobs/purge-claim-docs.ts` | Claim-by-document is not offered; the purge job finds nothing and says so |
+| `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | boot | `lib/auth/server.ts` | No Google sign-in button. Both are needed for it to appear |
+| `INTERNAL_REVALIDATE_SECRET` | boot, **web and worker, same value** | `app/api/internal/revalidate/route.ts`, `lib/revalidate/client.ts` | The route 404s; the worker logs once and skips; pages the worker changed (tier lapse, badge boost) stay stale until their ISR window turns over |
+| `CACHE_NAMESPACE` | boot | `lib/cache/build-id.mjs` via `cache-handler.mjs`; `scripts/purge-cache.sh` | `nextjs`. Letters, digits, `_`, `-`, up to 64 chars — anything else **fails the boot** rather than reverting to the shared default |
+| `CACHE_SWEEP_DELAY_MS` | boot | `lib/cache/sweep.mjs` via `cache-handler.mjs` | `60000` |
+| `NEXT_BUILD_ID` | boot | `lib/cache/build-id.mjs`, `lib/observability/build-id.ts` | `.next/BUILD_ID` is read first; this is the fallback; then `dev` |
+| `MIGRATE_ON_BOOT` | boot | `docker-entrypoint.sh` — web role only | No migration at boot. Set `true` on the web service (see Deploy) |
+| `STATIC_ASSETS_DIR` | boot | `docker-entrypoint.sh` — web role only | No asset retention across deploys. Set but not writable: **refuses to boot** |
+| `PORT` `HOSTNAME` | boot | the standalone server; Dockerfile sets `3000` / `0.0.0.0` | Those defaults |
+| `SITE_FLAGS_OVERRIDE` | **build** | `config/flag-variants.ts` | Features come from `site.config.ts`. `on`/`off` exist for the two CI builds (`build:flags-on`, `build:flags-off`); never set it in production |
+| `BETTER_AUTH_RATE_LIMIT` | boot | `lib/auth/server.ts` | Rate limiting on. Only the literal `off` disables it, and only `playwright.config.ts` sets that |
+
+### Monitoring variables
+
+All optional, never enforced, and detailed in [Monitoring](#monitoring):
+`NEXT_PUBLIC_SENTRY_DSN` (**build**, browser errors), `SENTRY_DSN` (boot, server
+errors, falls back to the public one), `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` (**build**,
+no script when unset), `UPTIME_PUSH_URL` (boot, worker only).
+
+### Not yours to set
+
+`NODE_ENV`, `NEXT_PHASE` and `NEXT_RUNTIME` are set by Next itself and read by
+`lib/spam/turnstile.ts`, `lib/db/build-phase.ts`, `lib/stats/redis.ts` and
+`instrumentation.ts` to tell a build from a server. `TEST_DATABASE_URL`
+(`test/db.ts`), `E2E_PORT` (`playwright.config.ts`), `SWEEP_TEST_REDIS_URL`
+and the `DB_*` / `POSTGRES_CONTAINER` knobs of the two database shell scripts
+are test-only. `GEOCODING_API_KEY` and a non-public `MAPTILER_KEY` appear in
+`.env.example` but nothing under `lib/`, `app/`, `worker/` or `config/` reads
+either — the map reads `NEXT_PUBLIC_MAPTILER_KEY`.
+
+Variables a script reads for itself (`COOLIFY_*`, `SMOKE_*`, `KEEP_BUILD_ID`,
+`DRY_RUN`, …) are listed with that script under [Scripts](#scripts).
 
 ## Testing
 
@@ -426,6 +517,225 @@ worker whose database has gone is still a running process, and pushing "up" from
 it would hold the monitor green while no job ever runs. The log line is still
 written, with the reason, so `docker logs` explains the silence.
 
+## Operating the site
+
+### The admin console
+
+`/admin` is gated on `profiles.role = 'admin'` and nothing else. A signed-in
+user who is not one gets a **404**, not a 403 — confirming the console exists
+tells an attacker where to aim. The dashboard shows the queue counts and the
+nav; everything on it is waiting on a person.
+
+| Route | Queue | What you do there |
+| --- | --- | --- |
+| `/admin` | Dashboard | Counts per queue, towns without intro copy |
+| `/admin/submissions`, `/admin/submissions/[id]`, `/admin/submissions/page/[n]` | Listings submitted through `/add-listing` | Approve (publishes) or reject with a reason |
+| `/admin/claims`, `/admin/claims/[id]` | Ownership claims from `/claim/[listing]` — by verified email link, by outreach token, or by an uploaded document | Decide the claim. A document is fetched through `/api/admin/claims/[id]/document`, and deleted by the worker thirty days after the decision |
+| `/admin/reviews` | Reviews left through `/leave-review/[listingId]` and confirmed by email | Publish or reject |
+| `/admin/cities` ("Towns") | Every town, and which are published without intro copy | Save intro copy; set published. A town is indexable only on `seo.minListingsToIndex` published listings **and** intro copy |
+| `/admin/reports` | Reports from `/report/[id]` | Dismiss, or mark actioned |
+| `/admin/removals` | Removal requests from `/remove/[id]` | Mark actioned, or reject |
+| `/admin/audit`, `/admin/audit/[entityType]` | The audit log | Read-only |
+
+Owners have `/account`, `/account/listings/[id]`, `…/enquiries`,
+`/account/settings` and `/account/billing`. Checkout is
+`/checkout/[tier]/[interval]?listing=<id>`, returning via `/checkout/return`.
+
+### Making the first admin
+
+There is no UI for it and there should not be one — `profiles.role` is the
+only source of the admin bit, and nothing a client sends can influence it.
+Sign up through `/signup`, then promote the account in the database.
+Signing up does not create the `profiles` row (`ensureProfile` does, on the
+first write), so this inserts it. It is what `e2e/admin.spec.ts` does, in one
+statement:
+
+```sql
+insert into profiles (user_id, role)
+select id, 'admin' from "user" where email = 'you@example.co.uk'
+on conflict (user_id) do update set role = 'admin';
+```
+
+`role` is `user`, `owner` or `admin`. The same statement with `'owner'` and a
+`listings.owner_id = profiles.id` is how a listing is handed to an owner by
+hand.
+
+### Billing, start to finish
+
+An owner picks a tier and interval on `/pricing`; `/checkout/[tier]/[interval]`
+creates a PayPal subscription against the matching `PAYPAL_PLAN_*` id and sends
+them to PayPal to approve. PayPal returns them to `/checkout/return`, which
+asks PayPal for the subscription's state directly and applies it through the
+same state machine the webhook uses — so the listing shows its new tier while
+the buyer is still looking at the page. The `BILLING.SUBSCRIPTION.*` and
+`PAYMENT.SALE.COMPLETED` events then arrive at `/api/webhooks/paypal`, are
+verified against `PAYPAL_WEBHOOK_ID` (fails closed), and move
+`current_period_end` forward on every renewal; the route revalidates the
+listing and city pages the tier change touched. The worker sends renewal
+reminders 30 and 7 days before, and on, the period end (`renewal-reminders`,
+hourly at :17; deduped per subscription and period on `audit_log`). A
+cancellation does nothing until the paid period runs out: `subscription-sync`
+(hourly at :37) checks every subscription whose period ended more than **three
+days** ago against PayPal itself and lapses it to free — or extends it, if a
+renewal's webhook never arrived. PayPal unreachable changes nothing in either
+direction.
+
+**When webhooks are not landing.** `PAYPAL_WEBHOOK_ID` unset with
+`PAYPAL_CLIENT_ID` set refuses to boot, so the silent failure is a *wrong* id
+or a webhook registered against the wrong URL or events: every delivery is
+answered 401, nothing is written, and the application looks healthy while
+`current_period_end` stops moving. Symptom: paying customers dropping to free
+three days after each renewal, with the hourly sync putting them back.
+Fix: in the PayPal dashboard register (or re-check) a webhook at
+`https://<domain>/api/webhooks/paypal` subscribed to `BILLING.SUBSCRIPTION.*`
+and `PAYMENT.SALE.COMPLETED`, paste its id into `PAYPAL_WEBHOOK_ID` on **both**
+services, restart. The next `subscription-sync` tick reconciles whatever was
+missed; nothing needs replaying by hand. `scripts/paypal-setup.ts` prints this
+reminder because it deliberately does not create the webhook.
+
+### Testing gotchas
+
+`corepack pnpm test:e2e -- e2e/admin.spec.ts` does **not** run one file — the
+`--` is swallowed and the whole suite runs. The per-file form is
+`corepack pnpm exec playwright test e2e/admin.spec.ts`.
+
+Redis has **16 databases**, `0` to `15`. `redis://localhost:6380/16` is not a
+spare index, it is a connection error — and each worktree's e2e run wants its
+own index (or its own `CACHE_NAMESPACE`) so their caches and rate-limit
+counters do not collide. `redis-cli -n <db> FLUSHDB` clears one.
+
+## Worker jobs
+
+`worker/index.ts` schedules everything with node-cron inside the worker
+container: no system cron, no HTTP endpoints. Every job except the heartbeat
+runs under a Postgres advisory lock named after the job — a second worker
+reports `skipped (lock held elsewhere)` — inside one transaction, and writes a
+`job_runs` row (`ok` / `failed` with the error) that the heartbeat counts. A job may hand back ISR paths its writes left stale; they are
+POSTed to the web container **after** the lock's transaction commits (see
+`INTERNAL_REVALIDATE_SECRET`).
+
+| Job | Schedule | What it does | Needs beyond the required set |
+| --- | --- | --- | --- |
+| `derivatives` | every minute | Produces the four WebP sizes for originals with none, capped attempts per image | `R2_*`, `R2_BUCKET_MEDIA` |
+| `notify` | every **30 s** | Drains `job_queue` notifications into email: enquiries, submissions, claims, reviews, removals, auth mail | `RESEND_API_KEY`, `EMAIL_FROM`; `ADMIN_NOTIFICATION_EMAIL` for the admin copies |
+| heartbeat | every 5 min | Logs queue and run counts; GETs the push monitor. No lock, no `job_runs` row, on purpose | `UPTIME_PUSH_URL` (optional) |
+| `flush-stats` | every 5 min | Folds the Redis view counters into `listing_stats_daily` | — |
+| `purge-claim-docs` | daily 03:00 | Deletes claim documents thirty days after the claim was decided | `R2_*`, `R2_BUCKET_CLAIM_DOCS` (skips when unset) |
+| `backlink-check` | hourly :00 | Re-fetches badge backlinks — weekly for a verified one, daily for one never seen working — and grants or withdraws the `+5 rank_boost`; returns the pages to revalidate | `INTERNAL_REVALIDATE_SECRET` (optional) |
+| `badge-counters` | every minute | Moves badge impressions and clicks from Redis into `badges` | — |
+| `renewal-reminders` | hourly :17 | Queues the 30-, 7- and 0-day renewal emails, once per subscription and period | `PAYPAL_*` (no-op otherwise), the email vars for delivery |
+| `subscription-sync` | hourly :37 | Reconciles subscriptions whose paid period ended over three days ago against PayPal; lapses or extends; returns the pages to revalidate | `PAYPAL_*` (logs "not configured" otherwise), `INTERNAL_REVALIDATE_SECRET` (optional) |
+
+Every job is a no-op on a site without the feature it serves; none of them
+fails the worker. What fails the worker is a missing required variable at
+boot (`validateEnv`, same list as the web container plus the billing group
+when `PAYPAL_CLIENT_ID` is set) — it exits 1 rather than sit "up" running
+nothing.
+
+## Scripts
+
+Everything under `scripts/`, what it needs and when to reach for it.
+`scripts/seed.ts` and `scripts/seed-cli.ts` are covered under Seeding above.
+
+**`scripts/paypal-setup.ts`** — `corepack pnpm tsx scripts/paypal-setup.ts`.
+Creates the PayPal product and one plan per billable tier and interval from
+`config/site.config.ts`, then prints the `PAYPAL_PLAN_*` lines to paste into
+the environment. Needs `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`;
+`PAYPAL_ENV=live` for the real account, sandbox otherwise, and it says which at
+the top. Idempotent by **name**: a re-run reuses existing plans and prints the
+same ids. It never edits a plan's price — a price change is a new plan name
+(`planNameFor`) and a migration of the people on the old one. Run it once per
+PayPal account before turning billing on, and again after adding a tier. It
+does not create the webhook; that is a dashboard step (see Billing above).
+
+**`scripts/outreach-batch.ts`** —
+`tsx scripts/outreach-batch.ts --segment city=leeds --limit 50 --coupon-percent 50`.
+Builds one claim-outreach campaign: a campaign row, a message per unclaimed
+listing in the segment and a single-use coupon per recipient, in **one
+transaction**, and writes the CSV (stdout, or `--out FILE`; the summary goes to
+stderr so a pipe stays clean). `--segment` takes `city=<slug>` and/or
+`category=<slug>`, repeatable; `--name` names the campaign; `--actor UUID`
+records who ran it on the audit row and every coupon; `--dry-run` builds and
+prints it, then rolls the whole thing back. Needs `DATABASE_URL`. Run it when
+you are about to mail a batch of unclaimed listings, and read the CSV with
+`--dry-run` first.
+
+**`scripts/e2e-db.sh`** — `corepack pnpm test:e2e:db` (`--reset` to drop and
+rebuild). Creates `directory_e2e` if missing, migrates and seeds it, using
+`psql` inside the compose container so no local client is needed. Refuses to
+touch `directory_dev` or `directory_test` whatever `DB_NAME` says. Optional
+overrides: `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` (5433),
+`POSTGRES_CONTAINER`. Run it before a Playwright run; `--reset` after the seed
+CSVs change or a failed run left rows behind.
+
+**`scripts/deploy-coolify.sh`** —
+`COOLIFY_BASE=… COOLIFY_TOKEN=… scripts/deploy-coolify.sh web:<uuid> worker:<uuid>`.
+Triggers a Coolify deployment per argument, in order, and polls each to
+`finished` before starting the next; the first failure or timeout stops it
+with a non-zero exit. Put the app that migrates (web) first. Needs
+`COOLIFY_BASE`, `COOLIFY_TOKEN`, `jq` and `curl`; `POLL_INTERVAL_SECONDS` (5)
+and `POLL_TIMEOUT_SECONDS` (600, per app) tune the polling. Called by
+`.github/workflows/deploy.yml`; run it by hand when the workflow's secrets are
+not set up yet.
+
+**`scripts/smoke.sh`** — `scripts/smoke.sh https://example.co.uk`. Post-deploy
+check: waits up to ~90 s for `/api/health` to answer 200 with `db: "ok"`, then
+requires `/` 200 without `X-Robots-Tag: noindex`, `/sitemap.xml` 200
+advertising a listing shard on the same host, and a real listing page read out
+of that shard to 200. `SMOKE_EXPECT_NOINDEX=1` inverts the header check for a
+staging site; `SMOKE_WARMUP_ATTEMPTS` (18) and `SMOKE_WARMUP_INTERVAL_SECONDS`
+(5) set the wait. Needs `curl` and `jq`, no app secrets. The deploy workflow
+runs it; run it by hand after any manual deploy.
+
+**`scripts/verify-image.sh`** — `./scripts/verify-image.sh`. Builds the image
+and proves the things a build cannot: the cache handler imports, the entrypoint
+retains `.next/static` across two starts and refuses a read-only volume, the
+worker image starts `worker/index.ts` under tsx, `scripts/migrate.mjs` runs
+inside the prod-only runner, the worker can seed what the runner migrated,
+`SITE_ENV` really is a build arg, and `MIGRATE_ON_BOOT=true` migrates before
+serving. Needs Docker, the dev Postgres and Redis from `pnpm db:up`
+(`DEV_DATABASE_URL`, `RUNTIME_REDIS_URL` override them; it uses Redis database
+5 to stay clear of dev work), and `IMAGE` to name the tag. Run it after any
+change to the Dockerfile, the entrypoint, `cache-handler.mjs` or `migrate.mjs`.
+
+**`scripts/purge-cache.sh`** — `REDIS_URL="$REDIS_URL" ./scripts/purge-cache.sh`.
+Deletes every ISR namespace under `CACHE_NAMESPACE` (default `nextjs`) except
+the running build's, read from `.next/BUILD_ID`. `KEEP_BUILD_ID=<id>` keeps a
+different one, `KEEP_BUILD_ID=none` purges everything — the way to force every
+page to re-render now — and `DRY_RUN=1` lists without deleting. Needs
+`redis-cli` on the host and a checkout; it cannot run inside the runner image.
+Normally never needed: the app sweeps stale namespaces itself a minute after
+boot. Reach for it to force a full re-render, or to clean a Redis that
+predates the namespacing.
+
+**`scripts/reseed-dev.sh`** — `bash scripts/reseed-dev.sh`. **Destructive.**
+Drops and recreates `directory_dev`, migrates it and re-seeds from `seeds/`.
+Same `DB_*` / `POSTGRES_CONTAINER` overrides as `e2e-db.sh`; refuses
+`directory_test`. Run it after changing the seed CSVs — the seed is idempotent,
+so `pnpm seed` on an existing database would keep the old rows.
+
+**`scripts/check-niche-strings.sh`** — `corepack pnpm check:strings`. Greps
+`app`, `components`, `lib`, `worker`, `scripts` and `content` (`.ts`, `.tsx`,
+`.md`, `.mdx`, `.sh`, `.mjs`; tests and `content/blog/demo/` exempt) for the
+banned niche words and fails if any literal survives once `siteConfig.*`
+references are stripped. `docs/` and this README are not scanned. No env. CI
+runs it; run it before committing copy, and regenerate `BANNED` for a clone.
+
+**`scripts/migrate.mjs`** — `DATABASE_URL=… node scripts/migrate.mjs`. The
+production migration runner: plain ESM over the same `drizzle/` folder and the
+same `migrate()` as `drizzle-kit`, so it runs in the prod-only runner image
+where `drizzle-kit` does not exist. Idempotent (`already up to date`); exits 1
+with a message when `DATABASE_URL` is unset or unreachable. `MIGRATE_ON_BOOT`
+runs it at web boot; run it by hand for a one-off migration against a database
+you are inspecting.
+
+**`scripts/new-site.ts`** — `corepack pnpm new-site` (`--answers file.json`,
+`--dry-run`, `--target`, `--site-env`, `--keep-demo`, `--allow-placeholders`,
+`--overwrite`). The clone wizard: writes `config/site.config.ts`, the seed
+CSVs and a `.env` from your answers, after running the same validators as the
+build. No env; an existing `.env` is never touched. Run it once per clone —
+`docs/CLONING.md` is the walkthrough.
+
 ## Layout
 
 ```
@@ -434,7 +744,7 @@ lib/routing/     slug registry, slugify, PillarScope, resolver
 lib/db/          Drizzle schema (40 tables) and queries
 lib/features/    build-time flags, route guard, single navigation source
 seeds/<plural>/  cities, categories and listings CSVs, named after the entity
-scripts/         seed, reseed-dev, cache purge, the niche-string guard
+scripts/         seed, migrate, paypal-setup, outreach, deploy, smoke, cache purge — see Scripts
 content/blog/    posts; content/blog/demo/ loads only in demo mode
 e2e/             Playwright specs, run against the standalone build
 test/            rollback-per-test harness
