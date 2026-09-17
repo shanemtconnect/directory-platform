@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { authOrigin } from "@/lib/auth/links";
 import {
   AUTH_TOKEN_TTL_SECONDS,
   NOTIFY_AUTH_RESET,
@@ -34,41 +35,40 @@ const googleConfigured =
 let instance: ReturnType<typeof build> | null = null;
 
 /**
- * The link we put in the email, built here rather than used as handed over.
- *
- * Better Auth composes the URL from its own baseURL and whatever `callbackURL`
- * or `redirectTo` the CALLER supplied — which, for anything that can POST to
- * /api/auth, is a stranger. Rebuilding it from the token alone means both
- * links always land on our own two pages, whoever started the flow.
- *
- * `/api/auth` is Better Auth's default basePath and matches the route at
- * app/api/auth/[...all]. Both move together or neither does.
- */
-function authLink(path: string): string {
-  const base = process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  return `${base.replace(/\/$/, "")}/api/auth${path}`;
-}
-
-/**
  * Neither callback sends anything. Both write a job row and return — see
  * lib/email/notify.ts. Better Auth calls them inside the request that asked
  * for the reset, and a request that waits on a mail provider is a sign-up form
  * that hangs when Resend is slow and a lost email when it is down.
+ *
+ * The TOKEN is queued, not the URL Better Auth hands over. The worker builds
+ * the link from the token and our own origin (lib/auth/links.ts), so a queue
+ * row never carries an href, and the token is scrubbed from the row the
+ * moment the email has gone.
  */
 async function queueAuthEmail(
   kind: typeof NOTIFY_AUTH_RESET | typeof NOTIFY_AUTH_VERIFY,
   userId: string,
-  url: string,
+  token: string,
 ): Promise<void> {
-  await notifyAuthEmail(db, PUBLIC_VIEWER, kind, { userId, url });
+  await notifyAuthEmail(db, PUBLIC_VIEWER, kind, { userId, token });
 }
 
 function build() {
+  const origin = authOrigin();
   return betterAuth({
     database: drizzleAdapter(db, { provider: "pg", schema }),
     baseURL: process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_SITE_URL,
     secret: process.env.BETTER_AUTH_SECRET,
     appName: siteConfig.name,
+
+    /**
+     * Stated rather than inferred. Better Auth trusts its own baseURL's origin
+     * by default, which is the same value in a correctly configured site —
+     * but a default nobody can see is a default nobody notices changing, and
+     * the origin check is what decides which `callbackURL` and `Origin`
+     * headers a request may carry. One origin, ours, written down.
+     */
+    trustedOrigins: origin === null ? [] : [origin],
 
     emailAndPassword: {
       enabled: true,
@@ -92,11 +92,7 @@ function build() {
       revokeSessionsOnPasswordReset: true,
 
       sendResetPassword: async ({ user, token }) => {
-        await queueAuthEmail(
-          NOTIFY_AUTH_RESET,
-          user.id,
-          authLink(`/reset-password/${token}?callbackURL=${encodeURIComponent("/reset-password")}`),
-        );
+        await queueAuthEmail(NOTIFY_AUTH_RESET, user.id, token);
       },
     },
 
@@ -120,13 +116,7 @@ function build() {
        */
       autoSignInAfterVerification: false,
       sendVerificationEmail: async ({ user, token }) => {
-        await queueAuthEmail(
-          NOTIFY_AUTH_VERIFY,
-          user.id,
-          authLink(
-            `/verify-email?token=${token}&callbackURL=${encodeURIComponent("/verify-email")}`,
-          ),
-        );
+        await queueAuthEmail(NOTIFY_AUTH_VERIFY, user.id, token);
       },
     },
 

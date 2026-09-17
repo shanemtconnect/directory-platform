@@ -350,20 +350,24 @@ NOTIFY_KINDS.push(NOTIFY_AUTH_RESET, NOTIFY_AUTH_VERIFY);
 export const AUTH_TOKEN_TTL_SECONDS = 60 * 60;
 
 /**
- * A user id and a link — never the address, and never the name.
+ * A user id and a token — never the address, never the name, and never a URL.
  *
- * The URL has to be in the payload: it carries a single-use token that exists
- * only for the length of this one callback, so there is nothing to re-derive
- * it from later. Everything else follows the rule the other payloads follow
- * and is re-read at send time (lib/db/queries/profile.ts), which keeps a
- * personal address out of a queue table that outlives the email and means an
- * account deleted between enqueue and send is simply never written to.
+ * The token has to be in the payload: it is single-use and exists only for
+ * the length of this one callback, so there is nothing to re-derive it from
+ * later. The link is built by the worker from the token and our own origin
+ * (lib/auth/links.ts), so a queue row never carries an href that something
+ * writing to the queue could point elsewhere. Everything else follows the
+ * rule the other payloads follow and is re-read at send time
+ * (lib/db/queries/profile.ts), which keeps a personal address out of a queue
+ * table that outlives the email and means an account deleted between enqueue
+ * and send is simply never written to.
  *
- * The token in the row is the reason these jobs matter operationally: they are
- * short-lived by design (an hour), so a queue that has stalled for longer than
- * that is sending links that are already dead.
+ * The token is scrubbed from the row when the job completes
+ * (lib/db/queries/jobs.ts). Until then it is the reason these jobs matter
+ * operationally: they are short-lived by design (an hour), so a queue that
+ * has stalled for longer than that is sending links that are already dead.
  */
-export type AuthEmailJobPayload = { userId: string; url: string };
+export type AuthEmailJobPayload = { userId: string; token: string };
 
 export async function notifyAuthEmail(
   tx: TestDb,

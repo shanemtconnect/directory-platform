@@ -400,9 +400,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     case NOTIFY_CLAIM_DECIDED:
       return runClaim(db, d, job.kind, job.payload);
     case NOTIFY_AUTH_RESET:
-      return runAuthEmail(db, d, job.payload, passwordReset);
+      return runAuthEmail(db, d, job.payload, passwordReset, passwordResetLink);
     case NOTIFY_AUTH_VERIFY:
-      return runAuthEmail(db, d, job.payload, verifyEmailAddress);
+      return runAuthEmail(db, d, job.payload, verifyEmailAddress, verifyEmailLink);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -569,6 +569,7 @@ import {
   NOTIFY_AUTH_VERIFY,
 } from "@/lib/email/notify";
 import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
+import { passwordResetLink, verifyEmailLink } from "@/lib/auth/links";
 import { authEmailRecipient } from "@/lib/db/queries/profile";
 
 const ACCOUNT = "account";
@@ -583,64 +584,38 @@ const ACCOUNT = "account";
 const TOKEN_TTL_MINUTES = Math.round(AUTH_TOKEN_TTL_SECONDS / 60);
 
 /**
- * The origins a token link may point at.
- *
- * Better Auth builds the URL from its own baseURL, so in a correctly
- * configured site this always passes. It is checked anyway because the value
- * reaches here through a jsonb column — anything that can write a row in
- * `job_queue` would otherwise be writing the href of a link we send, signed
- * with our domain, to an address we look up for it. That is a phishing kit,
- * not a notification.
- */
-function isOurUrl(url: string): boolean {
-  const allowed = [process.env.BETTER_AUTH_URL, process.env.NEXT_PUBLIC_SITE_URL]
-    .filter((v): v is string => typeof v === "string" && v.trim() !== "")
-    .map((v) => {
-      try {
-        return new URL(v).origin;
-      } catch {
-        return null;
-      }
-    })
-    .filter((v): v is string => v !== null);
-
-  try {
-    return allowed.includes(new URL(url).origin);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The part of a link that is safe to write into `last_error` or a log line:
- * the origin, never the path or query, because that is where the token is.
- */
-function originOf(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "(unparseable)";
-  }
-}
-
-/**
  * A password reset or an address confirmation. One recipient — the account
  * itself — and deliberately no admin copy: a working reset link in our own
  * inbox is a way into somebody else's account.
+ *
+ * The link is built HERE, from the payload's token and our own origin. The
+ * payload reaches this function through a jsonb column, and anything that can
+ * write a row in `job_queue` would otherwise be writing the href of a link we
+ * send, signed with our domain, to an address we look up for it. That is a
+ * phishing kit, not a notification — so a `url` in the payload is not read.
+ *
+ * Nothing thrown from here names the token: `last_error` is a column an admin
+ * reads, and a log line is a place a reset link must never appear.
  */
 async function runAuthEmail(
   db: Db,
   d: Delivery,
   payload: Record<string, unknown>,
   build: typeof passwordReset,
+  link: (token: string) => string,
 ): Promise<void> {
   const userId = readId(payload, "userId");
   if (userId === null) throw new Retryable("The job carries no userId");
 
-  const url = readId(payload, "url");
-  if (url === null) throw new Retryable("The job carries no url");
-  if (!isOurUrl(url)) {
-    throw new Retryable(`The job's url is not on this site: ${originOf(url)}`);
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+
+  let url: string;
+  try {
+    url = link(token);
+  } catch (e) {
+    // Only ever "no origin configured"; the message carries no token.
+    throw new Retryable(e instanceof Error ? e.message : "The link could not be built");
   }
 
   const recipient = await authEmailRecipient(db, ADMIN_VIEWER, userId);
