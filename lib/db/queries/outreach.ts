@@ -8,7 +8,8 @@ import {
   listings,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { publishedListings } from "@/lib/db/queries/listings";
 import type { Segment } from "@/lib/outreach/segment";
 import type { TestDb } from "@/lib/db/types";
 
@@ -59,7 +60,9 @@ export async function outreachCandidates(
   if (!isAdmin(viewer)) forbid();
 
   const where: SQL[] = [
-    eq(listings.status, "published"),
+    // The viewer is an admin, for whom the gate is open; the candidates are
+    // still the published ones — an unpublished listing has nobody to write to.
+    publishedListings(PUBLIC_VIEWER),
     eq(listings.claimStatus, "unclaimed"),
     sql`coalesce(trim(${listings.email}), '') <> ''`,
     sql`not exists (
@@ -194,7 +197,7 @@ export async function createOutreachCampaign(
  */
 export async function recordOutreachClick(
   tx: TestDb,
-  _viewer: Viewer,
+  viewer: Viewer,
   token: string,
   at?: Date,
 ): Promise<{ listingId: string } | null> {
@@ -209,7 +212,7 @@ export async function recordOutreachClick(
     })
     .from(campaignMessages)
     .innerJoin(listings, eq(listings.id, campaignMessages.listingId))
-    .where(and(eq(campaignMessages.magicToken, trimmed), eq(listings.status, "published")))
+    .where(and(eq(campaignMessages.magicToken, trimmed), publishedListings(viewer)))
     .limit(1);
   if (!row) return null;
 

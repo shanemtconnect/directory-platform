@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
-import { cities, claims, removalRequests, reports } from "@/lib/db/schema";
+import { cities, claims, removalRequests, reports, reviews } from "@/lib/db/schema";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeViewer } from "@/test/admin-fixtures";
 import { makeScaffold, makeListing } from "@/test/factories";
@@ -28,12 +28,23 @@ describe("adminQueueCounts", () => {
         { listingId: live },
         { listingId: live, status: "approved" },
       ]);
+      await tx.insert(reviews).values([
+        // Verified and held: waiting for a moderator.
+        { listingId: live, authorEmail: "a@example.test", rating: 4,
+          emailVerifiedAt: new Date(), flaggedReason: "too-short" },
+        // Never verified: not anybody's work.
+        { listingId: live, authorEmail: "b@example.test", rating: 4 },
+        // Decided.
+        { listingId: live, authorEmail: "c@example.test", rating: 4,
+          emailVerifiedAt: new Date(), status: "published" },
+      ]);
 
       const counts = await adminQueueCounts(tx, admin);
       expect(counts.pendingSubmissions).toBe(1);
       expect(counts.openReports).toBe(1);
       expect(counts.openRemovals).toBe(1);
       expect(counts.pendingClaims).toBe(1);
+      expect(counts.reviewsAwaitingModeration).toBe(1);
       // The scaffold's city is published and has no intro copy.
       expect(counts.citiesAwaitingIntro).toBeGreaterThanOrEqual(1);
     });

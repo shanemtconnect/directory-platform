@@ -6,6 +6,7 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { getClaimForAdmin, DOCUMENT_RETENTION_DAYS } from "@/lib/db/queries/claims";
 import { claimDocsConfigured } from "@/lib/media/claim-docs";
 import { ClaimDecision } from "@/components/claim/ClaimDecision";
+import { AdminNav } from "@/components/admin/AdminNav";
 
 export const metadata: Metadata = {
   title: "Claim",
@@ -27,6 +28,7 @@ export default async function AdminClaimPage({ params }: Props) {
 
   return (
     <main>
+      <AdminNav current="/admin/claims" />
       <p className="text-sm text-muted"><a href="/admin/claims">← Claims</a></p>
       <h1>{claim.listingName}</h1>
 

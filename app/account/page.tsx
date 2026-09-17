@@ -50,6 +50,8 @@ export default async function AccountPage({ searchParams }: Props) {
       <UnverifiedEmailBanner />
       <p className="text-sm text-muted">
         <a href="/account/settings">Account settings</a> — name, phone, password.
+        {" · "}
+        <a href="/account/billing">Billing</a> — your plan and payments.
       </p>
 
       {message && (

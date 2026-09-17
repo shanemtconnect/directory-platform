@@ -4,7 +4,9 @@ import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { ownerListing } from "@/lib/db/queries/owner";
+import { listingStats } from "@/lib/db/queries/stats";
 import { ListingEditor } from "@/components/account/ListingEditor";
+import { ListingStats } from "@/components/stats/ListingStats";
 
 export const metadata: Metadata = {
   title: "Edit your listing",
@@ -42,6 +44,14 @@ export default async function EditListingPage({ params }: Props) {
 
   const tier = siteConfig.tiers[listing.tier];
 
+  // The ROI panel. `listingStats` carries its own owner gate (constraint 24)
+  // and caps the window at the tier's own; the page asks for the whole of that
+  // window and lets the query say how much of it this tier may see. A refusal
+  // here can only mean the ownership changed between the two reads, and the
+  // answer is the same 404 as above.
+  const stats = await listingStats(db, viewer, listing.id, tier.statsWindowDays);
+  if (!stats) notFound();
+
   return (
     <main>
       <p className="text-sm text-muted"><a href="/account">← Your account</a></p>
@@ -63,6 +73,8 @@ export default async function EditListingPage({ params }: Props) {
         showsWebsite={tier.showWebsite}
         showsSocial={tier.showSocial}
       />
+
+      <ListingStats stats={stats} headingLevel="h2" />
     </main>
   );
 }

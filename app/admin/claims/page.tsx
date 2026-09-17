@@ -3,6 +3,7 @@ import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { listPendingClaims } from "@/lib/db/queries/claims";
+import { AdminNav } from "@/components/admin/AdminNav";
 
 export const metadata: Metadata = {
   title: "Claims",
@@ -19,6 +20,7 @@ export default async function AdminClaimsPage() {
 
   return (
     <main>
+      <AdminNav current="/admin/claims" />
       <h1>Claims</h1>
       <p className="text-muted">
         {claims.length === 0

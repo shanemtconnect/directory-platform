@@ -178,6 +178,11 @@ test.describe("admin console", () => {
     await page.goto("/admin");
     await expect(page.locator('[data-testid="admin-counts"]')).toBeVisible();
     await expect(page.locator('[data-testid="admin-nav"]')).toBeVisible();
+    // Every queue the console counts is reachable from its nav — the claims
+    // queue once shipped without an entry and nobody could open it.
+    for (const href of ["/admin/claims", "/admin/reviews"]) {
+      await expect(page.locator(`[data-testid="admin-nav"] a[href="${href}"]`)).toBeVisible();
+    }
 
     await page.goto("/admin/submissions");
     const row = page.locator('[data-testid="submission-queue"] a', { hasText: listingName });

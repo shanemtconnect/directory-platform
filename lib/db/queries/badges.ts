@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { auditLog, badges, categories, cities, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { now } from "@/lib/clock";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -226,7 +226,9 @@ export async function badgesDueForCheck(
     .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(
       and(
-        eq(listings.status, "published"),
+        // The worker's viewer is an admin, for whom the gate is open; only a
+        // published listing's badge is worth checking.
+        publishedListings(PUBLIC_VIEWER),
         sql`coalesce(trim(${badges.backlinkUrl}), '') <> ''`,
         sql`(
           ${badges.lastCheckedAt} is null
