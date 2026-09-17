@@ -149,3 +149,11 @@ schedule("subscription-sync", "37 * * * *", async (tx) => {
   const { syncSubscriptions } = await import("./jobs/subscription-sync");
   await syncSubscriptions(tx);
 });
+
+// Daily, after the claim-document purge. A finished queue row is a record and
+// nothing more; the token it may once have carried was scrubbed when the job
+// finished, and a week later the ids go too. See worker/jobs/purge-jobs.ts.
+schedule("purge-jobs", "30 3 * * *", async (tx) => {
+  const { purgeFinishedJobs } = await import("./jobs/purge-jobs");
+  await purgeFinishedJobs(tx);
+});
