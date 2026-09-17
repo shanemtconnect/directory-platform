@@ -614,6 +614,11 @@ reports `skipped (lock held elsewhere)` — inside one transaction, and writes a
 POSTed to the web container **after** the lock's transaction commits (see
 `INTERNAL_REVALIDATE_SECRET`).
 
+The container's health check is a liveness file (`/tmp/worker-alive`,
+`lib/boot/liveness.ts`) the worker touches at boot and on every heartbeat;
+stale for fifteen minutes means unhealthy. Coolify needs a check that can
+report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
+
 | Job | Schedule | What it does | Needs beyond the required set |
 | --- | --- | --- | --- |
 | `derivatives` | every minute | Produces the four WebP sizes for originals with none, capped attempts per image | `R2_*`, `R2_BUCKET_MEDIA` |

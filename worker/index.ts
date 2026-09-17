@@ -1,3 +1,4 @@
+import { markAlive } from "@/lib/boot/liveness";
 import cron from "node-cron";
 import { validateEnv } from "@/config/validate";
 import { db, type Db } from "@/lib/db/client";
@@ -102,6 +103,7 @@ schedule("notify", "*/30 * * * * *", async (tx) => {
  * README's Monitoring section for the interval to set on it.
  */
 cron.schedule(HEARTBEAT_CRON, async () => {
+  markAlive();
   const result = await runHeartbeat({
     counts: (since) => jobCounts(db, since),
     log: (line) => console.log(`[worker] ${line}`),
@@ -144,6 +146,7 @@ schedule("badge-counters", "*/1 * * * *", async (tx) => {
   await flushBadgeCounters(tx);
 });
 
+markAlive();
 console.log("[worker] started");
 
 /**

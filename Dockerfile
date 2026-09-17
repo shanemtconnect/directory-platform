@@ -160,7 +160,15 @@ FROM runner AS worker
 # would fail and the container would sit permanently unhealthy while working
 # perfectly. Its liveness signal is the five-minute heartbeat in worker/index.ts
 # — watch that with UPTIME_PUSH_URL or a log alert, not with a port check.
-HEALTHCHECK NONE
+#
+# Not `HEALTHCHECK NONE`, though: Coolify sees a HEALTHCHECK instruction and
+# waits for Docker to say "healthy", and a container with no check never does
+# — every worker deploy failed after three minutes with the old container left
+# running. So the check is the liveness file worker/index.ts touches at boot and
+# on every five-minute heartbeat (lib/boot/liveness.ts): stale for fifteen
+# minutes means the event loop is wedged, which a process check would miss.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=90s --retries=3 \
+  CMD sh -c 'find /tmp/worker-alive -mmin -15 2>/dev/null | grep -q .'
 RUN rm -rf node_modules
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/worker ./worker
