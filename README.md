@@ -621,6 +621,7 @@ POSTed to the web container **after** the lock's transaction commits (see
 | heartbeat | every 5 min | Logs queue and run counts; GETs the push monitor. No lock, no `job_runs` row, on purpose | `UPTIME_PUSH_URL` (optional) |
 | `flush-stats` | every 5 min | Folds the Redis view counters into `listing_stats_daily` | — |
 | `purge-claim-docs` | daily 03:00 | Deletes claim documents thirty days after the claim was decided | `R2_*`, `R2_BUCKET_CLAIM_DOCS` (skips when unset) |
+| `purge-jobs` | daily 03:30 | Deletes `job_queue` rows that finished (done or failed) more than seven days ago; the tokens they carried were already scrubbed on completion | — |
 | `backlink-check` | hourly :00 | Re-fetches badge backlinks — weekly for a verified one, daily for one never seen working — and grants or withdraws the `+5 rank_boost`; returns the pages to revalidate | `INTERNAL_REVALIDATE_SECRET` (optional) |
 | `badge-counters` | every minute | Moves badge impressions and clicks from Redis into `badges` | — |
 | `renewal-reminders` | hourly :17 | Queues the 30-, 7- and 0-day renewal emails, once per subscription and period | `PAYPAL_*` (no-op otherwise), the email vars for delivery |
