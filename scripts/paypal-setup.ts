@@ -27,8 +27,10 @@ import {
  * What it deliberately does NOT do is change an existing plan's price. PayPal
  * prices are versioned per subscription and editing one in place does not move
  * anybody who has already subscribed; changing what a plan costs is a new plan
- * and a migration of the people on the old one, not a script run. If the
- * config price and the live plan price disagree, this says so and stops.
+ * and a migration of the people on the old one, not a script run. Matching is
+ * by NAME ONLY: an existing plan is reused as it stands, and its live price is
+ * not compared with the config. If the config price has changed, give the
+ * plan a new name (see `planNameFor`) and run this again.
  */
 
 interface NamedThing {
