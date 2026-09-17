@@ -17,6 +17,7 @@ import {
   markReminderSent,
   ownerSubscriptions,
   recordProcessedEvent,
+  reminderContext,
   requestCancellation,
   staleSubscriptionsForSync,
   subscriptionForEvent,
@@ -422,6 +423,39 @@ describe("dueRenewalReminders", () => {
       expect(due).toHaveLength(1);
       await markReminderSent(tx, ADMIN, due[0]!);
       expect(await dueRenewalReminders(tx, ADMIN, { offsetDays: 30 })).toHaveLength(0);
+    });
+  });
+});
+
+describe("reminder recipient", () => {
+  it("is the payer's account email, not the listing's public address", async () => {
+    await withTestDb(async (tx) => {
+      // The listing's email is the enquiry inbox — info@, or whoever answered
+      // the phone when it was scraped. The person about to be charged is the
+      // account that bought the plan.
+      const s = await scenario(tx, { email: "info@venue.example" });
+      const id = await activated(tx, s);
+      await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
+      setClock(new Date("2026-09-12T12:00:00Z"));
+
+      const [due] = await dueRenewalReminders(tx, ADMIN, { offsetDays: 30 });
+      expect(due?.email).toBe(`${s.viewer.userId}@example.test`);
+      const context = await reminderContext(tx, ADMIN, id);
+      expect(context?.email).toBe(`${s.viewer.userId}@example.test`);
+    });
+  });
+
+  it("falls back to the listing's address only when there is no payer email", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx, { email: "info@venue.example" });
+      const id = await activated(tx, s);
+      await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
+      await tx.update(subscriptions).set({ userId: null }).where(eq(subscriptions.id, id));
+      setClock(new Date("2026-09-12T12:00:00Z"));
+
+      const [due] = await dueRenewalReminders(tx, ADMIN, { offsetDays: 30 });
+      expect(due?.email).toBe("info@venue.example");
+      expect((await reminderContext(tx, ADMIN, id))?.email).toBe("info@venue.example");
     });
   });
 });

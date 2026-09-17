@@ -4,7 +4,9 @@ import {
   cities,
   listings,
   processedEvents,
+  profiles,
   subscriptions,
+  user,
   verificationChecks,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
@@ -602,6 +604,15 @@ export interface ReminderTarget {
 const DAY_MS = 86_400_000;
 
 /**
+ * Who a renewal notice goes to: the account that is about to be charged
+ * (`subscriptions.user_id` -> profiles -> Better Auth user), and only if that
+ * is missing, the listing's public address. The listing's email is the
+ * enquiry inbox — info@, or whoever answered the phone when the row was
+ * scraped — and a charge notice in the wrong inbox is a chargeback.
+ */
+const PAYER_EMAIL = sql<string | null>`coalesce(${user.email}, ${listings.email})`;
+
+/**
  * Subscriptions renewing on the day `offsetDays` from today.
  *
  * The window is a whole UTC DAY, aligned to midnight rather than to the moment
@@ -638,11 +649,13 @@ export async function dueRenewalReminders(
       tier: subscriptions.tier,
       interval: subscriptions.interval,
       currentPeriodEnd: subscriptions.currentPeriodEnd,
-      email: listings.email,
+      email: PAYER_EMAIL,
     })
     .from(subscriptions)
     .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(profiles, eq(profiles.id, subscriptions.userId))
+    .leftJoin(user, eq(user.id, profiles.userId))
     .where(
       and(
         eq(subscriptions.status, "active"),
@@ -741,7 +754,7 @@ export async function reminderContext(
       listingName: listings.name,
       listingSlug: listings.slug,
       citySlug: cities.slug,
-      email: listings.email,
+      email: PAYER_EMAIL,
       tier: subscriptions.tier,
       interval: subscriptions.interval,
       currentPeriodEnd: subscriptions.currentPeriodEnd,
@@ -751,6 +764,8 @@ export async function reminderContext(
     .from(subscriptions)
     .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(profiles, eq(profiles.id, subscriptions.userId))
+    .leftJoin(user, eq(user.id, profiles.userId))
     .where(eq(subscriptions.id, subscriptionId))
     .limit(1);
   if (!row) return null;

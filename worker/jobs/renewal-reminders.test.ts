@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { auditLog, jobQueue, listings, subscriptions, user } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
@@ -10,6 +10,23 @@ import { createPendingSubscription, REMINDER_ACTION } from "@/lib/db/queries/bil
 import { NOTIFY_BILLING_REMINDER } from "@/lib/email/notify";
 import { drainBillingNotifications, enqueueDueReminders } from "./renewal-reminders";
 
+/**
+ * The mail provider is replaced so the RECIPIENT can be asserted. The real
+ * sender has no credentials in the test environment and reports
+ * "not-configured", which the job treats as complete — the same completion
+ * these tests expect, only now with the address visible.
+ */
+const sent: { to: string }[] = [];
+vi.mock("@/lib/email/sender", () => ({
+  sendEmail: async (message: { to: string }) => {
+    sent.push({ to: message.to });
+    return { sent: true, id: `m-${sent.length}` };
+  },
+}));
+
+beforeEach(() => {
+  sent.length = 0;
+});
 afterEach(() => resetClock());
 
 async function activeSubscription(tx: TestDb, patch: Partial<typeof subscriptions.$inferInsert> = {}) {
@@ -129,7 +146,22 @@ describe("drainBillingNotifications", () => {
     });
   });
 
-  it("completes rather than retries when the listing has no contact address", async () => {
+  it("writes to the payer's account email, not the listing's enquiry address", async () => {
+    await withTestDb(async (tx) => {
+      const s = await activeSubscription(tx);
+      setClock(new Date("2026-09-12T04:00:00Z"));
+      await enqueueDueReminders(tx);
+
+      expect(await drainBillingNotifications(tx)).toBe(1);
+      const [sub] = await tx.select().from(subscriptions).where(eq(subscriptions.id, s.id));
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.to).not.toBe("owner@example.test");
+      expect(sent[0]!.to).toMatch(/^u_.+@example\.test$/);
+      expect(sub!.userId).not.toBeNull();
+    });
+  });
+
+  it("still sends, to the payer, when the listing has no public address", async () => {
     await withTestDb(async (tx) => {
       const s = await activeSubscription(tx);
       await tx.update(listings).set({ email: null }).where(eq(listings.id, s.listingId));
@@ -137,6 +169,21 @@ describe("drainBillingNotifications", () => {
       await enqueueDueReminders(tx);
 
       expect(await drainBillingNotifications(tx)).toBe(1);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.to).toMatch(/^u_.+@example\.test$/);
+    });
+  });
+
+  it("completes rather than retries when there is no address at all", async () => {
+    await withTestDb(async (tx) => {
+      const s = await activeSubscription(tx);
+      await tx.update(listings).set({ email: null }).where(eq(listings.id, s.listingId));
+      await tx.update(subscriptions).set({ userId: null }).where(eq(subscriptions.id, s.id));
+      setClock(new Date("2026-09-12T04:00:00Z"));
+      await enqueueDueReminders(tx);
+
+      expect(await drainBillingNotifications(tx)).toBe(1);
+      expect(sent).toHaveLength(0);
       const [job] = await tx.select().from(jobQueue);
       expect(job!.status).toBe("done");
     });
