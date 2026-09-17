@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, lt, lte, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
   auditLog,
   cities,
@@ -735,11 +735,24 @@ export interface StaleSubscription {
 }
 
 /**
- * Rows that say active but whose paid period ran out more than `graceDays` ago.
- * Either a renewal webhook never arrived or the subscription really has gone;
- * only PayPal can say which, which is what the sync job asks.
+ * Rows whose paid period ran out more than `graceDays` ago and that still have
+ * something to lose or restore. Either a renewal webhook never arrived or the
+ * subscription really has gone; only PayPal can say which, which is what the
+ * sync job asks.
+ *
+ * Two kinds of row qualify:
+ *   - `active` / `past_due`: the row says paid, the date says not. The usual
+ *     case — a missed renewal, or a real lapse.
+ *   - `cancelled` / `suspended` whose LISTING still carries a paid tier: a
+ *     mid-period cancellation keeps the tier until the period ends, and this
+ *     query is how the sync job finds it on the day to perform the lapse.
+ *
+ * A cancelled row whose listing is already free is done. Without the listing
+ * join it would be selected every hour for ever — one PayPal call and one
+ * audit row per tick, and with the batch ordered by period end the oldest dead
+ * rows would crowd out the stale active ones the job exists for.
  */
-export async function staleActiveSubscriptions(
+export async function staleSubscriptionsForSync(
   tx: TestDb,
   viewer: Viewer,
   input: { graceDays: number; limit?: number },
@@ -754,9 +767,16 @@ export async function staleActiveSubscriptions(
       currentPeriodEnd: subscriptions.currentPeriodEnd,
     })
     .from(subscriptions)
+    .innerJoin(listings, eq(listings.id, subscriptions.listingId))
     .where(
       and(
-        notInArray(subscriptions.status, ["expired", "approval_pending"]),
+        or(
+          inArray(subscriptions.status, ["active", "past_due"]),
+          and(
+            inArray(subscriptions.status, ["cancelled", "suspended"]),
+            ne(listings.tier, "free"),
+          ),
+        ),
         isNotNull(subscriptions.providerSubscriptionId),
         isNotNull(subscriptions.currentPeriodEnd),
         lte(subscriptions.currentPeriodEnd, cutoff),

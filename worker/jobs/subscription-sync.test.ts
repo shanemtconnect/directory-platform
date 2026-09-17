@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { listings, subscriptions, user } from "@/lib/db/schema";
+import { auditLog, listings, subscriptions, user } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { ensureProfile } from "@/lib/auth/profile";
@@ -117,6 +117,58 @@ describe("syncSubscriptions", () => {
         env: ENV,
       });
 
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, s.listingId));
+      expect(listing!.tier).toBe("free");
+      expect(listing!.claimStatus).toBe("claimed");
+    });
+  });
+
+  it("does not re-check a cancelled row once its listing has lapsed to free", async () => {
+    await withTestDb(async (tx) => {
+      const s = await lapsedRow(tx);
+      setClock(new Date("2026-10-20T00:00:00Z"));
+      const gone = client({
+        id: SUB, status: "CANCELLED", planId: "P-1", nextBillingTime: null, lastPaymentTime: null,
+      });
+
+      const first = await syncSubscriptions(tx, { client: gone, env: ENV });
+      expect(first).toMatchObject({ checked: 1, reconciled: 1 });
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, s.listingId));
+      expect(listing!.tier).toBe("free");
+
+      // An hour later, and every hour after that: nothing to lose or restore,
+      // so no PayPal call and no audit row.
+      setClock(new Date("2026-10-20T01:00:00Z"));
+      const second = await syncSubscriptions(tx, { client: gone, env: ENV });
+      expect(second).toMatchObject({ checked: 0, reconciled: 0 });
+
+      const cancels = await tx
+        .select()
+        .from(auditLog)
+        .where(eq(auditLog.action, "billing.cancel"));
+      expect(cancels.filter((a) => a.entityId === s.id)).toHaveLength(1);
+    });
+  });
+
+  it("still checks a cancelled row whose listing keeps a paid tier until the period ends", async () => {
+    await withTestDb(async (tx) => {
+      // Cancelled mid-period: the tier stays until current_period_end, and the
+      // sync is what performs the lapse on the day. So the row must stay in
+      // the batch until the listing is free.
+      const s = await lapsedRow(tx);
+      await tx
+        .update(subscriptions)
+        .set({ status: "cancelled", cancelAtPeriodEnd: true })
+        .where(eq(subscriptions.id, s.id));
+      setClock(new Date("2026-10-20T00:00:00Z"));
+
+      const out = await syncSubscriptions(tx, {
+        client: client({
+          id: SUB, status: "CANCELLED", planId: "P-1", nextBillingTime: null, lastPaymentTime: null,
+        }),
+        env: ENV,
+      });
+      expect(out).toMatchObject({ checked: 1, reconciled: 1 });
       const [listing] = await tx.select().from(listings).where(eq(listings.id, s.listingId));
       expect(listing!.tier).toBe("free");
       expect(listing!.claimStatus).toBe("claimed");

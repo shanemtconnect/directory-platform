@@ -1,5 +1,5 @@
 import { reconcileSubscription } from "@/lib/billing/subscriptions";
-import { staleActiveSubscriptions } from "@/lib/db/queries/billing";
+import { staleSubscriptionsForSync } from "@/lib/db/queries/billing";
 import { getPayPalClient, type PayPalClient } from "@/lib/billing/paypal";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import type { Db } from "@/lib/db/client";
@@ -47,7 +47,7 @@ export async function syncSubscriptions(
     return { checked: 0, reconciled: 0, skipped: true };
   }
 
-  const stale = await staleActiveSubscriptions(db, ADMIN_VIEWER, {
+  const stale = await staleSubscriptionsForSync(db, ADMIN_VIEWER, {
     graceDays: GRACE_DAYS,
     limit: BATCH,
   });

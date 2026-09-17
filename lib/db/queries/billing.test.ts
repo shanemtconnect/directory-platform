@@ -18,7 +18,7 @@ import {
   ownerSubscriptions,
   recordProcessedEvent,
   requestCancellation,
-  staleActiveSubscriptions,
+  staleSubscriptionsForSync,
   subscriptionForEvent,
   subscriptionForOwner,
 } from "./billing";
@@ -426,7 +426,27 @@ describe("dueRenewalReminders", () => {
   });
 });
 
-describe("staleActiveSubscriptions", () => {
+describe("staleSubscriptionsForSync", () => {
+  it("drops a cancelled row once its listing is free, keeps it while the tier is paid", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scenario(tx);
+      const id = await activated(tx, s);
+      await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
+      setClock(new Date("2026-10-16T00:00:00Z"));
+
+      // Cancelled, but the listing still carries the paid tier: the sync must
+      // still see it, because the sync is what performs the lapse.
+      await tx.update(subscriptions).set({ status: "cancelled" }).where(eq(subscriptions.id, id));
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+        .toContain(id);
+
+      // Lapsed: nothing left to lose or restore, so it is never re-fetched.
+      await tx.update(listings).set({ tier: "free" }).where(eq(listings.id, s.listingId));
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+        .not.toContain(id);
+    });
+  });
+
   it("finds active rows past their period end plus the grace days", async () => {
     await withTestDb(async (tx) => {
       const s = await scenario(tx);
@@ -434,11 +454,11 @@ describe("staleActiveSubscriptions", () => {
       await apply(tx, fx.activated(), new Date("2026-09-12T09:00:10Z"));
 
       setClock(new Date("2026-10-14T00:00:00Z"));
-      expect((await staleActiveSubscriptions(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
         .not.toContain(id);
 
       setClock(new Date("2026-10-16T00:00:00Z"));
-      expect((await staleActiveSubscriptions(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
+      expect((await staleSubscriptionsForSync(tx, ADMIN, { graceDays: 3 })).map((r) => r.id))
         .toContain(id);
     });
   });
