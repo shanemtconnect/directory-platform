@@ -78,8 +78,12 @@ export default async function CheckoutReturnPage({
       confirmed = out.outcome === "applied" && out.action === "activate";
       listingPath = owned.listingPath;
 
-      if (confirmed) {
-        // The listing ranks differently the moment its tier changes.
+      if (out.outcome === "applied") {
+        // The listing ranks and renders differently the moment its tier
+        // changes — and that is true of every change the state machine
+        // applied, not only the activation this page congratulates the buyer
+        // on. A cancellation or expiry the webhook missed and this call caught
+        // up on has moved the tier just the same.
         revalidatePath(owned.listingPath);
         revalidatePath(owned.cityPath);
       }
