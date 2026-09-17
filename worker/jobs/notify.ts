@@ -389,6 +389,10 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     case NOTIFY_CLAIM_SUBMITTED:
     case NOTIFY_CLAIM_DECIDED:
       return runClaim(db, d, job.kind, job.payload);
+    case NOTIFY_AUTH_RESET:
+      return runAuthEmail(db, d, job.payload, passwordReset);
+    case NOTIFY_AUTH_VERIFY:
+      return runAuthEmail(db, d, job.payload, verifyEmailAddress);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -530,4 +534,105 @@ async function runReviewVerified(
   }
 
   await deliver(d, ADMIN, { to: adminAddress(), ...reviewToAdmin(content) });
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Auth emails (password reset, address verification).
+ *
+ * A self-contained tail, imports included: this file is edited by several
+ * tasks in one wave and merged keep-both, so nothing above this line was
+ * touched except the two `case` lines in `run`. Import declarations are
+ * hoisted, so placing them here changes nothing about when they resolve.
+ * ---------------------------------------------------------------------------
+ */
+import {
+  AUTH_TOKEN_TTL_SECONDS,
+  NOTIFY_AUTH_RESET,
+  NOTIFY_AUTH_VERIFY,
+} from "@/lib/email/notify";
+import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
+import { authEmailRecipient } from "@/lib/db/queries/profile";
+
+const ACCOUNT = "account";
+
+/**
+ * How long the links in these two emails last, stated in the body.
+ *
+ * It has to agree with `resetPasswordTokenExpiresIn` and
+ * `emailVerification.expiresIn` in lib/auth/server.ts, which is why both read
+ * AUTH_TOKEN_TTL_SECONDS rather than each naming an hour.
+ */
+const TOKEN_TTL_MINUTES = Math.round(AUTH_TOKEN_TTL_SECONDS / 60);
+
+/**
+ * The origins a token link may point at.
+ *
+ * Better Auth builds the URL from its own baseURL, so in a correctly
+ * configured site this always passes. It is checked anyway because the value
+ * reaches here through a jsonb column — anything that can write a row in
+ * `job_queue` would otherwise be writing the href of a link we send, signed
+ * with our domain, to an address we look up for it. That is a phishing kit,
+ * not a notification.
+ */
+function isOurUrl(url: string): boolean {
+  const allowed = [process.env.BETTER_AUTH_URL, process.env.NEXT_PUBLIC_SITE_URL]
+    .filter((v): v is string => typeof v === "string" && v.trim() !== "")
+    .map((v) => {
+      try {
+        return new URL(v).origin;
+      } catch {
+        return null;
+      }
+    })
+    .filter((v): v is string => v !== null);
+
+  try {
+    return allowed.includes(new URL(url).origin);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The part of a link that is safe to write into `last_error` or a log line:
+ * the origin, never the path or query, because that is where the token is.
+ */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "(unparseable)";
+  }
+}
+
+/**
+ * A password reset or an address confirmation. One recipient — the account
+ * itself — and deliberately no admin copy: a working reset link in our own
+ * inbox is a way into somebody else's account.
+ */
+async function runAuthEmail(
+  db: Db,
+  d: Delivery,
+  payload: Record<string, unknown>,
+  build: typeof passwordReset,
+): Promise<void> {
+  const userId = readId(payload, "userId");
+  if (userId === null) throw new Retryable("The job carries no userId");
+
+  const url = readId(payload, "url");
+  if (url === null) throw new Retryable("The job carries no url");
+  if (!isOurUrl(url)) {
+    throw new Retryable(`The job's url is not on this site: ${originOf(url)}`);
+  }
+
+  const recipient = await authEmailRecipient(db, ADMIN_VIEWER, userId);
+  // Not retryable: the account has gone, so there is nobody to tell and
+  // nothing a later attempt could do about it.
+  if (!recipient) return;
+
+  await deliver(d, ACCOUNT, {
+    to: recipient.email,
+    ...build({ name: recipient.name, url, expiresInMinutes: TOKEN_TTL_MINUTES }),
+  });
 }

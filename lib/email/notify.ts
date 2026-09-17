@@ -292,3 +292,66 @@ export async function notifyRenewal(
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind: NOTIFY_BILLING_REMINDER, payload: { ...payload } });
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Auth emails (password reset, address verification).
+ *
+ * Appended as a block rather than threaded through the constants above: this
+ * file is edited by several tasks in the same wave and merged keep-both, so a
+ * self-contained tail is the shape that survives that. The kinds are pushed
+ * onto NOTIFY_KINDS for the same reason.
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * The two token emails. Queued like everything else rather than sent inline
+ * from Better Auth's callback, for the same reason the enquiry form does not
+ * send its own mail: a slow Resend must never be a slow sign-up, and a failed
+ * send must be retried rather than lost inside a request that has already
+ * returned.
+ */
+export const NOTIFY_AUTH_RESET = "notify.auth-reset";
+export const NOTIFY_AUTH_VERIFY = "notify.auth-verify";
+
+NOTIFY_KINDS.push(NOTIFY_AUTH_RESET, NOTIFY_AUTH_VERIFY);
+
+/**
+ * How long a reset or verification token lives, in seconds.
+ *
+ * One constant, because two things have to agree about it: lib/auth/server.ts
+ * configures Better Auth with it, and the worker states it in the email body.
+ * A body that promises an hour for a token that lasted fifteen minutes is a
+ * support ticket, so the number is not written twice.
+ *
+ * An hour is Better Auth's own default and the right order of magnitude: long
+ * enough to survive a mail queue and a person who reads their email after
+ * lunch, short enough that a link sitting in an exported mailbox is not a
+ * standing key to the account.
+ */
+export const AUTH_TOKEN_TTL_SECONDS = 60 * 60;
+
+/**
+ * A user id and a link — never the address, and never the name.
+ *
+ * The URL has to be in the payload: it carries a single-use token that exists
+ * only for the length of this one callback, so there is nothing to re-derive
+ * it from later. Everything else follows the rule the other payloads follow
+ * and is re-read at send time (lib/db/queries/profile.ts), which keeps a
+ * personal address out of a queue table that outlives the email and means an
+ * account deleted between enqueue and send is simply never written to.
+ *
+ * The token in the row is the reason these jobs matter operationally: they are
+ * short-lived by design (an hour), so a queue that has stalled for longer than
+ * that is sending links that are already dead.
+ */
+export type AuthEmailJobPayload = { userId: string; url: string };
+
+export async function notifyAuthEmail(
+  tx: TestDb,
+  viewer: Viewer,
+  kind: typeof NOTIFY_AUTH_RESET | typeof NOTIFY_AUTH_VERIFY,
+  payload: AuthEmailJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind, payload });
+}

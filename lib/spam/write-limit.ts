@@ -154,3 +154,33 @@ export const REVIEW_REPLY_RATE_LIMIT = { limit: 20, windowSeconds: 3600 } as con
  * enough to use the button as a way to pester somebody else's inbox.
  */
 export const REVIEW_RESEND_RATE_LIMIT = { limit: 1, windowSeconds: 3600 } as const;
+
+/**
+ * Five an hour, in front of /forgot-password.
+ *
+ * This one is NOT covered by AUTH_RATE_LIMIT: the page posts to a server
+ * action, which reaches Better Auth through `auth.api` rather than through
+ * app/api/auth/[...all], so the counter on that route never sees it. Sized for
+ * a person who mistypes their address once and asks again, because the abuse
+ * it stops is not a break-in — every reply is identical whether the address
+ * exists or not — but the mail it causes US to send to a third party. An
+ * unlimited form here is a free emailer pointed at anyone's inbox, signed with
+ * our domain.
+ *
+ * Resending a verification email needs no budget of its own: the button calls
+ * /api/auth directly, so AUTH_RATE_LIMIT already counts it.
+ */
+export const FORGOT_PASSWORD_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as const;
+
+/**
+ * Three an hour per ADDRESS, alongside the per-connection budget above.
+ *
+ * The ip counter stops one client leaning on the form; it does nothing about
+ * a botnet, or anyone rotating addresses, pointing the form at one victim's
+ * inbox — and every request past the first mints another live reset token
+ * for that account, because Better Auth does not revoke the previous one.
+ * Keyed by a hash of the lowercased address so the Redis key is not personal
+ * data. When this one is spent the reply is the same "sent" sentence and no
+ * token is minted: a different answer would be the enumeration oracle.
+ */
+export const FORGOT_PASSWORD_EMAIL_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
