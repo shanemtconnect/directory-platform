@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 import { siteConfig } from "@/config/site.config";
 import { siteUrl } from "@/lib/schema/builders";
 import { slugify } from "@/lib/routing/slugify";
@@ -29,11 +30,13 @@ import { slugify } from "@/lib/routing/slugify";
  *   - the same check runs again on every redirect hop, since a 302 to a
  *     private address is the standard way round a check that only looks at
  *     the URL it was given;
+ *   - the socket connects to the address the check APPROVED, not to whatever
+ *     DNS says a moment later. The resolve and the connect are two lookups,
+ *     and a record with a one-second TTL can answer public for the first and
+ *     127.0.0.1 for the second (DNS rebinding). So the fetch goes through an
+ *     undici Agent whose `lookup` answers only from a pin the guard wrote,
+ *     re-pinned on every hop — see `pinnedLookup`;
  *   - at most three hops, a 10-second budget and a capped body.
- *
- * There is a residual DNS-rebinding window between the resolve and the
- * connect that only a pinned-address socket can close; see the note on
- * `assertPublicUrl`.
  */
 
 export type Resolver = (hostname: string) => Promise<string[]>;
@@ -169,6 +172,7 @@ function ipv6IsPrivate(bytes: Uint8Array): boolean {
 
   if ((bytes[0]! & 0xfe) === 0xfc) return true; // fc00::/7 unique local
   if (bytes[0] === 0xfe && (bytes[1]! & 0xc0) === 0x80) return true; // fe80::/10 link local
+  if (bytes[0] === 0xfe && (bytes[1]! & 0xc0) === 0xc0) return true; // fec0::/10 site local (deprecated)
   if (bytes[0] === 0xff) return true; // ff00::/8 multicast
   return false;
 }
@@ -192,22 +196,26 @@ const defaultResolver: Resolver = async (hostname) => {
   return results.map((r) => r.address);
 };
 
+export interface ApprovedUrl {
+  url: URL;
+  /**
+   * Every address the host answered with, all of them public — or, for a
+   * literal address, that address. What the socket is allowed to connect to.
+   */
+  addresses: string[];
+}
+
 /**
  * Parses `raw`, refuses anything not http(s), and refuses any host that does
- * not resolve exclusively to public addresses.
- *
- * The gap this cannot close on its own: DNS is resolved here and again by the
- * socket, so a record with a one-second TTL can answer public now and private
- * a moment later (DNS rebinding). Closing it properly needs a custom
- * `lookup` on the agent that pins the address this function approved — worth
- * doing if this ever runs somewhere with an instance-metadata endpoint.
- * Until then the guard raises the cost considerably without being absolute,
- * and the worker holds no cloud credentials.
+ * not resolve exclusively to public addresses. Returns the URL together with
+ * the addresses it approved, because approving is only half the job: the
+ * socket has to be held to the same answer (`pinnedLookup`), or a record
+ * with a one-second TTL can answer public here and private to the connect.
  */
-export async function assertPublicUrl(
+export async function resolvePublicUrl(
   raw: string,
   resolve: Resolver = defaultResolver,
-): Promise<URL> {
+): Promise<ApprovedUrl> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -233,7 +241,7 @@ export async function assertPublicUrl(
   const literal = url.hostname.replace(/^\[|\]$/g, "");
   if (isIP(literal) !== 0) {
     if (isPrivateAddress(literal)) throw new SsrfRefusal(`refused private address ${literal}`);
-    return url;
+    return { url, addresses: [literal] };
   }
 
   let addresses: string[];
@@ -251,7 +259,51 @@ export async function assertPublicUrl(
       throw new SsrfRefusal(`refused private address ${address} for ${url.hostname}`);
     }
   }
-  return url;
+  return { url, addresses };
+}
+
+/** `resolvePublicUrl` for callers that only want the verdict. */
+export async function assertPublicUrl(
+  raw: string,
+  resolve: Resolver = defaultResolver,
+): Promise<URL> {
+  return (await resolvePublicUrl(raw, resolve)).url;
+}
+
+/**
+ * A `lookup` for the connector that never asks DNS.
+ *
+ * `net.connect` resolves the hostname itself, through whatever `lookup` it is
+ * given, and by default that is a second, independent DNS query — the one an
+ * attacker answers differently. This one answers only from `pins`, which
+ * `checkBacklink` writes with the addresses `resolvePublicUrl` just approved
+ * and rewrites on every hop. A host with no pin is refused outright rather
+ * than looked up, so there is no path from "the guard did not approve this"
+ * to "a socket opened anyway".
+ *
+ * Node calls it with `all: true` when it wants every address (happy
+ * eyeballs) and without it when it wants one; both shapes are answered.
+ */
+export function pinnedLookup(pins: ReadonlyMap<string, readonly string[]>): LookupFunction {
+  return (hostname, options, callback) => {
+    const addresses = pins.get(hostname.toLowerCase()) ?? [];
+    if (addresses.length === 0) {
+      const err: NodeJS.ErrnoException = new Error(
+        `refused: ${hostname} was not approved for this check`,
+      );
+      err.code = "ENOTFOUND";
+      callback(err, options.all ? [] : "");
+      return;
+    }
+    const entries = addresses.map((address) => ({ address, family: isIP(address) }));
+    // Honour a family filter when it can be honoured; otherwise every pinned
+    // address is fair game, and the stack picks.
+    const wanted = options.family === 4 || options.family === 6 ? options.family : null;
+    const filtered = wanted === null ? entries : entries.filter((e) => e.family === wanted);
+    const answer = filtered.length > 0 ? filtered : entries;
+    if (options.all) callback(null, answer);
+    else callback(null, answer[0]!.address, answer[0]!.family);
+  };
 }
 
 /**
@@ -349,11 +401,33 @@ async function readCapped(response: Response): Promise<string> {
   return chunks.join("");
 }
 
+/**
+ * The fetch the check goes through. Global `fetch`'s signature satisfies it,
+ * which is what the tests hand in; the default is undici's own, because only
+ * undici's fetch accepts an undici Agent as its `dispatcher` — Node's bundled
+ * copy is a different build and rejects the handler interface.
+ */
+export type BacklinkFetch = (
+  url: string,
+  init: RequestInit & { dispatcher: Dispatcher },
+) => Promise<Response>;
+
+const defaultFetch: BacklinkFetch = (url, init) =>
+  // undici's Response is the same implementation Node's global one is built
+  // from; the types are declared twice, not different.
+  undiciFetch(url, init as unknown as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
+
 export interface BacklinkCheckDeps {
   resolve?: Resolver;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: BacklinkFetch;
   timeoutMs?: number;
   maxRedirects?: number;
+  /**
+   * Builds the dispatcher every fetch in this check goes through, from the
+   * pinned lookup its connector must use. Tests capture the lookup here; the
+   * default is a plain undici Agent, closed when the check ends.
+   */
+  agentFactory?: (lookup: LookupFunction) => Dispatcher;
 }
 
 export interface BacklinkCheckResult {
@@ -377,13 +451,46 @@ export async function checkBacklink(
   deps: BacklinkCheckDeps = {},
 ): Promise<BacklinkCheckResult> {
   const resolve = deps.resolve ?? defaultResolver;
-  const fetchImpl = deps.fetchImpl ?? fetch;
+  const fetchImpl = deps.fetchImpl ?? defaultFetch;
   const timeoutMs = deps.timeoutMs ?? FETCH_TIMEOUT_MS;
   const maxRedirects = deps.maxRedirects ?? MAX_REDIRECTS;
 
+  // The pin: hostname → the addresses the guard approved for it, rewritten on
+  // every hop so the connector can only ever reach what THIS hop approved.
+  const pins = new Map<string, string[]>();
+  const agentFactory =
+    deps.agentFactory ?? ((lookup: LookupFunction) => new Agent({ connect: { lookup } }));
+  const dispatcher = agentFactory(pinnedLookup(pins));
+
+  try {
+    return await follow(url, targets, {
+      resolve, fetchImpl, timeoutMs, maxRedirects, pins, dispatcher,
+    });
+  } finally {
+    // An Agent holds sockets; one per check, closed with it.
+    await dispatcher.close().catch(() => {});
+  }
+}
+
+interface FollowContext {
+  resolve: Resolver;
+  fetchImpl: BacklinkFetch;
+  timeoutMs: number;
+  maxRedirects: number;
+  pins: Map<string, string[]>;
+  dispatcher: Dispatcher;
+}
+
+async function follow(
+  url: string,
+  targets: string[],
+  ctx: FollowContext,
+): Promise<BacklinkCheckResult> {
+  const { resolve, fetchImpl, maxRedirects, pins, dispatcher } = ctx;
+
   // One budget for the whole chain, not one per hop: three hops at ten
   // seconds each is a thirty-second stall on one badge.
-  const signal = AbortSignal.timeout(timeoutMs);
+  const signal = AbortSignal.timeout(ctx.timeoutMs);
   const userAgent = backlinkUserAgent();
 
   let current = url;
@@ -392,7 +499,13 @@ export async function checkBacklink(
   for (let hop = 0; ; hop++) {
     let target: URL;
     try {
-      target = await assertPublicUrl(current, resolve);
+      const approved = await resolvePublicUrl(current, resolve);
+      target = approved.url;
+      // Re-pinned per hop, and ONLY this hop's host: the previous host's
+      // pooled socket (if any) is already open to an approved address, and a
+      // fresh connection to it would have to be approved afresh.
+      pins.clear();
+      pins.set(target.hostname.replace(/^\[|\]$/g, "").toLowerCase(), approved.addresses);
     } catch (e) {
       return {
         verified: false,
@@ -411,6 +524,8 @@ export async function checkBacklink(
         redirect: "manual",
         signal,
         headers: { "User-Agent": userAgent, Accept: "text/html,*/*;q=0.8" },
+        // The socket resolves through the pin, never through DNS.
+        dispatcher,
       });
     } catch (e) {
       return {
