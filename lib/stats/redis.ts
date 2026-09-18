@@ -230,9 +230,11 @@ export async function statsRedis(): Promise<StatsRedisClient | null> {
 }
 
 /**
- * Test-only, and a worker's shutdown path. Drops the shared handle and clears
- * the cooldown. Counts held in the buffer stay held: they are written on the
- * next available client, not on close.
+ * Test-only, and a worker's shutdown path. This is `closeRedis()`: it drops
+ * the SHARED handle and clears the cooldown, and takes the rate limiter's and
+ * the badge counters' handle with it — they are the same one. Counts held in
+ * the buffer stay held: they are written on the next available client, not
+ * on close.
  */
 export async function closeStatsRedis(): Promise<void> {
   await closeRedis();

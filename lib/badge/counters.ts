@@ -54,7 +54,11 @@ async function redis(): Promise<RedisClientType | null> {
   return c;
 }
 
-/** Test-only: drops the shared handle so the next call reads REDIS_URL again. */
+/**
+ * Test-only. This is `closeRedis()`: it drops the SHARED handle so the next
+ * call reads REDIS_URL again, and takes the rate limiter's and the stats
+ * module's handle with it — they are the same one.
+ */
 export async function closeBadgeCounters(): Promise<void> {
   await closeRedis();
 }

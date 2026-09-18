@@ -77,8 +77,10 @@ function add(delta: StatDelta, metric: StatMetric, n: number): void {
 /**
  * Count one event.
  *
- * @returns whether it landed. False means the id was rejected or Redis was
- *   unreachable — never a reason to fail the caller.
+ * @returns whether it landed or was held. False means the id or metric was
+ *   rejected, or a live INCR rejected (dropped, see `lib/stats/redis.ts`) —
+ *   never a reason to fail the caller. Redis being unreachable is not false:
+ *   the count is held and written when it is back.
  */
 export async function recordStat(
   listingId: string,

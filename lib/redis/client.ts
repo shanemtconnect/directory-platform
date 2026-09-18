@@ -83,7 +83,13 @@ function configured(): boolean {
   return Boolean(process.env.REDIS_URL);
 }
 
-/** For tests and the health route. Same order of precedence as `getRedis`. */
+/**
+ * What the shared handle is doing right now. For tests, and for anything
+ * that wants to know whether the process is in a cooldown — which the
+ * health probe (`lib/observability/redis.ts`) deliberately does not ask,
+ * since it measures the server, not this handle. Same order of precedence
+ * as `getRedis`.
+ */
 export function redisState(): RedisState {
   if (!configured()) return { status: "unconfigured", downUntil: null };
   if (client?.isReady) return { status: "ready", downUntil: null };
@@ -108,8 +114,12 @@ export async function getRedis(): Promise<RedisClient | null> {
   if (connecting) return null;
 
   connecting = (async () => {
-    // A handle that is no longer ready is one node-redis has given up
-    // reconnecting; it is replaced, not reused, and its socket goes with it.
+    // A handle that is not ready is either one node-redis has given up
+    // reconnecting, or one it is still reconnecting (isReady is false for the
+    // 200/400/600 ms of its own retries after a socket drop). Both are
+    // replaced, not reused, and the old socket goes with them: one connect
+    // path, one socket, no leak — at the cost of never letting the built-in
+    // reconnect finish. Deterministic beats slightly cheaper here.
     const stale = client;
     client = null;
     if (stale) discard(stale);
