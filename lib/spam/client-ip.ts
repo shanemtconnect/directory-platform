@@ -22,7 +22,10 @@
  * because a shared "unknown" bucket is worse than none: one bot in it locks
  * out every other request that lands in it.
  */
-export function clientIp(headers: Headers, env: NodeJS.ProcessEnv = process.env): string | null {
+/** Only the one switch is read; typed narrowly so tests can pass `{}`. */
+type ClientIpEnv = { TRUST_CF_CONNECTING_IP?: string | undefined };
+
+export function clientIp(headers: Headers, env: ClientIpEnv = process.env): string | null {
   if (env.TRUST_CF_CONNECTING_IP === "true") {
     const cloudflare = headers.get("cf-connecting-ip")?.trim();
     if (cloudflare !== undefined && cloudflare !== "") return cloudflare;
