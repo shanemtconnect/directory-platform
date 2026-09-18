@@ -58,6 +58,12 @@ export interface StatsRedisClient {
  * Every other command rejects: a SCAN that answered with an empty page would
  * tell a drain there was nothing to flush, and a GET would report a count of
  * nothing. The callers already treat a rejection as "not now".
+ *
+ * "Away" means the shared client was null — nothing was sent. An INCR that
+ * reaches a ready client and rejects is NOT held: the server may have applied
+ * it before the socket died, and a lost view beats a doubled one
+ * (`lib/redis/buffer.ts` header, `worker/jobs/flush-stats.ts`). It throws to
+ * the caller, which drops it, exactly as before this buffer existed.
  */
 
 /** Counts that could not reach Redis, written the next time a client can. */
@@ -144,12 +150,8 @@ const stats: StatsRedisClient = {
   incr: async (key) => {
     const c = await live();
     if (!c) return pending.add(key);
-    try {
-      return await c.incr(key);
-    } catch {
-      // Redis went away between the handle check and the write.
-      return pending.add(key);
-    }
+    // A throw here propagates: the write was sent and may have landed.
+    return c.incr(key);
   },
   expire: async (key, seconds) => {
     const c = await live();
@@ -157,11 +159,7 @@ const stats: StatsRedisClient = {
       pending.expire(key, seconds);
       return;
     }
-    try {
-      await c.expire(key, seconds);
-    } catch {
-      pending.expire(key, seconds);
-    }
+    await c.expire(key, seconds);
   },
   ttl: async (key) => wrap(await connected()).ttl(key),
   get: async (key) => wrap(await connected()).get(key),

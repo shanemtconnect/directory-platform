@@ -66,14 +66,15 @@ async function bump(hash: string, listingId: string): Promise<void> {
   try {
     const c = await redis();
     if (!c) {
+      // Nothing was sent: hold it.
       pending.add(pendingKey(hash, listingId));
       return;
     }
     await c.hIncrBy(hash, listingId, 1);
   } catch {
-    // Redis went away between the handle check and the write. Same answer
-    // as no handle at all: hold it, and the response goes out.
-    pending.add(pendingKey(hash, listingId));
+    // The write was sent and rejected; it may have landed before the socket
+    // died. Not held — a lost hit beats a doubled one (`lib/redis/buffer.ts`
+    // header). Counted or not, the response goes out.
   }
 }
 

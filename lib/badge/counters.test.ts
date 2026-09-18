@@ -129,6 +129,9 @@ function fakeRedisClient() {
     destroy() {},
     close: async () => {},
     hIncrBy: async (hash: string, field: string, n: number) => {
+      // Throws BEFORE applying: the benign half of a rejected write. The
+      // other half — applied, then the reply lost — looks identical to the
+      // caller, which is why a rejected live write is dropped, not held.
       if (failWrites) throw new Error("connection reset");
       const h = hashes.get(hash) ?? new Map<string, number>();
       h.set(field, (h.get(field) ?? 0) + n);
@@ -235,7 +238,10 @@ describe("badge counters while Redis is unavailable", () => {
     expect(fakes[1]!.field(mod.CLICK_HASH, id)).toBe(1);
   });
 
-  it("holds a hit whose write fails on a live connection, and retries it later", async () => {
+  it("drops a hit whose write fails on a live connection: it may already have been counted", async () => {
+    // Held only when nothing was sent. A write that reached the socket and
+    // rejected may have landed; replaying it would risk a double, and a lost
+    // count beats a doubled one (`lib/redis/buffer.ts` header).
     const id = randomUUID();
     const first = mod.recordBadgeImpression(id);
     fakes[0]!.connected();
@@ -243,11 +249,34 @@ describe("badge counters while Redis is unavailable", () => {
     expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(1);
 
     fakes[0]!.dropWrites(true);
-    await mod.recordBadgeImpression(id);
+    await expect(mod.recordBadgeImpression(id)).resolves.toBeUndefined();
     expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(1);
 
     fakes[0]!.dropWrites(false);
     await mod.recordBadgeImpression(id);
-    expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(3);
+    expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(2);
+  });
+
+  it("replays a held hit at most twice before giving it up", async () => {
+    const id = randomUUID();
+    const first = mod.recordBadgeImpression(id);
+    fakes[0]!.refused();
+    await first;
+    // One hit held during the cooldown.
+    expect(fakes).toHaveLength(1);
+
+    vi.setSystemTime(Date.now() + 31_000);
+    const retry = mod.recordBadgeImpression(id);
+    fakes[1]!.dropWrites(true);
+    fakes[1]!.connected();
+    // Replay 1 rejects (put back); the initiator's own write rejects (dropped).
+    await retry;
+    // Replay 2 rejects (given up); this call's own write rejects (dropped).
+    await mod.recordBadgeImpression(id);
+
+    fakes[1]!.dropWrites(false);
+    await mod.recordBadgeImpression(id);
+    // Only the last hit landed: the held one was abandoned, not doubled.
+    expect(fakes[1]!.field(mod.IMPRESSION_HASH, id)).toBe(1);
   });
 });

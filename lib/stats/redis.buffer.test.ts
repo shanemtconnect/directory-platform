@@ -18,6 +18,7 @@ function fakeRedisClient() {
   });
   const counts = new Map<string, number>();
   const expires = new Map<string, number>();
+  let failWrites = false;
   const client = {
     isReady: false,
     on() {},
@@ -25,11 +26,14 @@ function fakeRedisClient() {
     destroy() {},
     close: async () => {},
     incr: async (key: string) => {
+      // Throws BEFORE applying — the benign half of a rejected write.
+      if (failWrites) throw new Error("connection reset");
       const n = (counts.get(key) ?? 0) + 1;
       counts.set(key, n);
       return n;
     },
     incrBy: async (key: string, by: number) => {
+      if (failWrites) throw new Error("connection reset");
       const n = (counts.get(key) ?? 0) + by;
       counts.set(key, n);
       return n;
@@ -54,6 +58,9 @@ function fakeRedisClient() {
     },
     refused() {
       rejectConnect(new Error("ECONNREFUSED"));
+    },
+    dropWrites(on: boolean) {
+      failWrites = on;
     },
   };
 }
@@ -154,6 +161,44 @@ describe("statsRedis while the shared client is away", () => {
     fakes[1]!.connected();
     expect(await retry).toBe(3);
     expect(fakes[1]!.counts.get(key)).toBe(3);
+  });
+
+  it("lets an INCR that rejects on a live connection throw, rather than holding it", async () => {
+    // Held only when nothing was sent. A rejected live write may have landed;
+    // the caller (`recordStats`) treats the throw as a lost view, as before.
+    const c = (await mod.statsRedis())!;
+    const key = "stats:listing:day:view";
+    const first = c.incr(key);
+    fakes[0]!.connected();
+    expect(await first).toBe(1);
+
+    fakes[0]!.dropWrites(true);
+    await expect(c.incr(key)).rejects.toThrow();
+    fakes[0]!.dropWrites(false);
+    // Nothing was held: the next INCR is the second, not the third.
+    expect(await c.incr(key)).toBe(2);
+  });
+
+  it("replays a held count at most twice before giving it up", async () => {
+    const c = (await mod.statsRedis())!;
+    const key = "stats:listing:day:view";
+    const first = c.incr(key);
+    fakes[0]!.refused();
+    expect(await first).toBe(1);
+    // One count held through the cooldown.
+
+    vi.setSystemTime(Date.now() + 31_000);
+    const retry = c.incr(key);
+    fakes[1]!.dropWrites(true);
+    fakes[1]!.connected();
+    // Replay 1 rejects (put back); the initiator's own INCR rejects.
+    await expect(retry).rejects.toThrow();
+    // Replay 2 rejects (given up); this INCR rejects too.
+    await expect(c.incr(key)).rejects.toThrow();
+
+    fakes[1]!.dropWrites(false);
+    // Only this INCR lands: the held count was abandoned, never doubled.
+    expect(await c.incr(key)).toBe(1);
   });
 
   it("answers a daily-view claim with yes while Redis is away", async () => {
