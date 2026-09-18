@@ -135,10 +135,13 @@ export async function drainBadgeCounters(): Promise<BadgeCounterDelta[]> {
   let clicks: Record<string, string> = {};
   try {
     const c = await redis();
-    if (!c) return [];
+    if (!c) throw new Error("[badge] Redis is unreachable");
     impressions = await drainHash(c, IMPRESSION_HASH);
     clicks = await drainHash(c, CLICK_HASH);
   } catch {
+    // Not an error for the job — the hits are held in the web processes and
+    // the health probe reports the outage — but not silence either.
+    console.warn("[badge] drain skipped: Redis unreachable");
     return [];
   }
 

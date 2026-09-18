@@ -221,8 +221,13 @@ export async function drainStats(opts: DrainOptions = {}): Promise<StatDelta[]> 
 
     if (batch.length > 0) await take(batch);
   } catch {
-    // Redis died mid-drain. Return whatever was already taken — those counts
-    // are out of Redis and only this return value can still record them.
+    // Redis is away (the stats client rejects SCAN and GETDEL while the shared
+    // handle is null) or died mid-drain. Return whatever was already taken —
+    // those counts are out of Redis and only this return value can still
+    // record them. The flush job records the run as ok: an outage is the
+    // health probe's signal, and the web processes hold their counts until
+    // Redis is back. One line so the log can tell this from "nothing to flush".
+    console.warn("[stats] drain skipped: Redis unreachable");
   }
 
   return [...deltas.values()];

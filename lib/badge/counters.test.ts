@@ -66,7 +66,15 @@ describe("badge counters", () => {
     await closeBadgeCounters();
     await expect(recordBadgeImpression(randomUUID())).resolves.toBeUndefined();
     await expect(recordBadgeClick(randomUUID())).resolves.toBeUndefined();
-    await expect(drainBadgeCounters()).resolves.toEqual([]);
+    // A skipped drain is not an error, but it is not silence either.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(drainBadgeCounters()).resolves.toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toMatch(/^\[badge\] drain skipped/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
