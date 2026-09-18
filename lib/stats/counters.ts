@@ -41,6 +41,25 @@ export const COUNTER_TTL_SECONDS = 7 * 24 * 60 * 60;
  */
 export const SEEN_TTL_SECONDS = 24 * 60 * 60;
 
+/**
+ * The salt `seenKey` hashes an address under.
+ *
+ * `STATS_SEEN_SALT` when set, otherwise `BETTER_AUTH_SECRET` — which every
+ * running site already has (`config/validate.ts` requires it at boot), is
+ * generated the same way, and is exactly as secret as this needs to be. The
+ * dedicated variable exists so a site can rotate one without the other.
+ * Read per call rather than at import, so a test can change it; the cost is
+ * two property lookups on a path that is about to do a Redis round trip.
+ *
+ * Empty when neither is set (a unit test, `next dev` with no auth configured).
+ * The digest is still a digest — Redis still never holds an address — it just
+ * has no protection against a precomputed table, which is the trade for not
+ * making `next dev` refuse to count a view.
+ */
+export function seenSalt(): string {
+  return process.env.STATS_SEEN_SALT || process.env.BETTER_AUTH_SECRET || "";
+}
+
 export interface StatEvent {
   listingId: string;
   metric: StatMetric;
@@ -144,7 +163,11 @@ export async function claimDailyView(
   const client = await statsRedis();
   if (!client) return true;
   try {
-    return await client.setIfAbsent(seenKey(dayKey(at), ip, listingId), "1", SEEN_TTL_SECONDS);
+    return await client.setIfAbsent(
+      seenKey(dayKey(at), ip, listingId, seenSalt()),
+      "1",
+      SEEN_TTL_SECONDS,
+    );
   } catch {
     return true;
   }

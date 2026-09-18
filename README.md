@@ -171,6 +171,7 @@ config (`essential`, `premium`) that is the four below;
 | `PORT` `HOSTNAME` | boot | the standalone server; Dockerfile sets `3000` / `0.0.0.0` | Those defaults |
 | `SITE_FLAGS_OVERRIDE` | **build** | `config/flag-variants.ts` | Features come from `site.config.ts`. `on`/`off` exist for the two CI builds (`build:flags-on`, `build:flags-off`); never set it in production |
 | `BETTER_AUTH_RATE_LIMIT` | boot | `lib/auth/server.ts` | Rate limiting on. Only the literal `off` disables it, and only `playwright.config.ts` sets that |
+| `STATS_SEEN_SALT` | boot | `lib/stats/counters.ts` — salts the `sha256(ip, day, salt)` digest that stands in for a visitor's address in the one-view-per-day mark (`stats:seen:<day>:<digest>:<listing>`) | `BETTER_AUTH_SECRET` is used instead. Redis never holds a raw address either way; set this only to rotate the two independently |
 
 ### Monitoring variables
 
@@ -192,6 +193,25 @@ either — the map reads `NEXT_PUBLIC_MAPTILER_KEY`.
 
 Variables a script reads for itself (`COOLIFY_*`, `SMOKE_*`, `KEEP_BUILD_ID`,
 `DRY_RUN`, …) are listed with that script under [Scripts](#scripts).
+
+### Which header the client address comes from
+
+Rate limiting, the one-view-per-day mark, the audit `ip` column and the auth
+limiter all key on `clientIp()` in `lib/spam/client-ip.ts`, which reads, in order:
+
+1. **`CF-Connecting-IP`** — only when `TRUST_CF_CONNECTING_IP=true`. Behind
+   Cloudflare it is the one address a visitor cannot choose (Cloudflare sets it
+   on every request and strips any copy the visitor sent), and the last
+   `X-Forwarded-For` hop is Cloudflare's own edge, which would put every
+   visitor in one bucket. **Without Cloudflare nothing strips it**, so a client
+   could send the header and name its own bucket on every request — which is
+   why it is off by default and must never be switched on for an origin that
+   is reachable other than through Cloudflare.
+2. The **last** `X-Forwarded-For` hop — the one the origin proxy (Coolify's
+   Traefik, nginx) appended. The left of the list is whatever the client wrote.
+3. `X-Real-IP`.
+4. Nothing: the request is served, not counted, and logged once in production
+   (`rateLimitSubject`), because that means the proxy is not passing headers.
 
 ## Testing
 
@@ -428,6 +448,7 @@ to detect.
 | `SENTRY_DSN` | boot | `instrumentation.ts` — server errors; falls back to the public DSN |
 | `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` | **build** | `app/layout.tsx` — the analytics script's `data-domain` |
 | `UPTIME_PUSH_URL` | boot, **worker only** | `worker/index.ts` — the heartbeat push |
+| `TRUST_CF_CONNECTING_IP` | optional | runtime | `lib/spam/client-ip.ts` | Set to `true` only when the origin is reachable through Cloudflare alone; then `CF-Connecting-IP` is the client address. Unset: the last `X-Forwarded-For` hop. |
 
 One more optional runtime variable sits outside that list because it is not
 monitoring:
@@ -631,6 +652,7 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `badge-counters` | every minute | Moves badge impressions and clicks from Redis into `badges` | — |
 | `renewal-reminders` | hourly :17 | Queues the 30-, 7- and 0-day renewal emails, once per subscription and period | `PAYPAL_*` (no-op otherwise), the email vars for delivery |
 | `subscription-sync` | hourly :37 | Reconciles subscriptions whose paid period ended over three days ago against PayPal; lapses or extends; returns the pages to revalidate | `PAYPAL_*` (logs "not configured" otherwise), `INTERNAL_REVALIDATE_SECRET` (optional) |
+| `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
 
 Every job is a no-op on a site without the feature it serves; none of them
 fails the worker. What fails the worker is a missing required variable at

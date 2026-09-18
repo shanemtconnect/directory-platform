@@ -69,6 +69,9 @@ export const BUILD_ENV_OPTIONAL = ["NEXT_PUBLIC_MAPTILER_KEY", "NEXT_PUBLIC_MEDI
  *   NEXT_PUBLIC_PLAUSIBLE_DOMAIN — the analytics script's data-domain. BUILD-time,
  *                                  same reason. Unset means no script at all,
  *                                  which is also how a clone opts out.
+ *   TRUST_CF_CONNECTING_IP       — "true" only when the origin is reachable
+ *                                  through Cloudflare alone; then CF-Connecting-IP
+ *                                  is the client address (lib/spam/client-ip.ts).
  *   UPTIME_PUSH_URL              — an Uptime Kuma push monitor the worker GETs
  *                                  on each five-minute heartbeat. Runtime. The
  *                                  web container is watched by /api/health
@@ -274,6 +277,45 @@ export function validateCountry(config: {
     throw new ConfigError(
       `Country configuration looks wrong:\n  - ${problems.join("\n  - ")}\n` +
         `If this is deliberate, change the check in config/validate.ts rather than the config.`,
+    );
+  }
+}
+
+/**
+ * The least the stats purge may keep. A month is the free tier's window and
+ * the shortest history a renewal conversation can be had over.
+ */
+export const MIN_STATS_RETENTION_DAYS = 30;
+
+/**
+ * `stats.retentionDays` must cover what an owner is shown. A retention shorter
+ * than a tier's `statsWindowDays` means the nightly purge deletes days the
+ * owner panel then renders as zero — a paid window that silently shrinks. A
+ * non-integer would move the cutoff by a fraction of a day; refused for the
+ * same reason as a typo: the build is where it is cheap to find.
+ */
+export function validateStatsRetention(config: {
+  stats: { retentionDays: number };
+  tiers: { readonly [tier: string]: { statsWindowDays: number } };
+}): void {
+  const days = config.stats.retentionDays;
+  const problems: string[] = [];
+  if (!Number.isInteger(days)) {
+    problems.push(`stats.retentionDays must be a whole number of days, got ${String(days)}`);
+  } else if (days < MIN_STATS_RETENTION_DAYS) {
+    problems.push(`stats.retentionDays is ${days}; the minimum is ${MIN_STATS_RETENTION_DAYS}`);
+  }
+  for (const [tier, spec] of Object.entries(config.tiers)) {
+    if (Number.isInteger(days) && spec.statsWindowDays > days) {
+      problems.push(
+        `stats.retentionDays (${days}) is shorter than tiers.${tier}.statsWindowDays ` +
+          `(${spec.statsWindowDays}); the purge would delete days that tier is shown`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Stats retention configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
     );
   }
 }

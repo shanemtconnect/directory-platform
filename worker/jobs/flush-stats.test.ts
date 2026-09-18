@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { listingStatsDaily } from "@/lib/db/schema";
+import { listingStatsDaily, listings } from "@/lib/db/schema";
 import { resetClock, setClock } from "@/lib/clock";
 import { withTestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
@@ -83,6 +83,26 @@ describe("flushStats", () => {
   it("is a cheap no-op when nothing has been counted", async () => {
     await withTestDb(async (tx) => {
       expect(await flushStats(tx)).toBe(0);
+    });
+  });
+
+  it("keeps listings.view_count as the lifetime total across flushes", async () => {
+    // The column is the number the admin and owner tables sort by; nothing
+    // else writes it, so the flush is what makes it mean "views, ever".
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+
+      await recordStat(listingId, "view", AT);
+      await recordStat(listingId, "view", AT);
+      await recordStat(listingId, "impression", AT);
+      await flushStats(tx);
+      await recordStat(listingId, "view", new Date("2026-09-13T10:00:00Z"));
+      await flushStats(tx);
+
+      const [row] = await tx.select({ viewCount: listings.viewCount }).from(listings)
+        .where(eq(listings.id, listingId));
+      expect(row?.viewCount).toBe(3);
     });
   });
 

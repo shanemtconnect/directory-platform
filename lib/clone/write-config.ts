@@ -277,6 +277,12 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     footerCitiesPerCategory: ${a.seoFooterCitiesPerCategory},
   },
 
+  stats: {
+    // Days of listing_stats_daily the worker keeps. At least 30 and at least
+    // the longest tier statsWindowDays above; the build checks.
+    retentionDays: 400,
+  },
+
   // /privacy and /terms are templates with every clone-specific claim marked
   // "[Confirm with counsel]". These dates are the day the site was scaffolded;
   // move them when the wording is actually reviewed, not before — a "last

@@ -13,6 +13,7 @@ import {
   isUuid,
   parseStatsKey,
   seenKey,
+  seenSubject,
   statsKey,
 } from "./keys";
 
@@ -79,18 +80,49 @@ describe("statsKey / parseStatsKey", () => {
     // The marks share the `stats:` namespace so one SCAN covers both, and the
     // flush must skip them: a mark is a flag, not a count, and GETDEL on it
     // would let the same address count again the same day.
-    expect(parseStatsKey(seenKey("2026-09-12", "198.51.100.7", id))).toBeNull();
-    expect(parseStatsKey(seenKey("2026-09-12", "2001:db8::7", id))).toBeNull();
+    expect(parseStatsKey(seenKey("2026-09-12", "198.51.100.7", id, "salt"))).toBeNull();
+    expect(parseStatsKey(seenKey("2026-09-12", "2001:db8::7", id, "salt"))).toBeNull();
   });
 });
 
 describe("seenKey", () => {
   const id = "11111111-2222-4333-8444-555555555555";
+  const ip = "198.51.100.7";
+  const salt = "a-secret-nobody-else-knows";
 
-  it("is stats:seen:<day>:<ip>:<listingId>", () => {
-    expect(seenKey("2026-09-12", "198.51.100.7", id)).toBe(
-      `${STATS_KEY_PREFIX}seen:2026-09-12:198.51.100.7:${id}`,
-    );
+  it("is stats:seen:<day>:<digest>:<listingId>, with the address hashed rather than written", () => {
+    const key = seenKey("2026-09-12", ip, id, salt);
+    const parts = key.slice(STATS_KEY_PREFIX.length).split(":");
+    expect(parts).toHaveLength(4);
+    expect(parts[0]).toBe("seen");
+    expect(parts[1]).toBe("2026-09-12");
+    expect(parts[2]).toMatch(/^[0-9a-f]{64}$/);
+    expect(parts[3]).toBe(id);
+    expect(key).not.toContain(ip);
+  });
+
+  it("never lets an IPv6 address through either", () => {
+    const key = seenKey("2026-09-12", "2001:db8::7", id, salt);
+    expect(key).not.toContain("2001:db8");
+    expect(key.slice(STATS_KEY_PREFIX.length).split(":")).toHaveLength(4);
+  });
+
+  it("is the same key for the same address, day and salt", () => {
+    expect(seenKey("2026-09-12", ip, id, salt)).toBe(seenKey("2026-09-12", ip, id, salt));
+  });
+
+  it("is a different digest for a different day, so nothing links one day's mark to the next", () => {
+    const a = seenSubject(ip, "2026-09-12", salt);
+    const b = seenSubject(ip, "2026-09-13", salt);
+    expect(a).not.toBe(b);
+  });
+
+  it("is a different digest under a different salt, so the address cannot be looked up from the key", () => {
+    expect(seenSubject(ip, "2026-09-12", salt)).not.toBe(seenSubject(ip, "2026-09-12", "other"));
+  });
+
+  it("is a different digest for a different address", () => {
+    expect(seenSubject(ip, "2026-09-12", salt)).not.toBe(seenSubject("198.51.100.8", "2026-09-12", salt));
   });
 });
 

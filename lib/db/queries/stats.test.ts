@@ -8,7 +8,7 @@ import { resetClock, setClock } from "@/lib/clock";
 import { siteConfig } from "@/config/site.config";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
-import { applyStatDeltas, listingStats } from "./stats";
+import { applyStatDeltas, listingStats, purgeStatsBefore } from "./stats";
 
 const TODAY = new Date("2026-09-12T10:00:00Z");
 
@@ -381,6 +381,121 @@ describe("applyStatDeltas", () => {
       ]);
 
       expect(written).toBe(0);
+    });
+  });
+});
+
+describe("applyStatDeltas — listings.view_count", () => {
+  const zero = { impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
+
+  async function viewCount(tx: TestDb, listingId: string): Promise<number> {
+    const [row] = await tx.select({ n: listings.viewCount }).from(listings)
+      .where(eq(listings.id, listingId));
+    return row!.n;
+  }
+
+  it("adds the batch's views to the listing's lifetime total", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { viewCount: 10 });
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId, day: "2026-09-12", views: 3, ...zero }]);
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId, day: "2026-09-12", views: 2, ...zero }]);
+
+      expect(await viewCount(tx, listingId)).toBe(15);
+    });
+  });
+
+  it("sums every day in one batch into one lifetime total", async () => {
+    // A flush that straddles midnight hands over two days for one listing;
+    // the total is the sum, applied once, not the last day's number.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [
+        { listingId, day: "2026-09-11", views: 4, ...zero },
+        { listingId, day: "2026-09-12", views: 5, ...zero },
+      ]);
+
+      expect(await viewCount(tx, listingId)).toBe(9);
+    });
+  });
+
+  it("counts views only — impressions, enquiries and saves are not views", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{
+        listingId, day: "2026-09-12",
+        views: 0, impressions: 40, enquiries: 2, shortlistAdds: 3, badgeClicks: 1,
+      }]);
+
+      expect(await viewCount(tx, listingId)).toBe(0);
+    });
+  });
+
+  it("leaves an unpublished listing's total alone, like the daily row", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const archived = await makeListing(tx, ctx, { status: "archived", viewCount: 7 });
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId: archived, day: "2026-09-12", views: 3, ...zero }]);
+
+      expect(await viewCount(tx, archived)).toBe(7);
+    });
+  });
+
+  it("touches only the listings in the batch", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await makeListing(tx, ctx);
+      const b = await makeListing(tx, ctx, { viewCount: 1 });
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId: a, day: "2026-09-12", views: 3, ...zero }]);
+
+      expect(await viewCount(tx, a)).toBe(3);
+      expect(await viewCount(tx, b)).toBe(1);
+    });
+  });
+});
+
+describe("purgeStatsBefore", () => {
+  it("refuses a public viewer and an owner — the worker's write, not theirs", async () => {
+    await withTestDb(async (tx) => {
+      await expect(purgeStatsBefore(tx, PUBLIC_VIEWER, "2026-01-01")).rejects.toThrow("FORBIDDEN");
+      const owner: Viewer = { role: "owner", userId: "u_x" };
+      await expect(purgeStatsBefore(tx, owner, "2026-01-01")).rejects.toThrow("FORBIDDEN");
+    });
+  });
+
+  it("deletes rows before the cutoff day and keeps the cutoff day itself", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await makeListing(tx, ctx);
+      const b = await makeListing(tx, ctx);
+      await seedDay(tx, a, "2025-08-01", { views: 1 });
+      await seedDay(tx, a, "2025-08-02", { views: 1 });
+      await seedDay(tx, a, "2025-08-03", { views: 1 });
+      await seedDay(tx, b, "2025-07-31", { views: 1 });
+
+      expect(await purgeStatsBefore(tx, ADMIN_VIEWER, "2025-08-02")).toBe(2);
+
+      const left = (await tx.select({ day: listingStatsDaily.day }).from(listingStatsDaily))
+        .map((r) => r.day).sort();
+      expect(left).toEqual(["2025-08-02", "2025-08-03"]);
+    });
+  });
+
+  it("refuses a malformed cutoff rather than putting it in the statement", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await makeListing(tx, ctx);
+      await seedDay(tx, a, "2025-08-01", { views: 1 });
+
+      await expect(purgeStatsBefore(tx, ADMIN_VIEWER, "2999-99-99' or true --")).rejects.toThrow();
+      expect(await tx.select().from(listingStatsDaily)).toHaveLength(1);
     });
   });
 });

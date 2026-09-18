@@ -9,6 +9,7 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { Pagination } from "@/components/pillar/Pagination";
 import { LocationSwitcher } from "@/components/location/LocationSwitcher";
 import { searchCityHref } from "@/components/location/switcher-links";
+import { StatsBeacon } from "@/components/stats/StatsBeacon";
 
 // Search is a utility page, not an indexable asset. Faceted URLs are a classic
 // source of near-duplicate thin pages, so it is noindexed and excluded from the
@@ -157,6 +158,8 @@ export default async function SearchPage({ searchParams }: Props) {
               {r.shortDescription && (
                 <p className="mt-1 mb-0 text-sm text-muted">{r.shortDescription}</p>
               )}
+              {/* Every result is an impression; one beacon carries the page. */}
+              <StatsBeacon listingId={r.id} metric="impression" />
             </li>
           ))}
         </ul>

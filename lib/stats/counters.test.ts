@@ -9,7 +9,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 process.env.REDIS_URL = "redis://localhost:6380/7";
 
 const { closeStatsRedis, statsRedis } = await import("./redis");
-const { COUNTER_TTL_SECONDS, SEEN_TTL_SECONDS, claimDailyView, drainStats, recordStat, recordStats } =
+const { COUNTER_TTL_SECONDS, SEEN_TTL_SECONDS, claimDailyView, drainStats, recordStat, recordStats, seenSalt } =
   await import("./counters");
 const { STATS_KEY_PREFIX, dayKey, seenKey, statsKey } = await import("./keys");
 
@@ -115,9 +115,35 @@ describe("claimDailyView", () => {
   it("forgets the mark within a day", async () => {
     await claimDailyView(IP, A, AT);
     const c = await statsRedis();
-    const ttl = await c!.ttl(seenKey(DAY, IP, A));
+    const ttl = await c!.ttl(seenKey(DAY, IP, A, seenSalt()));
     expect(ttl).toBeGreaterThan(0);
     expect(ttl).toBeLessThanOrEqual(SEEN_TTL_SECONDS);
+  });
+
+  it("writes a digest of the address, never the address itself", async () => {
+    await claimDailyView(IP, A, AT);
+    const c = await statsRedis();
+    const { keys } = await c!.scan("0", `${STATS_KEY_PREFIX}seen:*`, 100);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).not.toContain(IP);
+    expect(keys[0]).toMatch(new RegExp(`^${STATS_KEY_PREFIX}seen:${DAY}:[0-9a-f]{64}:${A}$`));
+  });
+
+  it("salts the digest from the environment rather than a constant", async () => {
+    const before = process.env.STATS_SEEN_SALT;
+    try {
+      process.env.STATS_SEEN_SALT = "salt-one";
+      await claimDailyView(IP, A, AT);
+      // A different salt is a different mark, so the same address counts again:
+      // the salt is part of the key, not decoration on it.
+      process.env.STATS_SEEN_SALT = "salt-two";
+      expect(await claimDailyView(IP, A, AT)).toBe(true);
+      process.env.STATS_SEEN_SALT = "salt-one";
+      expect(await claimDailyView(IP, A, AT)).toBe(false);
+    } finally {
+      if (before === undefined) delete process.env.STATS_SEEN_SALT;
+      else process.env.STATS_SEEN_SALT = before;
+    }
   });
 
   it("is skipped by the flush rather than drained as a count", async () => {

@@ -25,8 +25,10 @@ import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
  * endpoint reads the user agent to decide whether the caller is a person and
  * the IP to decide whether to answer at all and whether this address has
  * already been counted as a view of this listing today. That last check is
- * the one place an address is written: a `stats:seen:` mark that expires in a
- * day, never read back, never joined to anything (`lib/stats/keys.ts`).
+ * the one place an address is used as a key, and it is hashed first: the
+ * `stats:seen:` mark carries `sha256(ip, day, salt)`, expires in a day, is
+ * never read back and never joined to anything (`lib/stats/keys.ts`). Nothing
+ * in Redis is an address.
  *
  * Never touches the database. That is the whole point of the design — a view
  * costs one INCR, and the worker turns five minutes of them into one row.

@@ -177,3 +177,13 @@ schedule("purge-jobs", "30 3 * * *", async (tx) => {
   const { purgeFinishedJobs } = await import("./jobs/purge-jobs");
   await purgeFinishedJobs(tx);
 });
+
+// Daily, after the other two purges. `listing_stats_daily` grows by a row per
+// listing per day with traffic and nothing reads past the longest tier window;
+// `siteConfig.stats.retentionDays` (validated at build to cover every tier)
+// is how long a day's breakdown survives. The lifetime total in
+// `listings.view_count` is untouched. See worker/jobs/purge-stats.ts.
+schedule("purge-stats", "0 4 * * *", async (tx) => {
+  const { purgeStats } = await import("./jobs/purge-stats");
+  await purgeStats(tx);
+});

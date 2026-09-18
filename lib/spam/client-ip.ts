@@ -1,6 +1,17 @@
 /**
  * The client's IP, as far as anything can be trusted.
  *
+ * `CF-Connecting-IP` is honoured ONLY when `TRUST_CF_CONNECTING_IP=true`.
+ * Behind Cloudflare it is the one header a visitor cannot write (Cloudflare
+ * sets it on every proxied request and strips any copy the client sent), and
+ * the last `X-Forwarded-For` hop is Cloudflare's own edge — one address shared
+ * by everybody, which would put the whole internet in one rate-limit bucket.
+ * Without Cloudflare nothing strips it, so a client can send the header itself
+ * and name its own bucket on every request: every `limitPublicWrite` budget,
+ * the beacon's one-view-per-day mark and the `ip` on audit rows would then be
+ * whatever the sender chose. Trusting it has to be a deliberate switch, set
+ * only on a deploy whose origin is reachable through Cloudflare alone.
+ *
  * `X-Forwarded-For` is a list, and the client writes the left of it. Reading
  * the FIRST entry — which is what this used to do — hands the attacker the
  * rate limiter: they send a different fake leading IP each time and never hit
@@ -11,7 +22,12 @@
  * because a shared "unknown" bucket is worse than none: one bot in it locks
  * out every other request that lands in it.
  */
-export function clientIp(headers: Headers): string | null {
+export function clientIp(headers: Headers, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.TRUST_CF_CONNECTING_IP === "true") {
+    const cloudflare = headers.get("cf-connecting-ip")?.trim();
+    if (cloudflare !== undefined && cloudflare !== "") return cloudflare;
+  }
+
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
     const hops = forwarded.split(",").map((h) => h.trim()).filter((h) => h !== "");

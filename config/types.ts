@@ -170,6 +170,16 @@ export interface SiteConfig {
     readonly footerCitiesPerCategory: number;
   };
 
+  readonly stats: {
+    /**
+     * How many days of `listing_stats_daily` the worker keeps; older rows are
+     * deleted nightly. At least 30, and at least the longest tier
+     * `statsWindowDays` — anything shorter would purge days an owner is still
+     * shown. `config/validate.ts` refuses the build otherwise.
+     */
+    readonly retentionDays: number;
+  };
+
   /**
    * The facts /privacy and /terms state about themselves.
    *
