@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { now } from "@/lib/clock";
 import { currentViewer } from "@/lib/auth/viewer";
 import { listOpenRemovalRequests } from "@/lib/db/queries/trust";
+import { numberWord, REMOVAL_SLA_WORKING_DAYS } from "@/lib/trust/working-days";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { RemovalQueue } from "@/components/admin/RemovalQueue";
 
@@ -32,7 +33,7 @@ export default async function AdminRemovalsPage() {
       <p className="text-muted">
         {requests.length === 0
           ? "Nothing is waiting to come down."
-          : `${requests.length} open, ${overdue.length} past the five-working-day deadline. Nearest deadline first.`}
+          : `${requests.length} open, ${overdue.length} past the ${numberWord(REMOVAL_SLA_WORKING_DAYS)}-working-day deadline. Nearest deadline first.`}
       </p>
       <RemovalQueue requests={requests} now={asOf} />
     </main>

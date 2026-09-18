@@ -6,7 +6,8 @@ import { db } from "@/lib/db/client";
 import { requireAdmin } from "@/lib/auth/viewer";
 import { clientIp } from "@/lib/spam/client-ip";
 import { moderateReview, type ModerateReviewResult } from "@/lib/db/queries/reviews";
-import { submissionDetail } from "@/lib/db/queries/admin/submissions";
+import { listingPaths } from "@/lib/db/queries/paths";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import type { QueueState } from "@/lib/actions/admin-trust";
 import type { TestDb } from "@/lib/db/types";
 
@@ -63,9 +64,11 @@ async function decide(form: FormData, status: "published" | "rejected"): Promise
   const outcome = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
     const result = await moderateReview(handle, viewer, reviewId, { status, ip });
-    const detail =
-      result.outcome === "updated" ? await submissionDetail(handle, viewer, result.listingId) : null;
-    return { result, detail };
+    // After the decision is fine here: moderating a review never changes the
+    // city's published count, so the page list is the same either side.
+    const paths =
+      result.outcome === "updated" ? await listingPaths(handle, viewer, result.listingId) : [];
+    return { result, paths };
   });
 
   const state = settle(outcome.result);
@@ -75,17 +78,10 @@ async function decide(form: FormData, status: "published" | "rejected"): Promise
   revalidatePath("/admin");
 
   // The rating is printed on the listing page, listed in full on its reviews
-  // page, and shown on every card on the town and pillar pages. Publishing
-  // and rejecting both move it — a rejection can pull a review that was
-  // published in the meantime — so both bust the same set.
-  if (outcome.detail !== null) {
-    const { citySlug, slug, categorySlug } = outcome.detail;
-    const path = `/${citySlug}/${slug}`;
-    revalidatePath(path);
-    revalidatePath(`${path}/reviews`);
-    revalidatePath(`/${citySlug}`);
-    if (categorySlug !== null) revalidatePath(`/${citySlug}/${categorySlug}`);
-  }
+  // page, and shown on every card on the town, paginated and pillar pages.
+  // Publishing and rejecting both move it — a rejection can pull a review
+  // that was published in the meantime — so both bust the same set.
+  revalidateListingPaths(outcome.paths);
   return state;
 }
 

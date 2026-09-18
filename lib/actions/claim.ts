@@ -11,6 +11,8 @@ import {
   startDocumentClaim,
   startDomainClaim,
 } from "@/lib/db/queries/claims";
+import { listingPaths } from "@/lib/db/queries/paths";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { notifyClaimDecided, notifyClaimLink, notifyClaimSubmitted } from "@/lib/email/notify";
 import { stripCrlf } from "@/lib/actions/validation";
 import { CLAIM_RATE_LIMIT, validateDocumentClaim, validateDomainClaim } from "@/lib/claims/form";
@@ -279,13 +281,16 @@ export async function decideClaimAction(
     });
     // Inside the transaction, so a rolled-back decision sends no email.
     if (decided.outcome === "decided") await notifyClaimDecided(handle, viewer, claimId);
-    return decided;
+    const paths =
+      decided.outcome === "decided" ? await listingPaths(handle, viewer, decided.listingId) : [];
+    return { decided, paths };
   });
 
-  switch (result.outcome) {
+  switch (result.decided.outcome) {
     case "decided":
-      // The public page states who owns the listing, and it is ISR-cached.
-      revalidatePath(result.listingPath);
+      // The public page states who owns the listing, and it and every page
+      // that cards it — town, paginated, pillar — are ISR-cached.
+      revalidateListingPaths(result.paths);
       revalidatePath("/admin/claims");
       return { status: "done" };
     case "reason-required":

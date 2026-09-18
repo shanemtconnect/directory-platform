@@ -2,25 +2,111 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
 import { cities, listings } from "@/lib/db/schema";
-import { makeListing, makeScaffold } from "@/test/factories";
+import { makeCategory, makeListing, makeScaffold } from "@/test/factories";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
+import { PER_PAGE } from "./listings";
 import { listingPaths } from "./paths";
 
+async function citySlug(tx: Parameters<typeof listingPaths>[0], cityId: string): Promise<string> {
+  const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, cityId));
+  return city!.slug;
+}
+
 describe("listingPaths", () => {
-  it("returns the listing page, its reviews page and the city page", async () => {
+  it("returns the listing page, its reviews page, the city page and the city's pillar page", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const listingId = await makeListing(tx, ctx, { name: "The Old Mill" });
-      const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, ctx.cityId));
+      const city = await citySlug(tx, ctx.cityId);
 
       const paths = await listingPaths(tx, ADMIN_VIEWER, listingId);
 
       expect(paths).toEqual([
-        `/${city!.slug}/the-old-mill`,
-        `/${city!.slug}/the-old-mill/reviews`,
-        `/${city!.slug}`,
+        `/${city}/the-old-mill`,
+        `/${city}/the-old-mill/reviews`,
+        `/${city}`,
+        `/${city}/barn-venues`,
       ]);
+    });
+  });
+
+  it("includes every paginated city page that exists, and none that do not", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const city = await citySlug(tx, ctx.cityId);
+      // Two full pages and one on a third.
+      const ids: string[] = [];
+      for (let i = 0; i < PER_PAGE * 2 + 1; i++) ids.push(await makeListing(tx, ctx));
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
+
+      expect(paths).toContain(`/${city}/page/2`);
+      expect(paths).toContain(`/${city}/page/3`);
+      expect(paths).not.toContain(`/${city}/page/4`);
+      // /city/page/1 is /city; it 301s and is never a cached page of its own.
+      expect(paths).not.toContain(`/${city}/page/1`);
+    });
+  });
+
+  it("has no paginated pages for a city that fits on one", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const city = await citySlug(tx, ctx.cityId);
+      const ids: string[] = [];
+      for (let i = 0; i < PER_PAGE; i++) ids.push(await makeListing(tx, ctx));
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
+
+      expect(paths.filter((p) => p.includes("/page/"))).toEqual([]);
+    });
+  });
+
+  it("counts only published listings towards the page count", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const city = await citySlug(tx, ctx.cityId);
+      const ids: string[] = [];
+      for (let i = 0; i < PER_PAGE - 1; i++) ids.push(await makeListing(tx, ctx));
+      await makeListing(tx, ctx, { status: "pending" });
+      await makeListing(tx, ctx, { status: "removed" });
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
+
+      // PER_PAGE - 1 published: even one more would not need a page 2.
+      expect(paths).not.toContain(`/${city}/page/2`);
+    });
+  });
+
+  it("includes the page a growth across the boundary creates", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const city = await citySlug(tx, ctx.cityId);
+      const ids: string[] = [];
+      for (let i = 0; i < PER_PAGE; i++) ids.push(await makeListing(tx, ctx));
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
+
+      // Exactly PER_PAGE published: approving one more creates /page/2, which
+      // may already be cached as a 404 and must be busted.
+      expect(paths).toContain(`/${city}/page/2`);
+      expect(paths).not.toContain(`/${city}/page/3`);
+    });
+  });
+
+  it("leaves the pillar page out when the category is not routed in that city", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const unrouted = await makeCategory(tx, ctx.verticalId, "Halls");
+      const listingId = await makeListing(tx, ctx, {
+        name: "The Hall",
+        primaryCategoryId: unrouted,
+      });
+      const city = await citySlug(tx, ctx.cityId);
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, listingId);
+
+      expect(paths).toEqual([`/${city}/the-hall`, `/${city}/the-hall/reviews`, `/${city}`]);
     });
   });
 
@@ -31,7 +117,7 @@ describe("listingPaths", () => {
       await tx.update(listings).set({ status: "removed" }).where(eq(listings.id, listingId));
 
       const paths = await listingPaths(tx, ADMIN_VIEWER, listingId);
-      expect(paths).toHaveLength(3);
+      expect(paths).toHaveLength(4);
       expect(paths[0]).toMatch(/\/gone$/);
     });
   });
@@ -43,7 +129,7 @@ describe("listingPaths", () => {
     });
   });
 
-  it("is worker-only", async () => {
+  it("is admin-only", async () => {
     await withTestDb(async (tx) => {
       await expect(
         listingPaths(tx, PUBLIC_VIEWER, "11111111-1111-4111-8111-111111111111"),

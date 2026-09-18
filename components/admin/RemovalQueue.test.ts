@@ -5,8 +5,8 @@ import { dueState } from "./RemovalQueue";
  * The overdue marker.
  *
  * This is the only piece of the removal queue that is a decision rather than a
- * rendering: the site promises a decision inside five working days, `due_at` is
- * when that promise falls due, and this is what says whether it has been
+ * rendering: the site promises a decision inside `REMOVAL_SLA_WORKING_DAYS`
+ * working days, `due_at` is when that promise falls due, and this is what says whether it has been
  * broken. Worth pinning on both sides of the boundary and on the row shape the
  * SLA column predates.
  */
@@ -22,7 +22,7 @@ describe("dueState", () => {
   });
 
   it("is not overdue at the moment the deadline falls", () => {
-    // The promise is "inside five working days", so the instant it is due is
+    // The promise is "inside N working days", so the instant it is due is
     // still inside it. Treating the boundary as late would flag a request the
     // admin has not actually missed.
     expect(dueState(DUE, DUE).overdue).toBe(false);

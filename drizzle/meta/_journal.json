@@ -64,6 +64,13 @@
       "when": 1789173585196,
       "tag": "0008_unusual_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789742625323,
+      "tag": "0009_removal_rejection_reason",
+      "breakpoints": true
     }
   ]
 }

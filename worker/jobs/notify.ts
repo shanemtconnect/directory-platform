@@ -260,7 +260,11 @@ async function runRemovalDecision(
 
   await deliver(d, REQUESTER, {
     to: data.requesterEmail,
-    ...build({ listingName: data.listingName, requesterName: data.requesterName }),
+    ...build({
+      listingName: data.listingName,
+      requesterName: data.requesterName,
+      rejectionReason: data.rejectionReason,
+    }),
   });
 }
 

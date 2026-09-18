@@ -142,9 +142,9 @@ export async function notifyReport(
 }
 
 /**
- * A removal request notifies two people: the admin who has five working days
- * to act, and the requester, who otherwise has no way of knowing the form
- * worked. Silence after a privacy request is what turns it into a complaint.
+ * A removal request notifies two people: the admin who has
+ * `REMOVAL_SLA_WORKING_DAYS` working days to act, and the requester, who
+ * otherwise has no way of knowing the form worked. Silence after a privacy request is what turns it into a complaint.
  */
 export async function notifyRemoval(
   tx: TestDb,

@@ -32,6 +32,7 @@ const removal = {
 const decision = {
   listingName: "The Old Mill",
   requesterName: "Alex Owner",
+  rejectionReason: "The request came from somebody with no connection to the entry.",
 };
 
 const every: [string, EmailContent][] = [
@@ -157,9 +158,27 @@ describe("removalRejected", () => {
     expect(content.text).toContain(siteConfig.supportEmail);
   });
 
+  it("tells them why, in the moderator's words", () => {
+    expect(content.text).toContain(decision.rejectionReason);
+    expect(content.html).toContain(decision.rejectionReason);
+  });
+
+  it("still reads as a whole answer for a row decided before reasons were recorded", () => {
+    const bare = removalRejected({ ...decision, rejectionReason: null });
+    expect(bare.text).toContain("The Old Mill");
+    expect(bare.text + bare.html).not.toMatch(/undefined|null/);
+    expect(bare.text).toContain(siteConfig.supportEmail);
+  });
+
   it("escapes a requester name that tries to close a tag", () => {
     const nasty = removalRejected({ ...decision, requesterName: "<script>alert(1)</script>" });
     expect(nasty.html).not.toContain("<script>alert(1)</script>");
+    expect(nasty.html).toContain("&lt;script&gt;");
+  });
+
+  it("escapes a reason that tries to close a tag", () => {
+    const nasty = removalRejected({ ...decision, rejectionReason: "<b>no</b> because <script>x</script>" });
+    expect(nasty.html).not.toContain("<script>x</script>");
     expect(nasty.html).toContain("&lt;script&gt;");
   });
 });

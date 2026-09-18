@@ -2,12 +2,13 @@ import { randomBytes } from "node:crypto";
 import { hashToken } from "@/lib/security/token-hash";
 import { and, count, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
 import {
-  auditLog, cities, listings, reviews, reviewInvites, reviewReplies,
+  cities, listings, reviews, reviewInvites, reviewReplies,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import { ensureProfile } from "@/lib/auth/profile";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { publishedListings } from "@/lib/db/queries/listings";
+import { writeAuditAs } from "@/lib/db/queries/audit";
 import { flagReview } from "@/lib/reviews/moderation";
 import type { TestDb } from "@/lib/db/types";
 
@@ -602,15 +603,12 @@ export async function moderateReview(
     .where(eq(reviews.id, reviewId));
 
   const actorId = await profileIdOf(tx, viewer);
-  await tx.insert(auditLog).values({
-    actorId,
+  await writeAuditAs(tx, actorId, {
     action: "review.moderate",
     entityType: "review",
     entityId: reviewId,
     meta: { from: review.status, to: input.status, note: input.note ?? null, clearedFlag },
     ip: input.ip ?? null,
-    createdAt: now(),
-    updatedAt: now(),
   });
 
   await recomputeListingRating(tx, review.listingId);
@@ -677,14 +675,11 @@ export async function createReviewReply(
   const row = inserted[0];
   if (!row) return { outcome: "already-replied" };
 
-  await tx.insert(auditLog).values({
-    actorId: profileId,
+  await writeAuditAs(tx, profileId, {
     action: "review.reply",
     entityType: "review",
     entityId: review.id,
     meta: { listingId: review.listingId, replyId: row.id },
-    createdAt: now(),
-    updatedAt: now(),
   });
 
   return {

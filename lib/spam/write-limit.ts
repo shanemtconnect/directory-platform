@@ -79,7 +79,8 @@ export const REPORT_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as const;
  * Three an hour.
  *
  * Asking to be removed is something a person does once, and each one commits
- * us to a five-working-day answer — so the cheapest denial of service against
+ * us to an answer inside `REMOVAL_SLA_WORKING_DAYS` working days
+ * (lib/trust/working-days.ts) — so the cheapest denial of service against
  * this site is a flood of removal requests nobody can action in time.
  */
 export const REMOVAL_REQUEST_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;

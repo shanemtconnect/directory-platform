@@ -82,6 +82,8 @@ async function queuedRemoval(tx: TestDb) {
 }
 
 /** A removal request an admin has already decided, with the decision's own job queued. */
+const REJECTION_REASON = "The request came from somebody with no connection to the entry.";
+
 async function queuedRemovalDecision(tx: TestDb, decision: "actioned" | "rejected") {
   const admin = await makeAdmin(tx);
   const ctx = await makeScaffold(tx);
@@ -95,7 +97,14 @@ async function queuedRemovalDecision(tx: TestDb, decision: "actioned" | "rejecte
     ip: null,
   });
   if (filed.outcome !== "created") throw new Error("setup failed");
-  await actionRemovalRequest(tx, admin, filed.removalRequestId, decision, { ip: null });
+  await actionRemovalRequest(
+    tx,
+    admin,
+    filed.removalRequestId,
+    decision === "actioned"
+      ? { decision, ip: null }
+      : { decision, reason: REJECTION_REASON, ip: null },
+  );
   return filed;
 }
 
@@ -207,13 +216,14 @@ describe("processNotifications — removal decisions", () => {
     });
   });
 
-  it("emails the requester alone when a removal is rejected", async () => {
+  it("emails the requester alone when a removal is rejected, and tells them why", async () => {
     await withTestDb(async (tx) => {
       await queuedRemovalDecision(tx, "rejected");
 
       expect(await processNotifications(tx)).toBe(1);
       expect(recipients()).toEqual(["alex@example.co.uk"]);
       expect((await jobRow(tx)).status).toBe("done");
+      expect(bodies()).toContain(REJECTION_REASON);
     });
   });
 

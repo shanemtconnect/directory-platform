@@ -43,13 +43,15 @@ describe("checkBadgeBacklinks", () => {
       });
 
       expect(report).toMatchObject({ checked: 1, verified: 1, failed: 0 });
-      // A boost granted changes the ranking on three cached pages; the
-      // scheduler revalidates them once this transaction has committed.
+      // A boost granted changes the ranking on every cached page the listing
+      // sits on — its own, its reviews page, the town and the pillar inside
+      // it; the scheduler revalidates them once this transaction has committed.
       const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, ctx.cityId));
       expect(report.revalidate).toEqual([
         `/${city!.slug}/the-old-mill`,
         `/${city!.slug}/the-old-mill/reviews`,
         `/${city!.slug}`,
+        `/${city!.slug}/barn-venues`,
       ]);
       const [badge] = await tx.select().from(badges).where(eq(badges.listingId, listingId));
       expect(badge?.backlinkVerified).toBe(true);
@@ -76,7 +78,7 @@ describe("checkBadgeBacklinks", () => {
       });
 
       expect(report).toMatchObject({ checked: 1, verified: 0, failed: 1 });
-      expect(report.revalidate).toHaveLength(3);
+      expect(report.revalidate).toHaveLength(4);
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing?.backlinkBoost).toBe(0);
     });

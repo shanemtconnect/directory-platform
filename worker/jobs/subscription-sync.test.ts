@@ -107,6 +107,7 @@ describe("syncSubscriptions", () => {
         `/${page!.citySlug}/${page!.slug}`,
         `/${page!.citySlug}/${page!.slug}/reviews`,
         `/${page!.citySlug}`,
+        `/${page!.citySlug}/barn-venues`,
       ]);
 
       const [row] = await tx.select().from(subscriptions).where(eq(subscriptions.id, s.id));
@@ -147,7 +148,7 @@ describe("syncSubscriptions", () => {
         env: ENV,
       });
 
-      expect(out.revalidate).toHaveLength(3);
+      expect(out.revalidate).toHaveLength(4);
       expect(out.revalidate.every((p) => p.startsWith("/"))).toBe(true);
       expect(out.revalidate[1]).toMatch(/\/reviews$/);
     });

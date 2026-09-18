@@ -9,10 +9,11 @@ import {
   actionRemovalRequest,
   actionReport,
   type DecisionResult,
-  type RemovalDecision,
+  type RemovalDecisionInput,
   type ReportDecision,
 } from "@/lib/db/queries/trust";
-import { submissionDetail } from "@/lib/db/queries/admin/submissions";
+import { listingPaths } from "@/lib/db/queries/paths";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -67,6 +68,8 @@ function message(result: DecisionResult): string | null {
       return GONE;
     case "forbidden":
       return "You are not allowed to decide this.";
+    case "reason-required":
+      return "Please say why, so the requester is told something useful.";
     default:
       return null;
   }
@@ -129,26 +132,42 @@ export async function markReportActionedAction(
  * goes to `removed`, a suppression row stops the next import putting it back,
  * and the requester is emailed — inside the one transaction this opens.
  *
- * The paths to revalidate are read from `submissionDetail` BEFORE the decision
- * and on the same handle, because afterwards the listing is `removed` and the
- * city page it needs to disappear from is still cached under a URL nothing left
+ * The paths to revalidate are read from `listingPaths` BEFORE the decision
+ * and on the same handle, because afterwards the listing is `removed`, the
+ * city's published count is one lower, and the last paginated page — which
+ * may have just stopped existing — is still cached under a URL nothing left
  * in the queue knows. `listingId` comes from the queue row we rendered; it is
  * used for nothing but working out which cached pages are now wrong, and a
  * missing or malformed one costs a cache bust, not a decision.
  */
-async function decideRemoval(form: FormData, decision: RemovalDecision): Promise<QueueState> {
+async function decideRemoval(
+  form: FormData,
+  decision: RemovalDecisionInput["decision"],
+): Promise<QueueState> {
   const viewer = await requireAdmin();
   const removalRequestId = readId(form, "removalRequestId");
   if (removalRequestId === null) return { status: "error", message: GONE };
 
   const listingId = readId(form, "listingId");
   const ip = clientIp(await headers());
+  // The query trims and measures the reason; an empty field reaches it as ""
+  // and comes back `reason-required`, which is the message the form shows.
+  const input: RemovalDecisionInput =
+    decision === "actioned"
+      ? { decision, ip }
+      : { decision, reason: String(form.get("reason") ?? ""), ip };
 
   const outcome = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
-    const detail = listingId === null ? null : await submissionDetail(handle, viewer, listingId);
-    const result = await actionRemovalRequest(handle, viewer, removalRequestId, decision, { ip });
-    return { detail, result };
+    // Only a takedown changes the public site. A rejection leaves the listing
+    // exactly where it was, so there is nothing cached that is now wrong and
+    // nothing worth counting.
+    const paths =
+      decision === "actioned" && listingId !== null
+        ? await listingPaths(handle, viewer, listingId)
+        : [];
+    const result = await actionRemovalRequest(handle, viewer, removalRequestId, input);
+    return { paths, result };
   });
 
   const state = settle(outcome.result);
@@ -156,17 +175,7 @@ async function decideRemoval(form: FormData, decision: RemovalDecision): Promise
 
   revalidatePath("/admin/removals");
   revalidatePath("/admin");
-
-  // Only a takedown changes the public site. A rejection leaves the listing
-  // exactly where it was, so there is nothing cached that is now wrong.
-  if (decision === "actioned" && outcome.detail !== null) {
-    const { citySlug, slug, categorySlug } = outcome.detail;
-    revalidatePath(`/${citySlug}/${slug}`);
-    // Its reviews sub-page is a separate ISR route that must come down too.
-    revalidatePath(`/${citySlug}/${slug}/reviews`);
-    revalidatePath(`/${citySlug}`);
-    if (categorySlug !== null) revalidatePath(`/${citySlug}/${categorySlug}`);
-  }
+  revalidateListingPaths(outcome.paths);
   return state;
 }
 

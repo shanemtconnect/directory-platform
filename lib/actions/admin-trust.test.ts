@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { DecisionResult } from "@/lib/db/queries/trust";
-import type { SubmissionDetail } from "@/lib/db/queries/admin/submissions";
 import type { Viewer } from "@/lib/db/viewer";
 
 /**
@@ -18,7 +17,7 @@ import type { Viewer } from "@/lib/db/viewer";
 const requireAdmin = vi.fn<() => Promise<Viewer>>();
 const actionReport = vi.fn<() => Promise<DecisionResult>>();
 const actionRemovalRequest = vi.fn<() => Promise<DecisionResult>>();
-const submissionDetail = vi.fn<() => Promise<SubmissionDetail | null>>();
+const listingPaths = vi.fn<() => Promise<string[]>>();
 const revalidatePath = vi.fn<(path: string) => void>();
 
 /** The handle the action hands to the query functions. */
@@ -37,8 +36,8 @@ vi.mock("@/lib/db/queries/trust", () => ({
   actionReport: (...args: unknown[]) => actionReport(...(args as [])),
   actionRemovalRequest: (...args: unknown[]) => actionRemovalRequest(...(args as [])),
 }));
-vi.mock("@/lib/db/queries/admin/submissions", () => ({
-  submissionDetail: (...args: unknown[]) => submissionDetail(...(args as [])),
+vi.mock("@/lib/db/queries/paths", () => ({
+  listingPaths: (...args: unknown[]) => listingPaths(...(args as [])),
 }));
 
 const ADMIN: Viewer = { role: "admin", userId: "user_admin" };
@@ -46,12 +45,13 @@ const REPORT_ID = "11111111-1111-4111-8111-111111111111";
 const REMOVAL_ID = "22222222-2222-4222-8222-222222222222";
 const LISTING_ID = "33333333-3333-4333-8333-333333333333";
 
-const DETAIL = {
-  id: LISTING_ID,
-  citySlug: "richmond",
-  slug: "the-old-hall",
-  categorySlug: "barns",
-} as unknown as SubmissionDetail;
+const PATHS = [
+  "/richmond/the-old-hall",
+  "/richmond/the-old-hall/reviews",
+  "/richmond",
+  "/richmond/page/2",
+  "/richmond/barns",
+];
 
 function form(fields: Record<string, string>): FormData {
   const data = new FormData();
@@ -69,7 +69,7 @@ beforeEach(() => {
   requireAdmin.mockReset().mockResolvedValue(ADMIN);
   actionReport.mockReset().mockResolvedValue({ outcome: "updated", id: REPORT_ID });
   actionRemovalRequest.mockReset().mockResolvedValue({ outcome: "updated", id: REMOVAL_ID });
-  submissionDetail.mockReset().mockResolvedValue(DETAIL);
+  listingPaths.mockReset().mockResolvedValue(PATHS);
   revalidatePath.mockReset();
   transaction.mockClear();
 });
@@ -187,22 +187,48 @@ describe("removal decisions", () => {
       form({ removalRequestId: REMOVAL_ID, listingId: LISTING_ID }),
     );
 
-    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, "actioned", {
+    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, {
+      decision: "actioned",
       ip: "203.0.113.9",
     });
   });
 
-  it("rejects rather than actions when the reject button is used", async () => {
+  it("rejects rather than actions when the reject button is used, with the reason given", async () => {
     const { rejectRemovalAction } = await load();
 
     await rejectRemovalAction(
       { status: "idle" },
+      form({
+        removalRequestId: REMOVAL_ID,
+        listingId: LISTING_ID,
+        reason: "The request came from somebody with no connection to the entry.",
+      }),
+    );
+
+    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, {
+      decision: "rejected",
+      reason: "The request came from somebody with no connection to the entry.",
+      ip: "203.0.113.9",
+    });
+  });
+
+  it("hands an absent reason to the query as an empty string, and repeats its refusal", async () => {
+    actionRemovalRequest.mockResolvedValue({ outcome: "reason-required" });
+    const { rejectRemovalAction } = await load();
+
+    const state = await rejectRemovalAction(
+      { status: "idle" },
       form({ removalRequestId: REMOVAL_ID, listingId: LISTING_ID }),
     );
 
-    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, "rejected", {
+    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, {
+      decision: "rejected",
+      reason: "",
       ip: "203.0.113.9",
     });
+    expect(state.status).toBe("error");
+    expect(state.message).toMatch(/say why/i);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("busts every cached page the removed listing was on", async () => {
@@ -213,20 +239,18 @@ describe("removal decisions", () => {
       form({ removalRequestId: REMOVAL_ID, listingId: LISTING_ID }),
     );
 
-    // Its own page, its reviews page, the town it was in, and the pillar
-    // page inside that town.
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall/reviews");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/barns");
+    // Its own page, its reviews page, the town it was in, the town's
+    // paginated pages and the pillar page inside that town — whatever
+    // listingPaths named, every one of them.
+    for (const path of PATHS) expect(revalidatePath).toHaveBeenCalledWith(path);
     expect(revalidatePath).toHaveBeenCalledWith("/admin/removals");
   });
 
   it("reads the listing's paths inside the same transaction, while it is still there to read", async () => {
     const order: string[] = [];
-    submissionDetail.mockImplementation(async () => {
+    listingPaths.mockImplementation(async () => {
       order.push("detail");
-      return DETAIL;
+      return PATHS;
     });
     actionRemovalRequest.mockImplementation(async () => {
       order.push("decision");
@@ -240,7 +264,7 @@ describe("removal decisions", () => {
     );
 
     expect(order).toEqual(["detail", "decision"]);
-    expect(submissionDetail).toHaveBeenCalledWith(HANDLE, ADMIN, LISTING_ID);
+    expect(listingPaths).toHaveBeenCalledWith(HANDLE, ADMIN, LISTING_ID);
   });
 
   it("does not bust the public cache for a decision that did not happen", async () => {
@@ -265,7 +289,7 @@ describe("removal decisions", () => {
       form({ removalRequestId: REMOVAL_ID }),
     );
 
-    expect(submissionDetail).not.toHaveBeenCalled();
+    expect(listingPaths).not.toHaveBeenCalled();
     expect(actionRemovalRequest).toHaveBeenCalled();
     expect(state.status).toBe("done");
   });

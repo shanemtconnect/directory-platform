@@ -45,8 +45,25 @@ export function addWorkingDays(from: Date, days: number, timezone: string): Date
   return out;
 }
 
-/** What /data-sources promises. Change both or neither. */
+/**
+ * What /data-sources promises. Every mention of the SLA in copy derives from
+ * this — as a digit, or through `numberWord` where prose wants a word — so
+ * changing it here changes the promise everywhere at once.
+ */
 export const REMOVAL_SLA_WORKING_DAYS = 5;
+
+const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+
+/**
+ * "five", for prose that would read oddly with a digit ("past the
+ * five-working-day deadline"). Anything outside one to ten — or not an
+ * integer — comes back as digits, which is what house style wants for larger
+ * numbers anyway.
+ */
+export function numberWord(n: number): string {
+  if (Number.isInteger(n) && n >= 1 && n <= 10) return WORDS[n]!;
+  return String(n);
+}
 
 export function removalDueAt(from: Date, timezone: string): Date {
   return addWorkingDays(from, REMOVAL_SLA_WORKING_DAYS, timezone);
