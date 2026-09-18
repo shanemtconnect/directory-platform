@@ -9,7 +9,7 @@ import {
   actionRemovalRequest,
   actionReport,
   type DecisionResult,
-  type RemovalDecision,
+  type RemovalDecisionInput,
   type ReportDecision,
 } from "@/lib/db/queries/trust";
 import { submissionDetail } from "@/lib/db/queries/admin/submissions";
@@ -67,6 +67,8 @@ function message(result: DecisionResult): string | null {
       return GONE;
     case "forbidden":
       return "You are not allowed to decide this.";
+    case "reason-required":
+      return "Please say why, so the requester is told something useful.";
     default:
       return null;
   }
@@ -136,18 +138,27 @@ export async function markReportActionedAction(
  * used for nothing but working out which cached pages are now wrong, and a
  * missing or malformed one costs a cache bust, not a decision.
  */
-async function decideRemoval(form: FormData, decision: RemovalDecision): Promise<QueueState> {
+async function decideRemoval(
+  form: FormData,
+  decision: RemovalDecisionInput["decision"],
+): Promise<QueueState> {
   const viewer = await requireAdmin();
   const removalRequestId = readId(form, "removalRequestId");
   if (removalRequestId === null) return { status: "error", message: GONE };
 
   const listingId = readId(form, "listingId");
   const ip = clientIp(await headers());
+  // The query trims and measures the reason; an empty field reaches it as ""
+  // and comes back `reason-required`, which is the message the form shows.
+  const input: RemovalDecisionInput =
+    decision === "actioned"
+      ? { decision, ip }
+      : { decision, reason: String(form.get("reason") ?? ""), ip };
 
   const outcome = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
     const detail = listingId === null ? null : await submissionDetail(handle, viewer, listingId);
-    const result = await actionRemovalRequest(handle, viewer, removalRequestId, decision, { ip });
+    const result = await actionRemovalRequest(handle, viewer, removalRequestId, input);
     return { detail, result };
   });
 

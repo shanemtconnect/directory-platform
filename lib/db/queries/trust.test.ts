@@ -336,7 +336,8 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", {
+      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, {
+        decision: "actioned",
         ip: "203.0.113.9",
       });
       expect(result.outcome).toBe("updated");
@@ -412,7 +413,11 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, "rejected", { ip: null });
+      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, {
+        decision: "rejected",
+        reason: "The request came from somebody with no connection to the entry.",
+        ip: null,
+      });
       expect(result.outcome).toBe("updated");
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
@@ -425,6 +430,110 @@ describe("actionRemovalRequest", () => {
       expect(jobs[0]?.payload).toMatchObject({ removalRequestId: filed.removalRequestId });
       expect(await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_REMOVAL_ACTIONED)))
         .toHaveLength(0);
+    });
+  });
+
+  it("keeps the reason for a rejection on the row and in the audit trail", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+        listingId,
+        requesterName: "Someone Else",
+        requesterEmail: "someone@example.co.uk",
+        relationship: "other",
+        reason: null,
+        ip: null,
+      });
+      if (filed.outcome !== "created") throw new Error("setup failed");
+
+      const reason = "  The request came from somebody with no connection to the entry.  ";
+      const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, {
+        decision: "rejected",
+        reason,
+        ip: "203.0.113.5",
+      });
+      expect(result.outcome).toBe("updated");
+
+      const [row] = await tx
+        .select()
+        .from(removalRequests)
+        .where(eq(removalRequests.id, filed.removalRequestId));
+      expect(row?.status).toBe("rejected");
+      expect(row?.rejectionReason).toBe(reason.trim());
+
+      // The reason is what a contested "no" is argued from, so it sits on the
+      // audit row as well as on the request.
+      const audit = await tx
+        .select()
+        .from(auditLog)
+        .where(eq(auditLog.entityId, filed.removalRequestId));
+      expect(audit).toHaveLength(1);
+      expect(audit[0]?.action).toBe("removal_request.rejected");
+      expect(audit[0]?.meta).toMatchObject({ listingId, reason: reason.trim() });
+      expect(audit[0]?.ip).toBe("203.0.113.5");
+    });
+  });
+
+  it("will not reject without a reason the requester can be told", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+        listingId,
+        requesterName: "Someone Else",
+        requesterEmail: "someone@example.co.uk",
+        relationship: "other",
+        reason: null,
+        ip: null,
+      });
+      if (filed.outcome !== "created") throw new Error("setup failed");
+
+      for (const reason of ["", "   ", "too short", "   nine ch  "]) {
+        const result = await actionRemovalRequest(tx, admin, filed.removalRequestId, {
+          decision: "rejected",
+          reason,
+          ip: null,
+        });
+        expect(result.outcome).toBe("reason-required");
+      }
+
+      // Nothing moved: still open, no audit row, no email queued.
+      const [row] = await tx
+        .select()
+        .from(removalRequests)
+        .where(eq(removalRequests.id, filed.removalRequestId));
+      expect(row?.status).toBe("open");
+      expect(row?.rejectionReason).toBeNull();
+      expect(await tx.select().from(auditLog)).toHaveLength(0);
+      expect(await tx.select().from(jobQueue)).toHaveLength(0);
+    });
+  });
+
+  it("leaves the rejection reason empty on a takedown", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+        listingId,
+        requesterName: "Alex Owner",
+        requesterEmail: "alex@example.co.uk",
+        relationship: "owner",
+        reason: null,
+        ip: null,
+      });
+      if (filed.outcome !== "created") throw new Error("setup failed");
+
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, { decision: "actioned", ip: null });
+
+      const [row] = await tx
+        .select()
+        .from(removalRequests)
+        .where(eq(removalRequests.id, filed.removalRequestId));
+      expect(row?.rejectionReason).toBeNull();
     });
   });
 
@@ -442,7 +551,7 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      expect((await actionRemovalRequest(tx, USER, filed.removalRequestId, "actioned", { ip: null })).outcome)
+      expect((await actionRemovalRequest(tx, USER, filed.removalRequestId, { decision: "actioned", ip: null })).outcome)
         .toBe("forbidden");
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
@@ -467,8 +576,8 @@ describe("actionRemovalRequest", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", { ip: null });
-      const again = await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", { ip: null });
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, { decision: "actioned", ip: null });
+      const again = await actionRemovalRequest(tx, admin, filed.removalRequestId, { decision: "actioned", ip: null });
       expect(again.outcome).toBe("not-open");
       // One decision, one suppression. A double click must not file two.
       expect(await tx.select().from(suppressions)).toHaveLength(1);
@@ -567,13 +676,43 @@ describe("the notification read models", () => {
       });
       if (filed.outcome !== "created") throw new Error("setup failed");
 
-      await actionRemovalRequest(tx, admin, filed.removalRequestId, "actioned", { ip: null });
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, { decision: "actioned", ip: null });
 
       const data = await removalDecisionNotification(tx, admin, filed.removalRequestId);
       expect(data).toMatchObject({
         listingName: "The Old Barn",
         requesterName: "Alex Owner",
         requesterEmail: "alex@example.co.uk",
+      });
+    });
+  });
+
+  it("give the removal decision notification the reason a request was turned down", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAdmin(tx);
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const filed = await createRemovalRequest(tx, PUBLIC_VIEWER, {
+        listingId,
+        requesterName: "Someone Else",
+        requesterEmail: "someone@example.co.uk",
+        relationship: "other",
+        reason: null,
+        ip: null,
+      });
+      if (filed.outcome !== "created") throw new Error("setup failed");
+
+      await actionRemovalRequest(tx, admin, filed.removalRequestId, {
+        decision: "rejected",
+        reason: "The request came from somebody with no connection to the entry.",
+        ip: null,
+      });
+
+      const data = await removalDecisionNotification(tx, admin, filed.removalRequestId);
+      expect(data).toMatchObject({
+        listingName: "The Old Barn",
+        requesterEmail: "someone@example.co.uk",
+        rejectionReason: "The request came from somebody with no connection to the entry.",
       });
     });
   });

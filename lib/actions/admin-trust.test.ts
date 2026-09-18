@@ -187,22 +187,48 @@ describe("removal decisions", () => {
       form({ removalRequestId: REMOVAL_ID, listingId: LISTING_ID }),
     );
 
-    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, "actioned", {
+    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, {
+      decision: "actioned",
       ip: "203.0.113.9",
     });
   });
 
-  it("rejects rather than actions when the reject button is used", async () => {
+  it("rejects rather than actions when the reject button is used, with the reason given", async () => {
     const { rejectRemovalAction } = await load();
 
     await rejectRemovalAction(
       { status: "idle" },
+      form({
+        removalRequestId: REMOVAL_ID,
+        listingId: LISTING_ID,
+        reason: "The request came from somebody with no connection to the entry.",
+      }),
+    );
+
+    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, {
+      decision: "rejected",
+      reason: "The request came from somebody with no connection to the entry.",
+      ip: "203.0.113.9",
+    });
+  });
+
+  it("hands an absent reason to the query as an empty string, and repeats its refusal", async () => {
+    actionRemovalRequest.mockResolvedValue({ outcome: "reason-required" });
+    const { rejectRemovalAction } = await load();
+
+    const state = await rejectRemovalAction(
+      { status: "idle" },
       form({ removalRequestId: REMOVAL_ID, listingId: LISTING_ID }),
     );
 
-    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, "rejected", {
+    expect(actionRemovalRequest).toHaveBeenCalledWith(HANDLE, ADMIN, REMOVAL_ID, {
+      decision: "rejected",
+      reason: "",
       ip: "203.0.113.9",
     });
+    expect(state.status).toBe("error");
+    expect(state.message).toMatch(/say why/i);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("busts every cached page the removed listing was on", async () => {

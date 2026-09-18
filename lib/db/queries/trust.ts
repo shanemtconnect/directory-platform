@@ -303,7 +303,25 @@ export type DecisionResult =
   /** Already decided. A second click must not file a second suppression. */
   | { outcome: "not-open" }
   | { outcome: "unknown" }
-  | { outcome: "forbidden" };
+  | { outcome: "forbidden" }
+  /** A rejection with nothing to tell the requester. Only a removal can say this. */
+  | { outcome: "reason-required" };
+
+/**
+ * The shortest rejection reason worth sending. A requester is told why in the
+ * email, and "no" or "nope" is not a why.
+ */
+export const REJECTION_REASON_MIN_LENGTH = 10;
+
+/**
+ * A takedown needs nothing but the moderator's IP. A refusal needs a reason
+ * as well, and the type makes that impossible to forget rather than something
+ * the query checks after the fact — the length check below is for the
+ * form-shaped caller that has a string but not necessarily a useful one.
+ */
+export type RemovalDecisionInput =
+  | { decision: "actioned"; ip: string | null }
+  | { decision: "rejected"; reason: string; ip: string | null };
 
 export async function actionReport(
   tx: TestDb,
@@ -357,11 +375,18 @@ export async function actionRemovalRequest(
   tx: TestDb,
   viewer: Viewer,
   removalRequestId: string,
-  decision: RemovalDecision,
-  opts: { ip: string | null },
+  input: RemovalDecisionInput,
 ): Promise<DecisionResult> {
   if (!isAdmin(viewer)) return { outcome: "forbidden" };
   if (!UUID.test(removalRequestId)) return { outcome: "unknown" };
+
+  const { decision } = input;
+  // Trimmed before it is measured: ten spaces are not a reason. Checked
+  // before the row is read so a refusal with nothing to say costs no query.
+  const rejectionReason = decision === "rejected" ? input.reason.trim() : null;
+  if (decision === "rejected" && rejectionReason!.length < REJECTION_REASON_MIN_LENGTH) {
+    return { outcome: "reason-required" };
+  }
 
   const [row] = await tx
     .select({
@@ -417,6 +442,7 @@ export async function actionRemovalRequest(
       status: decision,
       actionedBy: actor.id,
       actionedAt: now(),
+      rejectionReason,
       updatedAt: now(),
     })
     .where(eq(removalRequests.id, removalRequestId));
@@ -425,8 +451,10 @@ export async function actionRemovalRequest(
     action: `removal_request.${decision}`,
     entityType: "removal_request",
     entityId: removalRequestId,
-    meta: { listingId: row.listingId, suppressionId },
-    ip: opts.ip,
+    // The reason is on the request row too, but the audit row is where a
+    // contested "no" is argued from, so it carries its own copy.
+    meta: { listingId: row.listingId, suppressionId, reason: rejectionReason },
+    ip: input.ip,
   });
 
   // Enqueued here, not left to the caller: every removal page promises "we
@@ -555,6 +583,8 @@ export interface RemovalDecisionNotification {
   listingName: string;
   requesterName: string;
   requesterEmail: string;
+  /** Why a request was turned down. Null on a takedown, and on rows decided before it was recorded. */
+  rejectionReason: string | null;
 }
 
 /**
@@ -574,6 +604,7 @@ export async function removalDecisionNotification(
     .select({
       requesterName: removalRequests.requesterName,
       requesterEmail: removalRequests.requesterEmail,
+      rejectionReason: removalRequests.rejectionReason,
       listingName: listings.name,
     })
     .from(removalRequests)
@@ -589,5 +620,6 @@ export async function removalDecisionNotification(
     listingName: row.listingName,
     requesterName: row.requesterName ?? row.requesterEmail,
     requesterEmail: row.requesterEmail,
+    rejectionReason: row.rejectionReason,
   };
 }

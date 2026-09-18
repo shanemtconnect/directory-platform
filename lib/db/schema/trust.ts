@@ -41,6 +41,13 @@ export const removalRequests = pgTable("removal_requests", {
   dueAt: timestamp("due_at", { withTimezone: true }),
   actionedBy: uuid("actioned_by"),
   actionedAt: timestamp("actioned_at", { withTimezone: true }),
+  /**
+   * Why a request was turned down, in the moderator's words. Required on a
+   * rejection and repeated to the requester: a "no" with no reason is the one
+   * answer that reads as no answer at all. Null on a takedown and on rows
+   * decided before the column existed.
+   */
+  rejectionReason: text("rejection_reason"),
 }, (t) => [index("removal_requests_status_idx").on(t.status, t.dueAt)]);
 
 /** A later import can never resurrect a listing someone asked us to remove. */

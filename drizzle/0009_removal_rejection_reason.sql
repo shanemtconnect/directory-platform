@@ -1,0 +1,1 @@
+ALTER TABLE "removal_requests" ADD COLUMN "rejection_reason" text;
