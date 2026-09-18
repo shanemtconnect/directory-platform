@@ -4,6 +4,25 @@ import { clientIp, rateLimitSubject } from "./client-ip";
 const h = (init: Record<string, string>) => new Headers(init);
 
 describe("clientIp", () => {
+  it("prefers CF-Connecting-IP when Cloudflare is in front", () => {
+    // Cloudflare writes the visitor's address into this header on every
+    // request it proxies and strips any copy the client sent. Behind it, the
+    // last X-Forwarded-For hop is Cloudflare's own edge, not the visitor.
+    expect(
+      clientIp(h({
+        "cf-connecting-ip": "203.0.113.9",
+        "x-forwarded-for": "203.0.113.9, 198.51.100.4",
+        "x-real-ip": "198.51.100.4",
+      })),
+    ).toBe("203.0.113.9");
+  });
+
+  it("trims CF-Connecting-IP and ignores it when blank", () => {
+    expect(clientIp(h({ "cf-connecting-ip": "  2001:db8::7  " }))).toBe("2001:db8::7");
+    expect(clientIp(h({ "cf-connecting-ip": "   ", "x-forwarded-for": "198.51.100.4" })))
+      .toBe("198.51.100.4");
+  });
+
   it("takes the LAST X-Forwarded-For hop, the one our own proxy appended", () => {
     // Everything to the left of the last entry is whatever the client sent.
     // Trusting it lets one attacker spend the whole world's rate limit.

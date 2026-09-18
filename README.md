@@ -193,6 +193,30 @@ either — the map reads `NEXT_PUBLIC_MAPTILER_KEY`.
 Variables a script reads for itself (`COOLIFY_*`, `SMOKE_*`, `KEEP_BUILD_ID`,
 `DRY_RUN`, …) are listed with that script under [Scripts](#scripts).
 
+### Which header the client address comes from
+
+Rate limiting, the one-view-per-day mark and the auth limiter all key on
+`clientIp()` in `lib/spam/client-ip.ts`, which reads, in order:
+
+1. **`CF-Connecting-IP`** — when Cloudflare proxies the site. Cloudflare sets
+   it on every request and strips any copy the visitor sent, so it is the one
+   address a visitor cannot choose. Behind Cloudflare the last
+   `X-Forwarded-For` hop is Cloudflare's own edge, which would put every
+   visitor in one bucket.
+2. The **last** `X-Forwarded-For` hop — the one the origin proxy (Coolify's
+   Traefik, nginx) appended. The left of the list is whatever the client wrote.
+3. `X-Real-IP`.
+4. Nothing: the request is served, not counted, and logged once in production
+   (`rateLimitSubject`), because that means the proxy is not passing headers.
+
+If the site is **not** behind Cloudflare, have the origin proxy strip
+`CF-Connecting-IP` from incoming requests (Traefik: a `headers` middleware
+with `customRequestHeaders` set to empty; nginx: `proxy_set_header
+CF-Connecting-IP "";`). Without that, a client can name its own bucket by
+sending the header — it costs the sender, not the site, but it is a door
+worth shutting. Behind Cloudflare the header is authoritative and needs no
+configuration.
+
 ## Testing
 
 Three databases, on purpose — `corepack pnpm db:up` starts the one Postgres

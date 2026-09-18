@@ -1,6 +1,19 @@
 /**
  * The client's IP, as far as anything can be trusted.
  *
+ * `CF-Connecting-IP` first. When Cloudflare fronts the site it sets this to
+ * the visitor's address on every proxied request and strips any copy the
+ * client sent, so it is the one header a visitor cannot write. Behind
+ * Cloudflare the last `X-Forwarded-For` hop is Cloudflare's own edge — one
+ * address shared by everybody, which would put the whole internet in one
+ * rate-limit bucket. Without Cloudflare nothing sets the header, and a client
+ * that sends one itself is handing over a name to be limited under, which
+ * costs them and not us: the origin proxy still appends the real address to
+ * `X-Forwarded-For`, but nothing here reads it when the CF header is present,
+ * so a forged CF header only ever changes which bucket the forger spends.
+ * (An origin that is NOT behind Cloudflare and wants that door shut should
+ * have its proxy strip the header; see the README's environment section.)
+ *
  * `X-Forwarded-For` is a list, and the client writes the left of it. Reading
  * the FIRST entry — which is what this used to do — hands the attacker the
  * rate limiter: they send a different fake leading IP each time and never hit
@@ -12,6 +25,9 @@
  * out every other request that lands in it.
  */
 export function clientIp(headers: Headers): string | null {
+  const cloudflare = headers.get("cf-connecting-ip")?.trim();
+  if (cloudflare !== undefined && cloudflare !== "") return cloudflare;
+
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
     const hops = forwarded.split(",").map((h) => h.trim()).filter((h) => h !== "");
