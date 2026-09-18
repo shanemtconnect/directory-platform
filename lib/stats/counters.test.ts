@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Real Redis, database 7 (this worktree's, per the wave plan). Nothing here is
@@ -60,12 +60,14 @@ describe("recordStat", () => {
 
   it("never throws when Redis is unreachable", async () => {
     // A beacon that 500s because the cache is down is a worse outage than a
-    // lost view: this path is fire-and-forget by design.
+    // lost view: this path is fire-and-forget by design. The view is held in
+    // process and written when Redis is back (`lib/stats/redis.ts`), so it
+    // reports as landed.
     const previous = process.env.REDIS_URL;
     await closeStatsRedis();
     process.env.REDIS_URL = "redis://127.0.0.1:6399/7";
     try {
-      expect(await recordStat(A, "view", AT)).toBe(false);
+      expect(await recordStat(A, "view", AT)).toBe(true);
     } finally {
       process.env.REDIS_URL = previous;
       await closeStatsRedis();
@@ -251,5 +253,24 @@ describe("drainStats", () => {
     const deltas = await drainStats({ scanCount: 10, batchSize: 7 });
     expect(deltas).toHaveLength(60);
     expect(deltas.every((d) => d.views === 1)).toBe(true);
+  });
+
+  it("returns nothing when Redis is unreachable, and says so in the log", async () => {
+    // The flush job records this run as ok — an outage is the health probe's
+    // signal, and the counts are held in the web processes — but "nothing to
+    // flush" and "could not reach Redis" must not look the same in the log.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const previous = process.env.REDIS_URL;
+    await closeStatsRedis();
+    process.env.REDIS_URL = "redis://127.0.0.1:6399/7";
+    try {
+      expect(await drainStats()).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toMatch(/^\[stats\] drain skipped/);
+    } finally {
+      warn.mockRestore();
+      process.env.REDIS_URL = previous;
+      await closeStatsRedis();
+    }
   });
 });

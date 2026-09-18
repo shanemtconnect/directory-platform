@@ -1,47 +1,11 @@
-import { createClient, type RedisClientType } from "@redis/client";
-
-let client: RedisClientType | null = null;
-let connecting: Promise<RedisClientType | null> | null = null;
+import { getRedis } from "@/lib/redis/client";
 
 /**
- * When Redis refuses a connection, stop asking for a bit.
- *
- * Retrying on every call costs a connect timeout per submit, which turns one
- * dead cache into a form that appears to hang.
+ * The Redis handle is the process-wide one in `lib/redis/client.ts`. Its
+ * contract is the one this module needs: null at once while a connect is in
+ * flight or Redis is in its 30 s down-cooldown, so a caller never queues
+ * behind a connect attempt, and the in-process counter below takes over.
  */
-const REDIS_RETRY_COOLDOWN_MS = 30_000;
-let redisDownUntil = 0;
-
-async function redis(): Promise<RedisClientType | null> {
-  if (client?.isReady) return client;
-  if (Date.now() < redisDownUntil) return null;
-  // A connect already in flight is somebody else's wait. Callers that arrive
-  // while it is pending count in process (see `memory`) rather than queue
-  // behind it: a connect attempt can take the full timeout times the
-  // reconnect attempts, and the cooldown only spares the calls *after* it.
-  // Only the call that started the attempt waits for the answer, so the happy
-  // path — and the first call after a cooldown — still lands on Redis.
-  if (connecting) return null;
-  connecting = (async () => {
-    try {
-      const c = createClient({
-        url: process.env.REDIS_URL,
-        socket: { connectTimeout: 3000, reconnectStrategy: (n) => (n > 3 ? false : 200 * n) },
-      }) as RedisClientType;
-      c.on("error", () => {});
-      await c.connect();
-      client = c;
-      redisDownUntil = 0;
-      return c;
-    } catch {
-      redisDownUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
-      return null;
-    } finally {
-      connecting = null;
-    }
-  })();
-  return connecting;
-}
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -123,7 +87,7 @@ export async function rateLimit(
   const redisKey = `ratelimit:${key}:${bucket}`;
   const secondsLeft = Math.max(1, Math.ceil((bucket + 1) * opts.windowSeconds - nowSeconds));
 
-  const c = await redis();
+  const c = await getRedis();
   if (!c) return memoryLimit(redisKey, opts, secondsLeft);
 
   try {
