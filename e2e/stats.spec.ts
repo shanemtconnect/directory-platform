@@ -147,6 +147,38 @@ test.describe("the view beacon", () => {
   });
 });
 
+test.describe("the search page", () => {
+  test("counts an impression for every result in one request", async ({ page }) => {
+    // /search is force-dynamic and its result items are not ListingCards, so
+    // it is the one list on the site the card's own marker does not cover.
+    let posts = 0;
+    page.on("request", (r) => {
+      if (r.url().includes("/api/beacon")) posts += 1;
+    });
+
+    await page.goto("/search");
+    const results = page.locator('[data-testid="search-results"] > li');
+    const count = await results.count();
+    expect(count).toBeGreaterThan(1);
+
+    const ids = await page
+      .locator('[data-testid="search-results"] [data-dp-stat="impression"]')
+      .evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-dp-listing")));
+    expect(ids).toHaveLength(count);
+    for (const id of ids) touchedListingIds.add(id!);
+
+    // Not a view: nobody is looking at one listing on a results page.
+    await expect(page.locator('[data-dp-stat="view"]')).toHaveCount(0);
+
+    await expect.poll(() => posts, { timeout: 10_000 }).toBe(1);
+    for (const id of ids) {
+      await expect
+        .poll(async () => (await counts(id!)).impression ?? 0, { timeout: 10_000 })
+        .toBeGreaterThan(0);
+    }
+  });
+});
+
 test.describe("/api/beacon", () => {
   const LISTING = "11111111-1111-4111-8111-111111111111";
   touchedListingIds.add(LISTING);
