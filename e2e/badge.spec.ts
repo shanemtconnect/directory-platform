@@ -230,7 +230,9 @@ test.describe("badge backlink registration", () => {
 
     // The real snippet, and nothing registered yet.
     await expect(page.locator("main")).toContainText(owned.name);
-    await expect(page.locator(`text=/badge/${owned.id}`).first()).toBeVisible();
+    // The snippet names the real listing, not the placeholder.
+    await expect(page.locator("main")).toContainText(`/badge/${owned.id}`);
+    await expect(page.locator("main")).not.toContainText("00000000-0000-4000-8000-000000000000");
     await expect(page.locator('[data-testid="backlink-status"]'))
       .toHaveAttribute("data-state", "unregistered");
 
