@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { siteConfig } from "@/config/site.config";
 
 /**
@@ -110,18 +111,39 @@ export function statsKey(listingId: string, day: string, metric: StatMetric): st
 }
 
 /**
- * `stats:seen:<YYYY-MM-DD>:<ip>:<listingId>` — the mark that says an address
- * has already been counted as a view of this listing today.
+ * What stands in for an address in a seen-mark: `sha256(ip, day, salt)`.
+ *
+ * Not the address. A key that names the visitor is personal data sitting in
+ * Redis for a day, which is a day longer than any of this needs it. The digest
+ * is one-way, and the day is folded in so the same address is a different
+ * string tomorrow — nothing in Redis ever links one day's mark to the next.
+ * The salt is what keeps a digest from being reversed by hashing every
+ * address there is: without it, an IPv4 space is a four-billion-row lookup
+ * table somebody has already built. `lib/stats/counters.ts` supplies it from
+ * the environment; this function takes it as an argument so the key format
+ * stays testable without one.
+ *
+ * Newlines between the parts, not concatenation: `"1.2.3.4" + "2026-09-12"`
+ * and `"1.2.3.42" + "026-09-12"` must not be the same input.
+ */
+export function seenSubject(ip: string, day: string, salt: string): string {
+  return createHash("sha256").update(`${ip}\n${day}\n${salt}`).digest("hex");
+}
+
+/**
+ * `stats:seen:<YYYY-MM-DD>:<digest>:<listingId>` — the mark that says an
+ * address has already been counted as a view of this listing today.
  *
  * SET NX EX 86400, never read back, never joined to anything: a day later it
- * is gone. It is the one key in the pipeline that carries an address, and it
- * exists because the alternative — trusting each client to send one view per
- * listing per day — is no guard at all. Under the `stats:` prefix on purpose,
- * so the same SCAN discipline (never KEYS, never FLUSHALL) covers it, and the
- * flush's key parser refuses it: a mark is not a count.
+ * is gone. It exists because the alternative — trusting each client to send
+ * one view per listing per day — is no guard at all. The address itself never
+ * reaches the key: `seenSubject` above hashes it, so the only way to write a
+ * raw address here is to bypass this function. Under the `stats:` prefix on
+ * purpose, so the same SCAN discipline (never KEYS, never FLUSHALL) covers it,
+ * and the flush's key parser refuses it: a mark is not a count.
  */
-export function seenKey(day: string, ip: string, listingId: string): string {
-  return `${STATS_KEY_PREFIX}seen:${day}:${ip}:${listingId}`;
+export function seenKey(day: string, ip: string, listingId: string, salt: string): string {
+  return `${STATS_KEY_PREFIX}seen:${day}:${seenSubject(ip, day, salt)}:${listingId}`;
 }
 
 export interface ParsedStatsKey {

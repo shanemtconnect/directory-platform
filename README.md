@@ -171,6 +171,7 @@ config (`essential`, `premium`) that is the four below;
 | `PORT` `HOSTNAME` | boot | the standalone server; Dockerfile sets `3000` / `0.0.0.0` | Those defaults |
 | `SITE_FLAGS_OVERRIDE` | **build** | `config/flag-variants.ts` | Features come from `site.config.ts`. `on`/`off` exist for the two CI builds (`build:flags-on`, `build:flags-off`); never set it in production |
 | `BETTER_AUTH_RATE_LIMIT` | boot | `lib/auth/server.ts` | Rate limiting on. Only the literal `off` disables it, and only `playwright.config.ts` sets that |
+| `STATS_SEEN_SALT` | boot | `lib/stats/counters.ts` — salts the `sha256(ip, day, salt)` digest that stands in for a visitor's address in the one-view-per-day mark (`stats:seen:<day>:<digest>:<listing>`) | `BETTER_AUTH_SECRET` is used instead. Redis never holds a raw address either way; set this only to rotate the two independently |
 
 ### Monitoring variables
 
