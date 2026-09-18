@@ -32,7 +32,7 @@ function assertSignedIn(viewer: Viewer): asserts viewer is Exclude<Viewer, { rol
  * clause on `listings` or on `enquiries` unchanged — and so there is exactly
  * one place the ownership rule is written.
  */
-function ownedByViewer(viewer: Exclude<Viewer, { role: "public" }>) {
+export function ownedByViewer(viewer: Exclude<Viewer, { role: "public" }>) {
   return sql`${listings.ownerId} = (
     select ${profiles.id} from ${profiles} where ${profiles.userId} = ${viewer.userId}
   )`;
