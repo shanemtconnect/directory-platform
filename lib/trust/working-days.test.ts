@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addWorkingDays, removalDueAt, REMOVAL_SLA_WORKING_DAYS } from "./working-days";
+import { addWorkingDays, numberWord, removalDueAt, REMOVAL_SLA_WORKING_DAYS } from "./working-days";
 
 const LONDON = "Europe/London";
 
@@ -65,5 +65,23 @@ describe("removalDueAt", () => {
     expect(removalDueAt(from, LONDON).toISOString()).toBe(
       addWorkingDays(from, REMOVAL_SLA_WORKING_DAYS, LONDON).toISOString(),
     );
+  });
+});
+
+describe("numberWord", () => {
+  it("spells the small numbers copy is written with", () => {
+    expect(numberWord(1)).toBe("one");
+    expect(numberWord(5)).toBe("five");
+    expect(numberWord(10)).toBe("ten");
+  });
+
+  it("falls back to digits where a word would read worse", () => {
+    expect(numberWord(0)).toBe("0");
+    expect(numberWord(11)).toBe("11");
+    expect(numberWord(30)).toBe("30");
+  });
+
+  it("spells the SLA the copy actually uses", () => {
+    expect(`${numberWord(REMOVAL_SLA_WORKING_DAYS)} working days`).toBe("five working days");
   });
 });

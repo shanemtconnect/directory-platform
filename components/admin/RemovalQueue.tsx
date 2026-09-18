@@ -15,9 +15,9 @@ import type { OpenRemovalRequest, RemovalRelationship } from "@/lib/db/queries/t
  * People who have asked to come off the site, nearest deadline first.
  *
  * This is the one queue on the site with a regulator at the end of it: the
- * removal page promises a decision inside five working days, `due_at` is the
- * date that promise was made for, and the query orders on it rather than on
- * arrival. The overdue marker is the whole point of the screen — a request
+ * removal page promises a decision inside `REMOVAL_SLA_WORKING_DAYS` working
+ * days, `due_at` is the date that promise was made for, and the query orders
+ * on it rather than on arrival. The overdue marker is the whole point of the screen — a request
  * three days late looks identical to a fresh one without it.
  *
  * A client component for the same reason the report queue is: two admins on the

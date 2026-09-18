@@ -126,7 +126,8 @@ export function validateRemovalRequest(form: FormData): Result<RemovalRequestVal
   if (!isUuid(listingId)) errors.listingId = "That listing could not be found.";
 
   // Both required, unlike on the report form: a removal request gets an answer
-  // within five working days and there has to be somewhere to send it.
+  // within `REMOVAL_SLA_WORKING_DAYS` working days and there has to be
+  // somewhere to send it.
   if (requesterName.length < 2) errors.requesterName = "Please give your name.";
   if (requesterName.length > NAME_MAX) errors.requesterName = "That name is too long.";
   if (!EMAIL.test(requesterEmail)) errors.requesterEmail = "Please give a valid email address.";

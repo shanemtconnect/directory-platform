@@ -165,8 +165,8 @@ export type RemovalRequestResult =
 /**
  * `due_at` is written here rather than computed when the queue is read, so the
  * deadline a requester was promised is the deadline the queue reports even if
- * the SLA is changed later. Five WORKING days, in the site's own timezone —
- * see lib/trust/working-days.ts.
+ * the SLA is changed later. `REMOVAL_SLA_WORKING_DAYS` WORKING days, in the
+ * site's own timezone — see lib/trust/working-days.ts.
  */
 export async function createRemovalRequest(
   tx: TestDb,
@@ -258,9 +258,9 @@ export interface OpenRemovalRequest {
 }
 
 /**
- * Ordered by deadline, not by arrival: the queue exists to stop us breaching a
- * five-working-day promise, and the oldest request is not always the nearest
- * to breaching it.
+ * Ordered by deadline, not by arrival: the queue exists to stop us breaching
+ * the `REMOVAL_SLA_WORKING_DAYS` promise, and the oldest request is not
+ * always the nearest to breaching it.
  */
 export async function listOpenRemovalRequests(
   tx: TestDb,
