@@ -75,7 +75,29 @@ export function presignUpload(
 /**
  * The only way to read a claim document. 15 minutes, generated per view in an
  * admin-only route, and every generation is written to audit_log by the caller.
+ *
+ * The URL fixes the response headers as well as the object. A private bucket
+ * has no CDN in front of it to rewrite what R2 sends back, so the Content-Type
+ * the uploader declared is what the admin's browser would honour — and an HTML
+ * document uploaded as `image/png` would then run as a page on the storage
+ * origin, with the signed URL in its address bar. `attachment` makes every
+ * document a download rather than a render, and the type is the one WE
+ * recorded, not the one the object carries. Both travel inside the signed
+ * query, so they cannot be stripped without breaking the signature.
  */
-export function presignGet(bucket: string, key: string, ttlSeconds = 900): Promise<string> {
-  return getSignedUrl(client(), new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: ttlSeconds });
+export function presignGet(
+  bucket: string,
+  key: string,
+  opts: { ttlSeconds?: number; contentType?: string } = {},
+): Promise<string> {
+  return getSignedUrl(
+    client(),
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ResponseContentDisposition: "attachment",
+      ...(opts.contentType === undefined ? {} : { ResponseContentType: opts.contentType }),
+    }),
+    { expiresIn: opts.ttlSeconds ?? 900 },
+  );
 }

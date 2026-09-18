@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { presignUpload } from "./r2";
+import { presignGet, presignUpload } from "./r2";
 import { MAX_UPLOAD_BYTES } from "./validate";
 
 beforeAll(() => {
@@ -56,5 +56,36 @@ describe("presignUpload", () => {
     const { url, fields } = await presignUpload("media", "listing/1/original.jpg");
     expect(fields["key"]).toBe("listing/1/original.jpg");
     expect(url).toContain("media");
+  });
+});
+
+describe("presignGet", () => {
+  /**
+   * A private bucket has no CDN in front of it, so nothing rewrites the
+   * headers R2 sends back. Whatever Content-Type the uploader declared is what
+   * the admin's browser would render — an HTML "PDF" with an image type is a
+   * script running on the storage origin. The signed URL therefore names the
+   * response headers itself: a download, of the type WE recorded.
+   */
+  it("forces a download of the pinned type through the signed query", async () => {
+    const url = await presignGet("docs", "claims/1/proof.pdf", {
+      ttlSeconds: 60,
+      contentType: "application/pdf",
+    });
+    const params = new URL(url).searchParams;
+    expect(params.get("response-content-disposition")).toBe("attachment");
+    expect(params.get("response-content-type")).toBe("application/pdf");
+    expect(params.get("X-Amz-Expires")).toBe("60");
+    // Both are part of what the signature covers, so they cannot be stripped.
+    expect(params.get("X-Amz-SignedHeaders")).toBe("host");
+    expect(params.get("X-Amz-Signature")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("is a download even when the caller pins no type", async () => {
+    const url = await presignGet("docs", "claims/1/proof.pdf");
+    const params = new URL(url).searchParams;
+    expect(params.get("response-content-disposition")).toBe("attachment");
+    expect(params.get("response-content-type")).toBeNull();
+    expect(params.get("X-Amz-Expires")).toBe("900");
   });
 });
