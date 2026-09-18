@@ -7,7 +7,8 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { ensureProfile } from "@/lib/auth/profile";
 import { registerBacklink, BACKLINK_URL_MAX_LENGTH } from "@/lib/db/queries/badges";
 import { clientIp } from "@/lib/spam/client-ip";
-import { BADGE_BACKLINK_RATE_LIMIT, limitPublicWrite, retryMessage } from "@/lib/spam/write-limit";
+import { rateLimit } from "@/lib/spam/rate-limit";
+import { BADGE_BACKLINK_RATE_LIMIT, retryMessage } from "@/lib/spam/write-limit";
 import { isUuid, stripCrlf } from "@/lib/actions/validation";
 import type { TestDb } from "@/lib/db/types";
 
@@ -50,7 +51,10 @@ export async function registerBacklinkAction(
   }
 
   const requestHeaders = await headers();
-  const limit = await limitPublicWrite("badge-backlink", requestHeaders, BADGE_BACKLINK_RATE_LIMIT);
+  // Keyed on the account, not the address: this is a signed-in action, and an
+  // address is the wrong subject for one — owners behind one NAT would share a
+  // budget, and a rotating address would escape it.
+  const limit = await rateLimit(`badge-backlink:user:${viewer.userId}`, BADGE_BACKLINK_RATE_LIMIT);
   if (!limit.allowed) return { status: "error", message: retryMessage(limit) };
 
   const ip = clientIp(requestHeaders);

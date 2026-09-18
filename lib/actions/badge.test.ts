@@ -17,7 +17,7 @@ import type { Viewer } from "@/lib/db/viewer";
 const currentViewer = vi.fn<() => Promise<Viewer>>();
 const ensureProfile = vi.fn<() => Promise<{ id: string; role: "owner" }>>();
 const registerBacklink = vi.fn<() => Promise<RegisterBacklinkResult>>();
-const limitPublicWrite = vi.fn<() => Promise<RateLimitResult>>();
+const rateLimit = vi.fn<() => Promise<RateLimitResult>>();
 const revalidatePath = vi.fn<(path: string) => void>();
 
 const HANDLE = { marker: "the transaction" };
@@ -38,11 +38,11 @@ vi.mock("@/lib/db/queries/badges", () => ({
   BACKLINK_URL_MAX_LENGTH: 2048,
   registerBacklink: (...args: unknown[]) => registerBacklink(...(args as [])),
 }));
-vi.mock("@/lib/spam/write-limit", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/spam/write-limit")>();
+vi.mock("@/lib/spam/rate-limit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/spam/rate-limit")>();
   return {
     ...actual,
-    limitPublicWrite: (...args: unknown[]) => limitPublicWrite(...(args as [])),
+    rateLimit: (...args: unknown[]) => rateLimit(...(args as [])),
   };
 });
 
@@ -74,7 +74,7 @@ beforeEach(() => {
   registerBacklink.mockReset().mockResolvedValue({
     outcome: "registered", badgeId: BADGE_ID, url: URL_OK,
   });
-  limitPublicWrite.mockReset().mockResolvedValue(ALLOWED);
+  rateLimit.mockReset().mockResolvedValue(ALLOWED);
   revalidatePath.mockReset();
   transaction.mockClear();
 });
@@ -87,7 +87,7 @@ describe("registerBacklinkAction", () => {
 
     expect(state.status).toBe("error");
     expect(state.message).toMatch(/sign in/i);
-    expect(limitPublicWrite).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
   });
 
@@ -95,7 +95,7 @@ describe("registerBacklinkAction", () => {
     const state = await act({ listingId: "not-a-uuid", url: URL_OK });
 
     expect(state.status).toBe("error");
-    expect(limitPublicWrite).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
   });
 
@@ -104,19 +104,19 @@ describe("registerBacklinkAction", () => {
 
     expect(state.status).toBe("error");
     expect(state.message).toMatch(/URL/i);
-    expect(limitPublicWrite).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("checks the 10-an-hour budget on the request's own headers, before the transaction", async () => {
+  it("checks the 10-an-hour budget per account, before the transaction", async () => {
     const { BADGE_BACKLINK_RATE_LIMIT } = await import("@/lib/spam/write-limit");
-    limitPublicWrite.mockResolvedValue(BLOCKED);
+    rateLimit.mockResolvedValue(BLOCKED);
 
     const state = await act({ listingId: LISTING_ID, url: URL_OK });
 
     expect(BADGE_BACKLINK_RATE_LIMIT).toEqual({ limit: 10, windowSeconds: 3600 });
-    expect(limitPublicWrite).toHaveBeenCalledWith(
-      "badge-backlink", requestHeaders, BADGE_BACKLINK_RATE_LIMIT,
+    expect(rateLimit).toHaveBeenCalledWith(
+      `badge-backlink:user:${OWNER.userId}`, BADGE_BACKLINK_RATE_LIMIT,
     );
     expect(state.status).toBe("error");
     expect(state.message).toMatch(/30 minutes/);

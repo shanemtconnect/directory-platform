@@ -71,7 +71,10 @@ export function BacklinkForm({ listingId, currentUrl, expectedDomain }: Backlink
       {currentUrl && (
         <form action={action} data-testid="backlink-check-now" className="mt-2">
           <input type="hidden" name="listingId" value={listingId} />
-          <input type="hidden" name="url" value={currentUrl} />
+          {/* The URL just saved, not the server prop: a click before the RSC
+              refresh lands would otherwise re-post the previous URL and
+              un-verify what was just registered. */}
+          <input type="hidden" name="url" value={state.url ?? currentUrl} />
           <button type="submit" disabled={pending} className="text-sm">
             Check now
           </button>
