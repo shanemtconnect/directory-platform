@@ -97,6 +97,11 @@ export function removalToAdmin(data: RemovalEmailData): EmailContent {
 export interface RemovalDecisionEmailData {
   listingName: string;
   requesterName: string;
+  /**
+   * Why the request was turned down, for `removalRejected`. Null only for a
+   * row decided before the reason was recorded; `removalActioned` ignores it.
+   */
+  rejectionReason: string | null;
 }
 
 /**
@@ -139,6 +144,12 @@ export function removalRejected(data: RemovalDecisionEmailData): EmailContent {
             `We have looked at your request to remove ${data.listingName} from ` +
             `${siteConfig.name}, and decided not to take it down.`,
         },
+        // The moderator's own words, not a category: a person told "no" is
+        // owed the actual reason, and it is what they will argue with if they
+        // write back.
+        ...(data.rejectionReason === null
+          ? []
+          : [{ label: "Why", value: data.rejectionReason }]),
         {
           value: `If you think we have this wrong, reply to this email and tell us why.`,
         },
