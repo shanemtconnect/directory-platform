@@ -49,12 +49,14 @@ describe("listingPaths", () => {
     });
   });
 
-  it("has no paginated pages for a city that fits on one", async () => {
+  it("has no paginated pages for a city that fits on one with room to spare", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const city = await citySlug(tx, ctx.cityId);
       const ids: string[] = [];
-      for (let i = 0; i < PER_PAGE; i++) ids.push(await makeListing(tx, ctx));
+      // One short of a full page: even the listing this decision may add
+      // would not spill onto a second page, so there is none to bust.
+      for (let i = 0; i < PER_PAGE - 1; i++) ids.push(await makeListing(tx, ctx));
 
       const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
 
