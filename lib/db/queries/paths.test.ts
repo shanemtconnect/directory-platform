@@ -67,13 +67,30 @@ describe("listingPaths", () => {
       const ctx = await makeScaffold(tx);
       const city = await citySlug(tx, ctx.cityId);
       const ids: string[] = [];
-      for (let i = 0; i < PER_PAGE; i++) ids.push(await makeListing(tx, ctx));
+      for (let i = 0; i < PER_PAGE - 1; i++) ids.push(await makeListing(tx, ctx));
       await makeListing(tx, ctx, { status: "pending" });
       await makeListing(tx, ctx, { status: "removed" });
 
       const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
 
+      // PER_PAGE - 1 published: even one more would not need a page 2.
       expect(paths).not.toContain(`/${city}/page/2`);
+    });
+  });
+
+  it("includes the page a growth across the boundary creates", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const city = await citySlug(tx, ctx.cityId);
+      const ids: string[] = [];
+      for (let i = 0; i < PER_PAGE; i++) ids.push(await makeListing(tx, ctx));
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
+
+      // Exactly PER_PAGE published: approving one more creates /page/2, which
+      // may already be cached as a 404 and must be busted.
+      expect(paths).toContain(`/${city}/page/2`);
+      expect(paths).not.toContain(`/${city}/page/3`);
     });
   });
 

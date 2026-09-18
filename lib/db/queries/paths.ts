@@ -78,7 +78,12 @@ export async function listingPaths(
   if (!row) return [];
 
   // What the public route paginates, so PUBLIC_VIEWER whatever the caller is.
-  const published = await countListings(tx, PUBLIC_VIEWER, { type: "city", cityId: row.cityId });
+  // Counted BEFORE the status change, plus one: a shrink must bust the page
+  // that disappears, and a growth across a PER_PAGE boundary must bust the
+  // page that appears — a cached 404 for /city/page/N is a 404 for an hour
+  // otherwise. Over-inclusive by at most one harmless path.
+  const published =
+    (await countListings(tx, PUBLIC_VIEWER, { type: "city", cityId: row.cityId })) + 1;
 
   const listingPath = `/${row.citySlug}/${row.slug}`;
   return [
