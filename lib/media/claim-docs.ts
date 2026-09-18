@@ -99,7 +99,10 @@ export function claimDocKey(claimId: string, contentType: string): string {
  * in, so it cannot carry a metacharacter.
  */
 export function isClaimDocKey(claimId: string, key: string): boolean {
-  if (!UUID.test(claimId)) return false;
+  // Lower-case only: Postgres matches a uuid case-insensitively, but the key
+  // we minted is lower-case, so an upper-case id would pass here and store a
+  // path nothing ever uploaded to.
+  if (!UUID.test(claimId) || claimId !== claimId.toLowerCase()) return false;
   const prefix = `claims/${claimId}/`;
   return key.startsWith(prefix) && KEY_SUFFIX.test(key.slice(prefix.length));
 }

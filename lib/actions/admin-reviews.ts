@@ -43,7 +43,14 @@ function readId(form: FormData, field: string): string | null {
 const GONE = "That review is not there any more. Reload the queue to see what is left.";
 
 function settle(result: ModerateReviewResult): QueueState {
-  return result.outcome === "updated" ? { status: "done" } : { status: "error", message: GONE };
+  if (result.outcome === "updated") return { status: "done" };
+  if (result.outcome === "unverified") {
+    return {
+      status: "error",
+      message: "That review was never confirmed by its author, so it cannot be published.",
+    };
+  }
+  return { status: "error", message: GONE };
 }
 
 async function decide(form: FormData, status: "published" | "rejected"): Promise<QueueState> {
