@@ -219,4 +219,40 @@ describe("closeRedis", () => {
     const { closeRedis } = await freshClient();
     await expect(closeRedis()).resolves.toBeUndefined();
   });
+
+  it("invalidates a connect that is still in flight, so its handle never comes back", async () => {
+    // A fire-and-forget counter starts a connect; a test's afterEach closes the
+    // module; the connect then lands. Without a generation check the module
+    // would hold a live socket the caller was told is gone — opened against
+    // whatever REDIS_URL was current before the close.
+    const { getRedis, closeRedis, redisState } = await freshClient();
+    const first = getRedis();
+    expect(redisState().status).toBe("connecting");
+
+    await closeRedis();
+    fakes[0]!.connected();
+    expect(await first).toBeNull();
+    expect(redisState().status).toBe("disconnected");
+    expect(fakes[0]!.client.destroyed).toBe(1);
+
+    // The next call opens a fresh handle rather than returning the stale one.
+    const again = getRedis();
+    expect(createClient).toHaveBeenCalledTimes(2);
+    fakes[1]!.connected();
+    expect(await again).toBe(fakes[1]!.client);
+    expect(fakes[1]!.client).not.toBe(fakes[0]!.client);
+  });
+
+  it("does not start a cooldown from a refused connect that was closed while in flight", async () => {
+    // The refusal belongs to the URL before the close; the next call must
+    // read REDIS_URL afresh and try, not sit out thirty seconds for it.
+    const { getRedis, closeRedis, redisState } = await freshClient();
+    const first = getRedis();
+    await closeRedis();
+    fakes[0]!.refused();
+    expect(await first).toBeNull();
+    expect(redisState().status).toBe("disconnected");
+    void getRedis();
+    expect(createClient).toHaveBeenCalledTimes(2);
+  });
 });

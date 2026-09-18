@@ -53,6 +53,13 @@ const PRODUCTION_BUILD_PHASE = "phase-production-build";
 let client: RedisClient | null = null;
 let connecting: Promise<RedisClient | null> | null = null;
 let downUntil = 0;
+/**
+ * Bumped by `closeRedis()`. A connect that was in flight when the close
+ * happened sees a different generation when it lands, and lets its handle go
+ * rather than install it: the caller was told the module holds nothing, and
+ * the socket was opened against whatever REDIS_URL was current before.
+ */
+let generation = 0;
 
 export type RedisStatus =
   /** No REDIS_URL, or `next build`: nothing will ever be connected. */
@@ -114,14 +121,21 @@ export async function getRedis(): Promise<RedisClient | null> {
     // Swallowed: an unhandled 'error' event takes the process down, and a
     // cache blip must not stop the site or the worker.
     c.on("error", () => {});
+    const started = generation;
     try {
       await c.connect();
+      if (started !== generation) {
+        // Closed while connecting: nobody wants this handle any more.
+        discard(c);
+        return null;
+      }
       client = c;
       downUntil = 0;
       return c;
     } catch {
       discard(c);
-      downUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
+      // A refusal from before a close belongs to that URL, not the next one.
+      if (started === generation) downUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
       return null;
     } finally {
       connecting = null;
@@ -135,11 +149,16 @@ export async function getRedis(): Promise<RedisClient | null> {
  * afresh and connects. For tests, and for a worker's shutdown path. Nothing
  * held in a counter buffer is written by this: the buffers belong to their
  * modules, and they flush on the next available client, not on close.
+ *
+ * A connect in flight is invalidated too (see `generation`): its promise
+ * still settles for the caller that started it, with null, and its handle is
+ * destroyed when it lands. `redisState()` reports "connecting" until then.
  */
 export async function closeRedis(): Promise<void> {
   const c = client;
   client = null;
   downUntil = 0;
+  generation += 1;
   if (!c) return;
   try {
     await c.close();
