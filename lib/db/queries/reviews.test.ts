@@ -658,6 +658,47 @@ describe("moderateReview", () => {
     });
   });
 
+  it("refuses to publish a review whose address never clicked the link", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      // Submitted, never verified: the queue cannot show this row, but the
+      // action takes a review id from a hidden field, and an admin who forges
+      // it must not be able to publish a rating nobody stood behind.
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId, { rating: 5 }));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      const admin = await adminViewer(tx);
+
+      const result = await moderateReview(tx, admin, created.reviewId, { status: "published" });
+      expect(result).toEqual({ outcome: "unverified" });
+
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, created.reviewId));
+      expect(row!.status).toBe("pending");
+      expect(row!.emailVerifiedAt).toBeNull();
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing!.ratingCount).toBe(0);
+      expect(listing!.ratingAvg).toBeNull();
+      // Nothing happened, so nothing is on the record.
+      const audit = await tx.select().from(auditLog).where(eq(auditLog.entityId, created.reviewId));
+      expect(audit).toHaveLength(0);
+    });
+  });
+
+  it("still lets an admin reject a review that was never verified", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Barn" });
+      const created = await createReview(tx, PUBLIC_VIEWER, input(listingId));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      const admin = await adminViewer(tx);
+
+      const result = await moderateReview(tx, admin, created.reviewId, { status: "rejected" });
+      expect(result.outcome).toBe("updated");
+      const [row] = await tx.select().from(reviews).where(eq(reviews.id, created.reviewId));
+      expect(row!.status).toBe("rejected");
+    });
+  });
+
   it("un-publishing drops the review out of the aggregate", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);

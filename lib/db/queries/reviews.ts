@@ -530,7 +530,9 @@ export async function resendReviewVerification(
 
 export type ModerateReviewResult =
   | { outcome: "updated"; listingId: string }
-  | { outcome: "unknown-review" };
+  | { outcome: "unknown-review" }
+  /** Asked to publish a review whose address never clicked the link. */
+  | { outcome: "unverified" };
 
 /**
  * The admin queue's one write. Exported for the moderation page.
@@ -559,11 +561,23 @@ export async function moderateReview(
       listingId: reviews.listingId,
       status: reviews.status,
       flaggedReason: reviews.flaggedReason,
+      emailVerifiedAt: reviews.emailVerifiedAt,
     })
     .from(reviews)
     .where(eq(reviews.id, reviewId))
     .limit(1);
   if (!review) return { outcome: "unknown-review" };
+
+  /*
+   * A review is published only after its address clicked the link — the rule
+   * at the top of this file — and that has to hold here too, not only in the
+   * queue. The queue lists verified rows only, but the action takes the review
+   * id from a hidden form field, so an admin (or a stolen admin session) can
+   * name any row. Rejecting an unverified review is fine: nothing goes live.
+   */
+  if (input.status === "published" && review.emailVerifiedAt === null) {
+    return { outcome: "unverified" };
+  }
 
   /*
    * Publishing clears the reason.
