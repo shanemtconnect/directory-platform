@@ -60,12 +60,14 @@ describe("recordStat", () => {
 
   it("never throws when Redis is unreachable", async () => {
     // A beacon that 500s because the cache is down is a worse outage than a
-    // lost view: this path is fire-and-forget by design.
+    // lost view: this path is fire-and-forget by design. The view is held in
+    // process and written when Redis is back (`lib/stats/redis.ts`), so it
+    // reports as landed.
     const previous = process.env.REDIS_URL;
     await closeStatsRedis();
     process.env.REDIS_URL = "redis://127.0.0.1:6399/7";
     try {
-      expect(await recordStat(A, "view", AT)).toBe(false);
+      expect(await recordStat(A, "view", AT)).toBe(true);
     } finally {
       process.env.REDIS_URL = previous;
       await closeStatsRedis();

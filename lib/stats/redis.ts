@@ -1,30 +1,24 @@
-import { createClient, type RedisClientType } from "@redis/client";
+import type { RedisClientType } from "@redis/client";
+import { CounterBuffer } from "@/lib/redis/buffer";
+import { closeRedis, getRedis } from "@/lib/redis/client";
 
 /**
- * The stats pipeline's Redis handle.
+ * The stats pipeline's view of Redis.
  *
- * Separate from `lib/spam/rate-limit.ts`'s handle on purpose, even though the
- * two connect to the same server with the same care: they have different
- * lifetimes (one lives in a worker process on a cron, one on the request path)
- * and different failure meanings (a lost counter is a lost view; a lost rate
- * limit is an open endpoint). Sharing a module-level client between them would
- * make one module's cooldown the other's outage.
+ * The connection itself is the process-wide one in `lib/redis/client.ts`,
+ * shared with the rate limiter and the badge counters. That client hands out
+ * null while a connect is in flight or Redis is in its down-cooldown, and
+ * this module's answer to null is to HOLD a count rather than drop it: an
+ * INCR that cannot reach Redis goes into a bounded in-process buffer and is
+ * written the next time a client is available. A view during a Redis blip
+ * is delayed, not lost. (Sharing a client used to mean sharing a cooldown,
+ * which was the argument for a separate handle here; with the buffer, a
+ * cooldown is no longer an outage for the counters.)
  *
  * The exported surface is a narrow interface rather than the node-redis client
  * so the rest of `lib/stats` cannot reach for DEL, FLUSHALL or KEYS by
  * accident — this runs against the same Redis that serves the page cache.
  */
-
-/** Short: this is called from a request handler, behind a `no-store` beacon. */
-const CONNECT_TIMEOUT_MS = 1500;
-
-/**
- * When Redis refuses a connection, stop asking for a bit.
- *
- * Same reasoning as the rate limiter's: retrying per call turns one dead cache
- * into a connect timeout on every page view.
- */
-const RETRY_COOLDOWN_MS = 30_000;
 
 export interface ScanPage {
   cursor: string;
@@ -43,6 +37,8 @@ export interface StatsRedisClient {
   /**
    * SET NX EX: writes the key only if it is absent, with a TTL, atomically.
    * True when this call created it — the one caller that may act on it.
+   * Also true while Redis is away: the mark guards a counter that is being
+   * held rather than written, and a held view beats a dropped one.
    */
   setIfAbsent(key: string, value: string, seconds: number): Promise<boolean>;
   /** One SCAN page. Never KEYS — this server also holds the page cache. */
@@ -57,9 +53,15 @@ export interface StatsRedisClient {
   flushDb(): Promise<void>;
 }
 
-let client: RedisClientType | null = null;
-let connecting: Promise<RedisClientType | null> | null = null;
-let downUntil = 0;
+/**
+ * Only `incr` and `expire` are answered from the buffer while Redis is away.
+ * Every other command rejects: a SCAN that answered with an empty page would
+ * tell a drain there was nothing to flush, and a GET would report a count of
+ * nothing. The callers already treat a rejection as "not now".
+ */
+
+/** Counts that could not reach Redis, written the next time a client can. */
+const pending = new CounterBuffer("stats");
 
 /** Next sets this during `next build`; constraint 4 says never connect then. */
 const PRODUCTION_BUILD_PHASE = "phase-production-build";
@@ -112,61 +114,89 @@ function wrap(c: RedisClientType): StatsRedisClient {
   };
 }
 
+async function writePending(c: RedisClientType): Promise<void> {
+  await pending.flush(async ({ key, count, expireSeconds }) => {
+    const total = await c.incrBy(key, count);
+    // The key was fresh in Redis if the reply is exactly what we added: apply
+    // the TTL the caller asked for. Anything larger means another writer got
+    // there first, and the key has its TTL from them.
+    if (expireSeconds !== null && total === count) await c.expire(key, expireSeconds);
+  });
+}
+
 /**
- * A connected client, or null when there is no Redis to talk to.
+ * The shared client, with anything held while it was away written first,
+ * or null while it is still away (see `lib/redis/client.ts`).
+ */
+async function live(): Promise<RedisClientType | null> {
+  const c = await getRedis();
+  if (c && pending.size > 0) await writePending(c);
+  return c;
+}
+
+async function connected(): Promise<RedisClientType> {
+  const c = await live();
+  if (!c) throw new Error("[stats] Redis is unreachable");
+  return c;
+}
+
+const stats: StatsRedisClient = {
+  incr: async (key) => {
+    const c = await live();
+    if (!c) return pending.add(key);
+    try {
+      return await c.incr(key);
+    } catch {
+      // Redis went away between the handle check and the write.
+      return pending.add(key);
+    }
+  },
+  expire: async (key, seconds) => {
+    const c = await live();
+    if (!c) {
+      pending.expire(key, seconds);
+      return;
+    }
+    try {
+      await c.expire(key, seconds);
+    } catch {
+      pending.expire(key, seconds);
+    }
+  },
+  ttl: async (key) => wrap(await connected()).ttl(key),
+  get: async (key) => wrap(await connected()).get(key),
+  set: async (key, value) => wrap(await connected()).set(key, value),
+  setIfAbsent: async (key, value, seconds) => {
+    const c = await live();
+    if (!c) return true;
+    return wrap(c).setIfAbsent(key, value, seconds);
+  },
+  scan: async (cursor, match, count) => wrap(await connected()).scan(cursor, match, count),
+  takeAll: async (keys) => wrap(await connected()).takeAll(keys),
+  flushDb: async () => wrap(await connected()).flushDb(),
+};
+
+/**
+ * The stats client, or null when there is no Redis to talk to at all.
  *
- * Null rather than a throw: every caller in this module is fire-and-forget,
- * and REDIS_URL being unset is a legitimate state in a unit test run. In
- * production it is required at boot (`config/validate.ts` RUNTIME_ENV), so a
- * null here means the cache is genuinely down, not misconfigured.
+ * Null only when REDIS_URL is unset or this is `next build`: REDIS_URL being
+ * unset is a legitimate state in a unit test run, and in production it is
+ * required at boot (`config/validate.ts` RUNTIME_ENV). A Redis that is
+ * configured but unreachable is NOT null — it is a client that holds counts
+ * until Redis is back, and every caller in this module is fire-and-forget.
+ * Nothing is connected by this call; the first command does that.
  */
 export async function statsRedis(): Promise<StatsRedisClient | null> {
   if (process.env.NEXT_PHASE === PRODUCTION_BUILD_PHASE) return null;
   if (!process.env.REDIS_URL) return null;
-  if (client?.isReady) return wrap(client);
-  if (Date.now() < downUntil) return null;
-  if (connecting) {
-    const existing = await connecting;
-    return existing ? wrap(existing) : null;
-  }
-
-  connecting = (async () => {
-    try {
-      const c = createClient({
-        url: process.env.REDIS_URL,
-        socket: {
-          connectTimeout: CONNECT_TIMEOUT_MS,
-          reconnectStrategy: (n) => (n > 3 ? false : 200 * n),
-        },
-      }) as RedisClientType;
-      // Swallowed: an unhandled 'error' event takes the process down, and a
-      // cache blip must not stop the site or the worker.
-      c.on("error", () => {});
-      await c.connect();
-      client = c;
-      downUntil = 0;
-      return c;
-    } catch {
-      downUntil = Date.now() + RETRY_COOLDOWN_MS;
-      return null;
-    } finally {
-      connecting = null;
-    }
-  })();
-
-  const connected = await connecting;
-  return connected ? wrap(connected) : null;
+  return stats;
 }
 
-/** Test-only, and the worker's shutdown path. Also clears the cooldown. */
+/**
+ * Test-only, and a worker's shutdown path. Drops the shared handle and clears
+ * the cooldown. Counts held in the buffer stay held: they are written on the
+ * next available client, not on close.
+ */
 export async function closeStatsRedis(): Promise<void> {
-  const c = client;
-  client = null;
-  downUntil = 0;
-  if (!c) return;
-  try {
-    await c.quit();
-  } catch {
-    // Already gone; nothing to close.
-  }
+  await closeRedis();
 }
