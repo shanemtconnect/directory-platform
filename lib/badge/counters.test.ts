@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { setImmediate } from "node:timers/promises";
 import {
   recordBadgeImpression,
   recordBadgeClick,
@@ -104,5 +105,149 @@ describe("drainHash", () => {
   it("returns nothing when the hash does not exist", async () => {
     const { client } = fakeClient({ rename: async () => { throw new Error("no such key"); } });
     expect(await drainHash(client, "badge:test")).toEqual({});
+  });
+});
+
+/**
+ * A Redis client whose connect() settles only when the test says so, with an
+ * in-memory hIncrBy, so the window between "connect started" and "connect
+ * settled" can be held open and the buffer's behaviour in it examined.
+ */
+function fakeRedisClient() {
+  let resolveConnect!: () => void;
+  let rejectConnect!: (err: Error) => void;
+  const connect = new Promise<void>((resolve, reject) => {
+    resolveConnect = resolve;
+    rejectConnect = reject;
+  });
+  const hashes = new Map<string, Map<string, number>>();
+  let failWrites = false;
+  const client = {
+    isReady: false,
+    on() {},
+    connect: () => connect,
+    destroy() {},
+    close: async () => {},
+    hIncrBy: async (hash: string, field: string, n: number) => {
+      if (failWrites) throw new Error("connection reset");
+      const h = hashes.get(hash) ?? new Map<string, number>();
+      h.set(field, (h.get(field) ?? 0) + n);
+      hashes.set(hash, h);
+      return h.get(field)!;
+    },
+  };
+  return {
+    client,
+    hashes,
+    field: (hash: string, id: string) => hashes.get(hash)?.get(id) ?? 0,
+    connected() { client.isReady = true; resolveConnect(); },
+    refused() { rejectConnect(new Error("ECONNREFUSED")); },
+    dropWrites(on: boolean) { failWrites = on; },
+  };
+}
+
+/** The value `p` settled to once the microtask queue is drained, or null if it is still pending. */
+async function settledThisTick<T>(p: Promise<T>): Promise<{ value: T } | null> {
+  let settled: { value: T } | null = null;
+  void p.then((value) => { settled = { value }; });
+  await setImmediate();
+  return settled;
+}
+
+describe("badge counters while Redis is unavailable", () => {
+  const fakes: ReturnType<typeof fakeRedisClient>[] = [];
+  let mod: typeof import("./counters");
+
+  beforeEach(async () => {
+    fakes.length = 0;
+    vi.doMock("@redis/client", () => ({
+      createClient: () => {
+        const fake = fakeRedisClient();
+        fakes.push(fake);
+        return fake.client;
+      },
+    }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // Own module instances: the shared client and the buffer are module state.
+    vi.resetModules();
+    process.env.REDIS_URL = GOOD_URL;
+    mod = await import("./counters");
+  });
+  afterEach(() => {
+    vi.doUnmock("@redis/client");
+    vi.useRealTimers();
+  });
+
+  it("holds hits that arrive during the connect and writes them once it lands", async () => {
+    const id = randomUUID();
+
+    // The first hit starts the connect and waits on it.
+    const first = mod.recordBadgeImpression(id);
+    expect(await settledThisTick(first)).toBeNull();
+
+    // The next two do not queue behind it: they settle now and are held.
+    expect(await settledThisTick(mod.recordBadgeImpression(id))).toEqual({ value: undefined });
+    expect(await settledThisTick(mod.recordBadgeClick(id))).toEqual({ value: undefined });
+    expect(fakes[0]!.hashes.size).toBe(0);
+
+    fakes[0]!.connected();
+    await first;
+    // The held hits went first, then the initiator's own.
+    expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(2);
+    expect(fakes[0]!.field(mod.CLICK_HASH, id)).toBe(1);
+  });
+
+  it("keeps hits through a refused connect and writes them after the cooldown", async () => {
+    const id = randomUUID();
+    const first = mod.recordBadgeImpression(id);
+    fakes[0]!.refused();
+    await first;
+    // Cooling down: nothing reconnects, but nothing is dropped either.
+    await mod.recordBadgeImpression(id);
+    await mod.recordBadgeClick(id);
+    expect(fakes).toHaveLength(1);
+
+    vi.setSystemTime(Date.now() + 31_000);
+    const retry = mod.recordBadgeImpression(id);
+    expect(fakes).toHaveLength(2);
+    fakes[1]!.connected();
+    await retry;
+    expect(fakes[1]!.field(mod.IMPRESSION_HASH, id)).toBe(3);
+    expect(fakes[1]!.field(mod.CLICK_HASH, id)).toBe(1);
+  });
+
+  it("drains what was held, not just what is in Redis", async () => {
+    const id = randomUUID();
+    const first = mod.recordBadgeImpression(id);
+    fakes[0]!.refused();
+    await first;
+    await mod.recordBadgeClick(id);
+
+    // Redis is back and the worker's flush is the first thing to notice.
+    vi.setSystemTime(Date.now() + 31_000);
+    const drain = mod.drainBadgeCounters();
+    fakes[1]!.connected();
+    // drainHash needs rename/pExpire/hGetAll/del; this fake has none, so the
+    // drain itself throws and reports nothing — the assertion is on what the
+    // flush wrote first.
+    expect(await drain).toEqual([]);
+    expect(fakes[1]!.field(mod.IMPRESSION_HASH, id)).toBe(1);
+    expect(fakes[1]!.field(mod.CLICK_HASH, id)).toBe(1);
+  });
+
+  it("holds a hit whose write fails on a live connection, and retries it later", async () => {
+    const id = randomUUID();
+    const first = mod.recordBadgeImpression(id);
+    fakes[0]!.connected();
+    await first;
+    expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(1);
+
+    fakes[0]!.dropWrites(true);
+    await mod.recordBadgeImpression(id);
+    expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(1);
+
+    fakes[0]!.dropWrites(false);
+    await mod.recordBadgeImpression(id);
+    expect(fakes[0]!.field(mod.IMPRESSION_HASH, id)).toBe(3);
   });
 });

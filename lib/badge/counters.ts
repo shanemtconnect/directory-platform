@@ -1,5 +1,7 @@
-import { createClient, type RedisClientType } from "@redis/client";
+import type { RedisClientType } from "@redis/client";
 import type { BadgeCounterDelta } from "@/lib/db/queries/badges";
+import { closeRedis, getRedis } from "@/lib/redis/client";
+import { CounterBuffer } from "@/lib/redis/buffer";
 
 /**
  * Badge impressions and clicks, counted in Redis and written to Postgres by
@@ -20,56 +22,58 @@ import type { BadgeCounterDelta } from "@/lib/db/queries/badges";
 export const IMPRESSION_HASH = "badge:impressions";
 export const CLICK_HASH = "badge:clicks";
 
-let client: RedisClientType | null = null;
-let connecting: Promise<RedisClientType | null> | null = null;
+/**
+ * Hits that could not reach Redis, keyed `hash\0listingId`, written the next
+ * time the shared client is available. A badge is served from someone else's
+ * site at whatever rate that site gets traffic; a thirty-second Redis blip
+ * used to drop every impression in it. Now it delays them.
+ */
+const pending = new CounterBuffer("badge");
+const SEPARATOR = "\0";
 
-/** Same shape as lib/spam/rate-limit.ts: stop asking a refused Redis for a bit. */
-const REDIS_RETRY_COOLDOWN_MS = 30_000;
-let redisDownUntil = 0;
-
-async function redis(): Promise<RedisClientType | null> {
-  if (client?.isReady) return client;
-  if (Date.now() < redisDownUntil) return null;
-  if (connecting) return connecting;
-  connecting = (async () => {
-    try {
-      const c = createClient({
-        url: process.env.REDIS_URL,
-        socket: { connectTimeout: 3000, reconnectStrategy: (n) => (n > 3 ? false : 200 * n) },
-      }) as RedisClientType;
-      c.on("error", () => {});
-      await c.connect();
-      client = c;
-      redisDownUntil = 0;
-      return c;
-    } catch {
-      redisDownUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
-      return null;
-    } finally {
-      connecting = null;
-    }
-  })();
-  return connecting;
+function pendingKey(hash: string, listingId: string): string {
+  return `${hash}${SEPARATOR}${listingId}`;
 }
 
-/** Test-only: drops the cached handle so the next call reads REDIS_URL again. */
+async function writePending(c: RedisClientType): Promise<void> {
+  await pending.flush(async ({ key, count }) => {
+    const at = key.indexOf(SEPARATOR);
+    await c.hIncrBy(key.slice(0, at), key.slice(at + 1), count);
+  });
+}
+
+/**
+ * The shared client, with anything held while it was away written first.
+ *
+ * Null while a connect is in flight or Redis is cooling down — see
+ * `lib/redis/client.ts` — in which case the caller holds its hit in `pending`.
+ */
+async function redis(): Promise<RedisClientType | null> {
+  const c = await getRedis();
+  if (c && pending.size > 0) await writePending(c);
+  return c;
+}
+
+/** Test-only: drops the shared handle so the next call reads REDIS_URL again. */
 export async function closeBadgeCounters(): Promise<void> {
-  const c = client;
-  client = null;
-  redisDownUntil = 0;
-  if (c) await c.quit().catch(() => {});
+  await closeRedis();
 }
 
 async function bump(hash: string, listingId: string): Promise<void> {
   // Never throws. The badge image and the click redirect both have to work
-  // when the cache does not; a lost count is not worth a 500 on someone
+  // when the cache does not; a held count is not worth a 500 on someone
   // else's website.
   try {
     const c = await redis();
-    if (!c) return;
+    if (!c) {
+      pending.add(pendingKey(hash, listingId));
+      return;
+    }
     await c.hIncrBy(hash, listingId, 1);
   } catch {
-    /* counted or not, the response goes out */
+    // Redis went away between the handle check and the write. Same answer
+    // as no handle at all: hold it, and the response goes out.
+    pending.add(pendingKey(hash, listingId));
   }
 }
 
