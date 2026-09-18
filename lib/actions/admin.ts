@@ -9,10 +9,11 @@ import { clientIp } from "@/lib/spam/client-ip";
 import {
   approveSubmission,
   rejectSubmission,
-  submissionDetail,
   type DecisionResult,
 } from "@/lib/db/queries/admin/submissions";
 import { saveCityIntro, setCityPublished } from "@/lib/db/queries/admin/cities";
+import { listingPaths } from "@/lib/db/queries/paths";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -40,16 +41,14 @@ function readId(form: FormData, field: string): string | null {
 /**
  * A decision changes what the public sees, and the pillar pages are ISR-cached.
  * Without this the listing is live in the database and absent from its city
- * page — and its category's pillar page within that city — until the
- * revalidate window happens to expire.
+ * page — its paginated pages and its category's pillar page within that city
+ * — until the revalidate window happens to expire. The paths are read by
+ * `listingPaths` inside the transaction, BEFORE the decision: a rejection of
+ * something that was published can shrink the city's page count, and the
+ * page that just stopped existing is the one whose cached copy must go.
  */
-function revalidateListing(citySlug: string, slug: string, categorySlug: string | null): void {
-  revalidatePath(`/${citySlug}`);
-  revalidatePath(`/${citySlug}/${slug}`);
-  // The reviews sub-page is its own ISR route and 404s for an unpublished
-  // listing, so it goes stale (or comes back) with the listing itself.
-  revalidatePath(`/${citySlug}/${slug}/reviews`);
-  if (categorySlug !== null) revalidatePath(`/${citySlug}/${categorySlug}`);
+function revalidateListing(paths: readonly string[]): void {
+  revalidateListingPaths(paths);
   revalidatePath("/admin/submissions");
 }
 
@@ -62,9 +61,9 @@ export async function approveSubmissionAction(form: FormData): Promise<void> {
 
   const outcome = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
-    const detail = await submissionDetail(handle, viewer, listingId);
+    const paths = await listingPaths(handle, viewer, listingId);
     const result = await approveSubmission(handle, viewer, listingId, { ip });
-    return { result, detail };
+    return { result, paths };
   });
 
   if (outcome.result.outcome !== "approved") {
@@ -72,9 +71,7 @@ export async function approveSubmissionAction(form: FormData): Promise<void> {
     // status it is actually in, which is the answer to both.
     redirect(`/admin/submissions/${listingId}`);
   }
-  if (outcome.detail) {
-    revalidateListing(outcome.detail.citySlug, outcome.detail.slug, outcome.detail.categorySlug);
-  }
+  revalidateListing(outcome.paths);
   redirect("/admin/submissions");
 }
 
@@ -100,17 +97,15 @@ export async function rejectSubmissionAction(
 
   const outcome = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
-    const detail = await submissionDetail(handle, viewer, listingId);
+    const paths = await listingPaths(handle, viewer, listingId);
     const result = await rejectSubmission(handle, viewer, listingId, reason, { ip });
-    return { result, detail };
+    return { result, paths };
   });
 
   const failure = rejectionMessage(outcome.result);
   if (failure) return { status: "error", message: failure };
 
-  if (outcome.detail) {
-    revalidateListing(outcome.detail.citySlug, outcome.detail.slug, outcome.detail.categorySlug);
-  }
+  revalidateListing(outcome.paths);
   redirect("/admin/submissions");
 }
 

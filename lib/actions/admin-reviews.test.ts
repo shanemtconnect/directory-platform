@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ModerateReviewResult } from "@/lib/db/queries/reviews";
-import type { SubmissionDetail } from "@/lib/db/queries/admin/submissions";
 import type { Viewer } from "@/lib/db/viewer";
 
 /**
@@ -17,7 +16,7 @@ import type { Viewer } from "@/lib/db/viewer";
 
 const requireAdmin = vi.fn<() => Promise<Viewer>>();
 const moderateReview = vi.fn<() => Promise<ModerateReviewResult>>();
-const submissionDetail = vi.fn<() => Promise<SubmissionDetail | null>>();
+const listingPaths = vi.fn<() => Promise<string[]>>();
 const revalidatePath = vi.fn<(path: string) => void>();
 
 const HANDLE = { marker: "the transaction" };
@@ -34,20 +33,21 @@ vi.mock("@/lib/auth/viewer", () => ({ requireAdmin: () => requireAdmin() }));
 vi.mock("@/lib/db/queries/reviews", () => ({
   moderateReview: (...args: unknown[]) => moderateReview(...(args as [])),
 }));
-vi.mock("@/lib/db/queries/admin/submissions", () => ({
-  submissionDetail: (...args: unknown[]) => submissionDetail(...(args as [])),
+vi.mock("@/lib/db/queries/paths", () => ({
+  listingPaths: (...args: unknown[]) => listingPaths(...(args as [])),
 }));
 
 const ADMIN: Viewer = { role: "admin", userId: "user_admin" };
 const REVIEW_ID = "11111111-1111-4111-8111-111111111111";
 const LISTING_ID = "33333333-3333-4333-8333-333333333333";
 
-const DETAIL = {
-  id: LISTING_ID,
-  citySlug: "richmond",
-  slug: "the-old-hall",
-  categorySlug: "barns",
-} as unknown as SubmissionDetail;
+const PATHS = [
+  "/richmond/the-old-hall",
+  "/richmond/the-old-hall/reviews",
+  "/richmond",
+  "/richmond/page/2",
+  "/richmond/barns",
+];
 
 function form(fields: Record<string, string>): FormData {
   const data = new FormData();
@@ -64,7 +64,7 @@ beforeEach(() => {
   requestHeaders = new Headers({ "x-forwarded-for": "203.0.113.9" });
   requireAdmin.mockReset().mockResolvedValue(ADMIN);
   moderateReview.mockReset().mockResolvedValue({ outcome: "updated", listingId: LISTING_ID });
-  submissionDetail.mockReset().mockResolvedValue(DETAIL);
+  listingPaths.mockReset().mockResolvedValue(PATHS);
   revalidatePath.mockReset();
   transaction.mockClear();
 });
@@ -141,11 +141,8 @@ describe("review moderation", () => {
 
     await publishReviewAction({ status: "idle" }, form({ reviewId: REVIEW_ID }));
 
-    expect(submissionDetail).toHaveBeenCalledWith(HANDLE, ADMIN, LISTING_ID);
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall/reviews");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/barns");
+    expect(listingPaths).toHaveBeenCalledWith(HANDLE, ADMIN, LISTING_ID);
+    for (const path of PATHS) expect(revalidatePath).toHaveBeenCalledWith(path);
     expect(revalidatePath).toHaveBeenCalledWith("/admin/reviews");
     expect(revalidatePath).toHaveBeenCalledWith("/admin");
   });
@@ -160,7 +157,7 @@ describe("review moderation", () => {
   });
 
   it("still reports the decision when the listing's paths cannot be read", async () => {
-    submissionDetail.mockResolvedValue(null);
+    listingPaths.mockResolvedValue([]);
     const { publishReviewAction } = await load();
 
     const state = await publishReviewAction({ status: "idle" }, form({ reviewId: REVIEW_ID }));
