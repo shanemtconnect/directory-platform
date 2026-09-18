@@ -2,7 +2,7 @@ import { siteUrl } from "@/lib/schema/builders";
 import { now } from "@/lib/clock";
 import { badgesDueForCheck, recordBacklinkCheck } from "@/lib/db/queries/badges";
 import { listingPaths } from "@/lib/db/queries/paths";
-import { checkBacklink, type Resolver } from "@/lib/badge/backlink";
+import { checkBacklink, type BacklinkFetch, type Resolver } from "@/lib/badge/backlink";
 import { ADMIN_VIEWER } from "../viewer";
 import type { Db } from "@/lib/db/client";
 
@@ -28,7 +28,12 @@ export interface BacklinkCheckDeps {
   at?: Date;
   limit?: number;
   resolve?: Resolver;
-  fetchImpl?: typeof fetch;
+  /**
+   * The pinned type, never `typeof fetch`: Node's bundled fetch ignores an
+   * npm-undici Agent, so a caller passing it would skip the dispatcher the
+   * DNS pin lives in. Production passes nothing and gets undici's own.
+   */
+  fetchImpl?: BacklinkFetch;
 }
 
 export interface BacklinkCheckReport {

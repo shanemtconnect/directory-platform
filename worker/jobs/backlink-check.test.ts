@@ -1,11 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, expectTypeOf, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
 import { badges, cities, listings } from "@/lib/db/schema";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { BACKLINK_RANK_BOOST } from "@/lib/db/queries/badges";
-import type { Resolver } from "@/lib/badge/backlink";
-import { checkBadgeBacklinks, backlinkTargets } from "./backlink-check";
+import type { BacklinkFetch, Resolver } from "@/lib/badge/backlink";
+import { checkBadgeBacklinks, backlinkTargets, type BacklinkCheckDeps } from "./backlink-check";
 
 const PUBLIC_DNS: Resolver = async () => ["93.184.216.34"];
 
@@ -109,7 +109,7 @@ describe("checkBadgeBacklinks", () => {
 
       const report = await checkBadgeBacklinks(tx, {
         resolve: PUBLIC_DNS,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl as unknown as BacklinkFetch,
       });
 
       expect(fetchImpl).not.toHaveBeenCalled();
@@ -149,10 +149,24 @@ describe("checkBadgeBacklinks", () => {
       const fetchImpl = vi.fn();
       const report = await checkBadgeBacklinks(tx, {
         resolve: PUBLIC_DNS,
-        fetchImpl: fetchImpl as unknown as typeof fetch,
+        fetchImpl: fetchImpl as unknown as BacklinkFetch,
       });
       expect(report).toMatchObject({ checked: 0, verified: 0, failed: 0 });
       expect(fetchImpl).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("BacklinkCheckDeps", () => {
+  /**
+   * The job's fetch hook is the pinned type from lib/badge/backlink.ts, not
+   * the global one. `typeof fetch` would type-check a caller passing Node's
+   * bundled fetch, which ignores an npm-undici Agent and so would skip the
+   * dispatcher the DNS pin lives in. Enforced by `tsc`, which the suite runs
+   * under; the assertion is a no-op at runtime.
+   */
+  it("types fetchImpl as BacklinkFetch, the same as checkBacklink's own deps", () => {
+    expectTypeOf<BacklinkCheckDeps["fetchImpl"]>().toEqualTypeOf<BacklinkFetch | undefined>();
+    expectTypeOf<BacklinkCheckDeps["fetchImpl"]>().not.toEqualTypeOf<typeof fetch | undefined>();
   });
 });
