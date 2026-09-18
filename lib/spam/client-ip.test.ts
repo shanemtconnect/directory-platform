@@ -4,22 +4,33 @@ import { clientIp, rateLimitSubject } from "./client-ip";
 const h = (init: Record<string, string>) => new Headers(init);
 
 describe("clientIp", () => {
-  it("prefers CF-Connecting-IP when Cloudflare is in front", () => {
+  it("ignores CF-Connecting-IP unless TRUST_CF_CONNECTING_IP=true", () => {
+    // Without Cloudflare in front nothing strips the header, so a client can
+    // send it and choose its own rate-limit bucket. Off by default.
+    const headers = h({
+      "cf-connecting-ip": "203.0.113.9",
+      "x-forwarded-for": "203.0.113.9, 198.51.100.4",
+      "x-real-ip": "198.51.100.4",
+    });
+    expect(clientIp(headers, {})).toBe("198.51.100.4");
+    expect(clientIp(headers, { TRUST_CF_CONNECTING_IP: "1" })).toBe("198.51.100.4");
+    expect(clientIp(headers, { TRUST_CF_CONNECTING_IP: "false" })).toBe("198.51.100.4");
+  });
+
+  it("prefers CF-Connecting-IP when the switch is on and Cloudflare is in front", () => {
     // Cloudflare writes the visitor's address into this header on every
     // request it proxies and strips any copy the client sent. Behind it, the
     // last X-Forwarded-For hop is Cloudflare's own edge, not the visitor.
+    const env = { TRUST_CF_CONNECTING_IP: "true" };
     expect(
       clientIp(h({
         "cf-connecting-ip": "203.0.113.9",
         "x-forwarded-for": "203.0.113.9, 198.51.100.4",
         "x-real-ip": "198.51.100.4",
-      })),
+      }), env),
     ).toBe("203.0.113.9");
-  });
-
-  it("trims CF-Connecting-IP and ignores it when blank", () => {
-    expect(clientIp(h({ "cf-connecting-ip": "  2001:db8::7  " }))).toBe("2001:db8::7");
-    expect(clientIp(h({ "cf-connecting-ip": "   ", "x-forwarded-for": "198.51.100.4" })))
+    expect(clientIp(h({ "cf-connecting-ip": "  2001:db8::7  " }), env)).toBe("2001:db8::7");
+    expect(clientIp(h({ "cf-connecting-ip": "   ", "x-forwarded-for": "198.51.100.4" }), env))
       .toBe("198.51.100.4");
   });
 

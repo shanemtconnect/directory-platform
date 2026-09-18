@@ -196,27 +196,22 @@ Variables a script reads for itself (`COOLIFY_*`, `SMOKE_*`, `KEEP_BUILD_ID`,
 
 ### Which header the client address comes from
 
-Rate limiting, the one-view-per-day mark and the auth limiter all key on
-`clientIp()` in `lib/spam/client-ip.ts`, which reads, in order:
+Rate limiting, the one-view-per-day mark, the audit `ip` column and the auth
+limiter all key on `clientIp()` in `lib/spam/client-ip.ts`, which reads, in order:
 
-1. **`CF-Connecting-IP`** — when Cloudflare proxies the site. Cloudflare sets
-   it on every request and strips any copy the visitor sent, so it is the one
-   address a visitor cannot choose. Behind Cloudflare the last
+1. **`CF-Connecting-IP`** — only when `TRUST_CF_CONNECTING_IP=true`. Behind
+   Cloudflare it is the one address a visitor cannot choose (Cloudflare sets it
+   on every request and strips any copy the visitor sent), and the last
    `X-Forwarded-For` hop is Cloudflare's own edge, which would put every
-   visitor in one bucket.
+   visitor in one bucket. **Without Cloudflare nothing strips it**, so a client
+   could send the header and name its own bucket on every request — which is
+   why it is off by default and must never be switched on for an origin that
+   is reachable other than through Cloudflare.
 2. The **last** `X-Forwarded-For` hop — the one the origin proxy (Coolify's
    Traefik, nginx) appended. The left of the list is whatever the client wrote.
 3. `X-Real-IP`.
 4. Nothing: the request is served, not counted, and logged once in production
    (`rateLimitSubject`), because that means the proxy is not passing headers.
-
-If the site is **not** behind Cloudflare, have the origin proxy strip
-`CF-Connecting-IP` from incoming requests (Traefik: a `headers` middleware
-with `customRequestHeaders` set to empty; nginx: `proxy_set_header
-CF-Connecting-IP "";`). Without that, a client can name its own bucket by
-sending the header — it costs the sender, not the site, but it is a door
-worth shutting. Behind Cloudflare the header is authoritative and needs no
-configuration.
 
 ## Testing
 
@@ -453,6 +448,7 @@ to detect.
 | `SENTRY_DSN` | boot | `instrumentation.ts` — server errors; falls back to the public DSN |
 | `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` | **build** | `app/layout.tsx` — the analytics script's `data-domain` |
 | `UPTIME_PUSH_URL` | boot, **worker only** | `worker/index.ts` — the heartbeat push |
+| `TRUST_CF_CONNECTING_IP` | optional | runtime | `lib/spam/client-ip.ts` | Set to `true` only when the origin is reachable through Cloudflare alone; then `CF-Connecting-IP` is the client address. Unset: the last `X-Forwarded-For` hop. |
 
 One more optional runtime variable sits outside that list because it is not
 monitoring:

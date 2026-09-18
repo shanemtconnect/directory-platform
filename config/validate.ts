@@ -69,6 +69,9 @@ export const BUILD_ENV_OPTIONAL = ["NEXT_PUBLIC_MAPTILER_KEY", "NEXT_PUBLIC_MEDI
  *   NEXT_PUBLIC_PLAUSIBLE_DOMAIN — the analytics script's data-domain. BUILD-time,
  *                                  same reason. Unset means no script at all,
  *                                  which is also how a clone opts out.
+ *   TRUST_CF_CONNECTING_IP       — "true" only when the origin is reachable
+ *                                  through Cloudflare alone; then CF-Connecting-IP
+ *                                  is the client address (lib/spam/client-ip.ts).
  *   UPTIME_PUSH_URL              — an Uptime Kuma push monitor the worker GETs
  *                                  on each five-minute heartbeat. Runtime. The
  *                                  web container is watched by /api/health
