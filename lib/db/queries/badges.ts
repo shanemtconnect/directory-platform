@@ -1,5 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
-import { auditLog, badges, categories, cities, listings } from "@/lib/db/schema";
+import { badges, categories, cities, listings } from "@/lib/db/schema";
+import { domainOfWebsite } from "@/lib/claims/domain";
+import { writeAuditAs } from "@/lib/db/queries/audit";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { now } from "@/lib/clock";
 import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
@@ -105,34 +107,73 @@ export interface RegisterBacklinkInput {
 }
 
 /**
+ * The longest URL the field accepts. Nothing a page carrying a badge lives at
+ * needs more, and the worker's fetcher has to hold whatever is stored.
+ */
+export const BACKLINK_URL_MAX_LENGTH = 2048;
+
+/**
+ * Every way a registration can be refused, as a value the form renders.
+ *
+ * These are answers to a person typing into a field, not programming errors,
+ * so they come back rather than being thrown — a thrown "domain mismatch"
+ * would reach the owner as a generic failure with the reason in a server log
+ * they cannot read. The two things that ARE thrown (`FORBIDDEN` for the public
+ * viewer and a malformed id) can only be reached by a caller that skipped the
+ * session gate or the form.
+ */
+export type RegisterBacklinkResult =
+  | { outcome: "registered"; badgeId: string; url: string }
+  | { outcome: "not-owner" }
+  | { outcome: "too-long" }
+  | { outcome: "invalid-url" }
+  | { outcome: "wrong-scheme" }
+  /** The listing's `website` column is empty or is not a public domain. */
+  | { outcome: "no-website" }
+  | { outcome: "domain-mismatch"; expected: string };
+
+/**
  * Records where an owner has embedded their badge, so the worker can go and
  * look for the link.
  *
+ * The page has to be on the listing's own domain — the apex, `www`, or a
+ * subdomain of the domain in `listings.website`, judged on label boundaries by
+ * the same rules the claim ladder uses (`lib/claims/domain.ts`). A backlink
+ * from anywhere else is not the business linking to its own listing, it is a
+ * page somebody else controls, and rewarding it with a ranking boost would
+ * turn the badge into a link-buying scheme with extra steps.
+ *
  * Changing the URL resets the verification. Carrying `backlink_verified`
  * across a URL change would let anyone hold a permanent +5 by verifying once
- * and then pointing the field at a page nobody has checked.
+ * and then pointing the field at a page nobody has checked. Re-registering
+ * the SAME URL keeps the flag and the boost but clears `last_checked_at`, so
+ * "check now" on the owner page makes the badge due on the next hourly run
+ * instead of in a week.
  */
 export async function registerBacklink(
   tx: TestDb,
   viewer: Viewer,
   input: RegisterBacklinkInput,
-): Promise<string> {
+): Promise<RegisterBacklinkResult> {
   if (viewer.role === "public") forbid();
   if (!UUID.test(input.listingId)) forbid();
 
+  // Length first, on the raw input: a 3 MB string is refused for being 3 MB,
+  // not handed to the URL parser to find out what else is wrong with it.
+  const raw = input.url.trim();
+  if (raw.length > BACKLINK_URL_MAX_LENGTH) return { outcome: "too-long" };
+
   let url: URL;
   try {
-    url = new URL(input.url.trim());
+    url = new URL(raw);
   } catch {
-    throw new Error(`Not a valid URL: ${input.url}`);
+    return { outcome: "invalid-url" };
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`Not an http(s) URL: ${input.url}`);
-  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return { outcome: "wrong-scheme" };
   const href = url.toString();
 
   const [listing] = await tx
-    .select({ id: listings.id, ownerId: listings.ownerId })
+    .select({ id: listings.id, ownerId: listings.ownerId, website: listings.website })
     .from(listings)
     .where(eq(listings.id, input.listingId))
     .limit(1);
@@ -140,7 +181,16 @@ export async function registerBacklink(
 
   if (!isAdmin(viewer)) {
     // The page enforces nothing; this does (constraint 24).
-    if (input.actorProfileId === null || listing.ownerId !== input.actorProfileId) forbid();
+    if (input.actorProfileId === null || listing.ownerId !== input.actorProfileId) {
+      return { outcome: "not-owner" };
+    }
+  }
+
+  const expected = domainOfWebsite(listing.website);
+  if (expected === null) return { outcome: "no-website" };
+  const host = domainOfWebsite(href);
+  if (host === null || (host !== expected && !host.endsWith(`.${expected}`))) {
+    return { outcome: "domain-mismatch", expected };
   }
 
   const [existing] = await tx
@@ -168,15 +218,14 @@ export async function registerBacklink(
       .set(
         changed
           ? { backlinkUrl: href, backlinkVerified: false, lastCheckedAt: null }
-          : { backlinkUrl: href },
+          : { backlinkUrl: href, lastCheckedAt: null },
       )
       .where(eq(badges.id, badgeId));
     if (changed && existing.backlinkVerified) await removeBacklinkBoost(tx, input.listingId);
   }
 
   // Constraint 22: an owner mutation, audited in the same transaction.
-  await tx.insert(auditLog).values({
-    actorId: input.actorProfileId,
+  await writeAuditAs(tx, input.actorProfileId, {
     action: "badge.backlink.register",
     entityType: "listing",
     entityId: input.listingId,
@@ -184,7 +233,7 @@ export async function registerBacklink(
     ip: input.ip ?? null,
   });
 
-  return badgeId;
+  return { outcome: "registered", badgeId, url: href };
 }
 
 export interface DueBadge {

@@ -12,6 +12,7 @@ import {
   recordBacklinkCheck,
   applyBadgeCounters,
   BACKLINK_RANK_BOOST,
+  BACKLINK_URL_MAX_LENGTH,
 } from "./badges";
 
 const ADMIN: Viewer = { role: "admin", userId: "00000000-0000-4000-8000-00000000adm1" };
@@ -108,33 +109,40 @@ async function makeProfile(tx: TestDb): Promise<string> {
 }
 
 describe("registerBacklink", () => {
+  /** A listing whose website is on the domain the tests link from. */
+  async function ownedListing(tx: TestDb, website: string | null = "https://www.client.example/") {
+    const ctx = await makeScaffold(tx);
+    const profileId = await makeProfile(tx);
+    const listingId = await makeListing(tx, ctx, { name: "Linked Place", ownerId: profileId, website });
+    return { ctx, profileId, listingId };
+  }
+
   it("creates the badge row and records the URL", async () => {
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const profileId = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { name: "Linked Place", ownerId: profileId });
+      const { profileId, listingId } = await ownedListing(tx);
 
-      const badgeId = await registerBacklink(tx, OWNER, {
+      const result = await registerBacklink(tx, OWNER, {
         listingId,
         url: "https://client.example/about",
         actorProfileId: profileId,
       });
 
-      const [row] = await tx.select().from(badges).where(eq(badges.id, badgeId));
+      expect(result.outcome).toBe("registered");
+      if (result.outcome !== "registered") return;
+      const [row] = await tx.select().from(badges).where(eq(badges.id, result.badgeId));
       expect(row).toMatchObject({
         listingId,
         backlinkUrl: "https://client.example/about",
         backlinkVerified: false,
         lastCheckedAt: null,
       });
+      expect(result.url).toBe("https://client.example/about");
     });
   });
 
   it("writes an audit_log row in the same transaction", async () => {
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const profileId = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { ownerId: profileId });
+      const { profileId, listingId } = await ownedListing(tx);
 
       await registerBacklink(tx, OWNER, {
         listingId,
@@ -153,9 +161,7 @@ describe("registerBacklink", () => {
 
   it("updates the existing badge row rather than making a second one", async () => {
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const profileId = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { ownerId: profileId });
+      const { profileId, listingId } = await ownedListing(tx);
 
       const first = await registerBacklink(tx, OWNER, {
         listingId, url: "https://client.example/a", actorProfileId: profileId,
@@ -164,7 +170,8 @@ describe("registerBacklink", () => {
         listingId, url: "https://client.example/b", actorProfileId: profileId,
       });
 
-      expect(second).toBe(first);
+      expect(first.outcome).toBe("registered");
+      expect(second).toMatchObject({ outcome: "registered", badgeId: (first as { badgeId: string }).badgeId });
       const rows = await tx.select().from(badges).where(eq(badges.listingId, listingId));
       expect(rows).toHaveLength(1);
       expect(rows[0]?.backlinkUrl).toBe("https://client.example/b");
@@ -176,12 +183,11 @@ describe("registerBacklink", () => {
     // flag across would hand out a permanent +5 for a link that moved to a page
     // nobody has looked at.
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const profileId = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { ownerId: profileId });
-      const badgeId = await registerBacklink(tx, OWNER, {
+      const { profileId, listingId } = await ownedListing(tx);
+      const first = await registerBacklink(tx, OWNER, {
         listingId, url: "https://client.example/a", actorProfileId: profileId,
       });
+      const badgeId = (first as { badgeId: string }).badgeId;
       await recordBacklinkCheck(tx, ADMIN, { badgeId, verified: true });
 
       await registerBacklink(tx, OWNER, {
@@ -195,14 +201,17 @@ describe("registerBacklink", () => {
     });
   });
 
-  it("keeps the verified flag when the same URL is re-registered", async () => {
+  it("keeps the verified flag when the same URL is re-registered, but makes it due again", async () => {
+    // "Check now" on the owner page is a re-registration of the same URL. The
+    // boost the last check earned stays — the link has not moved — but the
+    // stamp is cleared so the hourly job picks the badge up on its next run
+    // instead of in a week.
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const profileId = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { ownerId: profileId });
-      const badgeId = await registerBacklink(tx, OWNER, {
+      const { profileId, listingId } = await ownedListing(tx);
+      const first = await registerBacklink(tx, OWNER, {
         listingId, url: "https://client.example/a", actorProfileId: profileId,
       });
+      const badgeId = (first as { badgeId: string }).badgeId;
       await recordBacklinkCheck(tx, ADMIN, { badgeId, verified: true });
 
       await registerBacklink(tx, OWNER, {
@@ -211,22 +220,24 @@ describe("registerBacklink", () => {
 
       const [row] = await tx.select().from(badges).where(eq(badges.id, badgeId));
       expect(row?.backlinkVerified).toBe(true);
+      expect(row?.lastCheckedAt).toBeNull();
+      const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
+      expect(listing?.backlinkBoost).toBe(BACKLINK_RANK_BOOST);
     });
   });
 
-  it("refuses a listing the viewer does not own", async () => {
+  it("refuses a listing the viewer does not own, as an outcome and with no row written", async () => {
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const ownerProfile = await makeProfile(tx);
+      const { listingId } = await ownedListing(tx);
       const otherProfile = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { ownerId: ownerProfile });
 
-      await expect(
-        registerBacklink(tx, STRANGER, {
-          listingId, url: "https://evil.example/", actorProfileId: otherProfile,
-        }),
-      ).rejects.toThrow(/FORBIDDEN/);
+      const result = await registerBacklink(tx, STRANGER, {
+        listingId, url: "https://client.example/", actorProfileId: otherProfile,
+      });
+
+      expect(result).toEqual({ outcome: "not-owner" });
       expect(await tx.select().from(badges)).toHaveLength(0);
+      expect(await tx.select().from(auditLog)).toHaveLength(0);
     });
   });
 
@@ -242,16 +253,114 @@ describe("registerBacklink", () => {
     });
   });
 
-  it("refuses a URL that is not http(s)", async () => {
+  it("refuses a URL that is not http(s), by scheme", async () => {
     await withTestDb(async (tx) => {
-      const ctx = await makeScaffold(tx);
-      const profileId = await makeProfile(tx);
-      const listingId = await makeListing(tx, ctx, { ownerId: profileId });
-      for (const url of ["javascript:alert(1)", "file:///etc/passwd", "not a url", ""]) {
-        await expect(
-          registerBacklink(tx, OWNER, { listingId, url, actorProfileId: profileId }),
-        ).rejects.toThrow(/URL/i);
+      const { profileId, listingId } = await ownedListing(tx);
+      for (const url of ["javascript:alert(1)", "file:///etc/passwd", "ftp://client.example/x"]) {
+        expect(
+          await registerBacklink(tx, OWNER, { listingId, url, actorProfileId: profileId }),
+        ).toEqual({ outcome: "wrong-scheme" });
       }
+      expect(await tx.select().from(badges)).toHaveLength(0);
+    });
+  });
+
+  it("refuses something that is not a URL at all", async () => {
+    await withTestDb(async (tx) => {
+      const { profileId, listingId } = await ownedListing(tx);
+      for (const url of ["not a url", "", "   ", "client.example/about"]) {
+        expect(
+          await registerBacklink(tx, OWNER, { listingId, url, actorProfileId: profileId }),
+        ).toEqual({ outcome: "invalid-url" });
+      }
+    });
+  });
+
+  it("refuses a URL longer than 2048 characters before parsing it", async () => {
+    await withTestDb(async (tx) => {
+      const { profileId, listingId } = await ownedListing(tx);
+      const base = "https://client.example/";
+      const atLimit = base + "a".repeat(BACKLINK_URL_MAX_LENGTH - base.length);
+      expect(atLimit).toHaveLength(BACKLINK_URL_MAX_LENGTH);
+
+      expect(
+        await registerBacklink(tx, OWNER, { listingId, url: atLimit, actorProfileId: profileId }),
+      ).toMatchObject({ outcome: "registered" });
+      expect(
+        await registerBacklink(tx, OWNER, { listingId, url: `${atLimit}a`, actorProfileId: profileId }),
+      ).toEqual({ outcome: "too-long" });
+      // Padding a bad scheme past the limit still reads as too long, not as a
+      // scheme problem: length is judged first and never parses the input.
+      expect(
+        await registerBacklink(tx, OWNER, {
+          listingId, url: `javascript:${"a".repeat(BACKLINK_URL_MAX_LENGTH)}`, actorProfileId: profileId,
+        }),
+      ).toEqual({ outcome: "too-long" });
+    });
+  });
+
+  it("refuses a page on a different domain from the listing's website", async () => {
+    await withTestDb(async (tx) => {
+      const { profileId, listingId } = await ownedListing(tx, "https://www.client.example/contact");
+      for (const url of [
+        "https://other.example/partners",
+        // A string suffix is not a domain match.
+        "https://notclient.example/",
+        // The listing's domain as a SUBdomain of somebody else's.
+        "https://client.example.evil.example/",
+      ]) {
+        expect(
+          await registerBacklink(tx, OWNER, { listingId, url, actorProfileId: profileId }),
+        ).toEqual({ outcome: "domain-mismatch", expected: "client.example" });
+      }
+      expect(await tx.select().from(badges)).toHaveLength(0);
+    });
+  });
+
+  it("accepts the apex, www, a subdomain and either scheme of the listing's own domain", async () => {
+    await withTestDb(async (tx) => {
+      const { profileId, listingId } = await ownedListing(tx, "client.example");
+      for (const url of [
+        "https://client.example/",
+        "https://www.client.example/about",
+        "http://CLIENT.example/footer",
+        "https://blog.client.example/2026/badge",
+      ]) {
+        expect(
+          await registerBacklink(tx, OWNER, { listingId, url, actorProfileId: profileId }),
+        ).toMatchObject({ outcome: "registered" });
+      }
+    });
+  });
+
+  it("refuses when the listing has no usable website to match against", async () => {
+    await withTestDb(async (tx) => {
+      for (const website of [null, "", "localhost", "mailto:jo@client.example"]) {
+        const { profileId, listingId } = await ownedListing(tx, website);
+        expect(
+          await registerBacklink(tx, OWNER, {
+            listingId, url: "https://client.example/", actorProfileId: profileId,
+          }),
+        ).toEqual({ outcome: "no-website" });
+      }
+      expect(await tx.select().from(badges)).toHaveLength(0);
+    });
+  });
+
+  it("lets an admin register on a listing they do not own, still on the listing's domain", async () => {
+    await withTestDb(async (tx) => {
+      const { listingId } = await ownedListing(tx);
+      const adminProfile = await makeProfile(tx);
+      expect(
+        await registerBacklink(tx, ADMIN, {
+          listingId, url: "https://client.example/", actorProfileId: adminProfile,
+        }),
+      ).toMatchObject({ outcome: "registered" });
+      expect(
+        await registerBacklink(tx, ADMIN, {
+          listingId, url: "https://other.example/", actorProfileId: adminProfile,
+        }),
+      ).toEqual({ outcome: "domain-mismatch", expected: "client.example" });
     });
   });
 });

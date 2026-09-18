@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
-import { db } from "@/lib/db/client";
-import { badgeListing } from "@/lib/db/queries/badges";
-import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { BadgeGallery } from "@/components/advertise/BadgeGallery";
 import type { SnippetInput } from "@/lib/badge/snippets";
 
@@ -16,23 +13,16 @@ export const metadata: Metadata = {
   alternates: { canonical: "/advertise/badge" },
 };
 
-type Resolved = {
-  base: Omit<SnippetInput, "style">;
-  verified: boolean;
-  ratingAvg: string | null;
-  ratingCount: number;
-  real: boolean;
-};
-
 /**
- * With ?id= we render the owner's own badge, ready to paste. Without it the
- * page still has to be useful to someone deciding whether to bother, so it
- * falls back to a worked example rather than an empty state.
+ * The worked example. This page is static (ISR, hourly) and takes no request
+ * input — reading `searchParams` makes a route dynamic in Next 16, and the
+ * `revalidate` above was a dead export for as long as it did. The owner's own
+ * snippet, and the form that asks where they put it, live at
+ * /advertise/badge/mine behind a session.
  */
-async function resolve(id: string | undefined): Promise<Resolved> {
+function example(): { base: Omit<SnippetInput, "style"> } {
   const e = siteConfig.entity;
-
-  const example: Resolved = {
+  return {
     base: {
       listingId: "00000000-0000-4000-8000-000000000000",
       listingName: `Your ${e.Singular}`,
@@ -40,40 +30,12 @@ async function resolve(id: string | undefined): Promise<Resolved> {
       cityName: "Your town",
       categoryName: e.Singular,
     },
-    verified: true,
-    ratingAvg: "4.8",
-    ratingCount: 27,
-    real: false,
-  };
-
-  if (!id) return example;
-
-  const row = await badgeListing(db as never, PUBLIC_VIEWER, id);
-  if (!row) return example;
-
-  return {
-    base: {
-      listingId: row.id,
-      listingName: row.name,
-      listingPath: `/${row.citySlug}/${row.slug}`,
-      cityName: row.cityName,
-      categoryName: row.categoryName ?? e.Singular,
-    },
-    verified: row.claimStatus === "verified",
-    ratingAvg: row.ratingAvg,
-    ratingCount: row.ratingCount,
-    real: true,
   };
 }
 
-export default async function BadgePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ id?: string }>;
-}) {
+export default async function BadgePage() {
   const e = siteConfig.entity;
-  const { id } = await searchParams;
-  const r = await resolve(id);
+  const r = example();
 
   return (
     <main>
@@ -85,17 +47,14 @@ export default async function BadgePage({
         marks you carry.
       </p>
 
-      {r.real ? (
-        <p>
-          <strong>Showing the badge for {r.base.listingName}.</strong> The code below is yours —
-          it already points at your listing.
-        </p>
-      ) : (
-        <p>
-          <strong>This is a worked example.</strong> Open this page from your listing in the
-          owner portal and the code below will point at your own page instead of a placeholder.
-        </p>
-      )}
+      <p>
+        <strong>This is a worked example.</strong> If you own a listing here,{" "}
+        <a href="/advertise/badge/mine" data-testid="my-badge-link">
+          sign in for your own code
+        </a>
+        , which points at your page instead of a placeholder — and tell us where you put it, so
+        we can find the link.
+      </p>
 
       <h2>The four styles</h2>
       <p>
@@ -104,12 +63,7 @@ export default async function BadgePage({
         count is visible to you — at the cost of a <code>nofollow</code> on the link. The plain
         one is the default because the link is the point.
       </p>
-      <BadgeGallery
-        base={r.base}
-        verified={r.verified}
-        ratingAvg={r.ratingAvg}
-        ratingCount={r.ratingCount}
-      />
+      <BadgeGallery base={r.base} verified={true} ratingAvg="4.8" ratingCount={27} />
 
       <h2>What the badge shows</h2>
       <ul>
