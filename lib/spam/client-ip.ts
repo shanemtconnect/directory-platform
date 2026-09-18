@@ -23,7 +23,7 @@
  * out every other request that lands in it.
  */
 /** Only the one switch is read; typed narrowly so tests can pass `{}`. */
-type ClientIpEnv = { TRUST_CF_CONNECTING_IP?: string | undefined };
+type ClientIpEnv = { TRUST_CF_CONNECTING_IP?: string | undefined; [key: string]: string | undefined };
 
 export function clientIp(headers: Headers, env: ClientIpEnv = process.env): string | null {
   if (env.TRUST_CF_CONNECTING_IP === "true") {
