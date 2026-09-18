@@ -45,14 +45,17 @@ async function openClient(url: string): Promise<RedisProbeClient> {
 }
 
 /**
- * A fresh connection each time, closed straight after, rather than a memoised
- * client like `lib/spam/rate-limit.ts` keeps.
+ * A fresh connection each time, closed straight after, rather than the shared
+ * process-wide client in `lib/redis/client.ts`.
  *
- * The rate limiter is on the request path and reuses a connection because the
- * cost of opening one matters there. This is a health check: what it is being
- * asked is precisely "can this container open a connection to Redis right
- * now", and a cached `isReady` handle answers a question about the past. The
- * price is one connect per probe, every 30 seconds.
+ * The request path reuses a connection because the cost of opening one
+ * matters there. This is a health check: what it is being asked is precisely
+ * "can this container open a connection to Redis right now", and a cached
+ * `isReady` handle answers a question about the past. The shared client would
+ * also be the wrong instrument for a second reason: a refused connect puts it
+ * into a thirty-second cooldown for everyone — rate limits fall to memory,
+ * counts fall to the buffer — and a health probe must observe the outage,
+ * not extend it. The price is one connect per probe, every 30 seconds.
  *
  * `absent` is a first-class answer, not a failure. REDIS_URL is required to
  * boot (`RUNTIME_ENV`), so in a deployed container this cannot happen — but the
