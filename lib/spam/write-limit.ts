@@ -216,3 +216,18 @@ export const REVIEW_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as cons
  * it: a confirmed claim hands over a listing.
  */
 export const CLAIM_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+
+/**
+ * Sixty a minute per address, on /api/internal/revalidate, after the bearer
+ * has matched.
+ *
+ * The route is bearer-gated and 404s to everyone else, so the limit is not
+ * what keeps strangers out. It bounds what a leaked or mishandled token can
+ * cost: each request marks up to 100 pages stale, and a loop with the token
+ * could otherwise turn the ISR cache into a render treadmill. The worker
+ * sends one small batch per job, so sixty a minute is far above anything it
+ * produces. Sits after the bearer check on purpose — a wrong token gets the
+ * 404 without spending anything, so the throttle cannot become a second way
+ * to confirm the route exists.
+ */
+export const INTERNAL_REVALIDATE_RATE_LIMIT = { limit: 60, windowSeconds: 60 } as const;
