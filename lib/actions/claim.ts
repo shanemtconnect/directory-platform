@@ -18,6 +18,7 @@ import {
   claimDocKey,
   claimDocsConfigured,
   isAllowedClaimDocType,
+  isClaimDocKey,
   presignClaimDocUpload,
 } from "@/lib/media/claim-docs";
 import { clientIp } from "@/lib/spam/client-ip";
@@ -213,8 +214,11 @@ export async function confirmClaimDocument(input: {
 
   // The key travels through the browser, so it is checked rather than trusted.
   // Scoping alone would still let a claimant point their own claim at a key
-  // under somebody else's, and an admin would then be shown the wrong document.
-  if (!input.key.startsWith(`claims/${input.claimId}/`)) {
+  // under somebody else's, and an admin would then be shown the wrong document;
+  // a prefix alone would still let them choose the name and the extension,
+  // and the extension decides what the admin's download is typed as. The
+  // whole key has to be one the server could have minted for this claim.
+  if (!isClaimDocKey(input.claimId, input.key)) {
     return { ok: false, message: GENERIC_ERROR };
   }
 

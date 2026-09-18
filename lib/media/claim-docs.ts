@@ -26,7 +26,18 @@ const EXTENSIONS: Record<string, string> = {
   "image/png": "png",
 };
 
+/** The way back: what a stored key's extension says the document is. */
+const CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+};
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The exact shape `claimDocKey` mints, with the claim id fixed. */
+const KEY_SUFFIX = /^proof-[0-9a-f]{16}\.(pdf|jpg|jpeg|png)$/;
 
 function blank(value: string | undefined): boolean {
   return value === undefined || value.trim() === "";
@@ -75,6 +86,25 @@ export function claimDocKey(claimId: string, contentType: string): string {
 }
 
 /**
+ * Is this a key `claimDocKey` could have minted for this claim?
+ *
+ * The key goes out to the browser with the upload form and comes back with
+ * the confirm step, so it is text the claimant chose by the time it is
+ * stored. A prefix check (`claims/<id>/`) is not enough: it passes
+ * `claims/<id>/../<other id>/proof-….pdf`, which S3 keys do not normalise but
+ * an admin's browser might, and it passes any name and any extension — and
+ * the extension is what the view route later types the download as. So the
+ * whole key has to match, character for character, the one shape the server
+ * produces. Anchored on a literal uuid: the id is checked before it is spliced
+ * in, so it cannot carry a metacharacter.
+ */
+export function isClaimDocKey(claimId: string, key: string): boolean {
+  if (!UUID.test(claimId)) return false;
+  const prefix = `claims/${claimId}/`;
+  return key.startsWith(prefix) && KEY_SUFFIX.test(key.slice(prefix.length));
+}
+
+/**
  * Uploads go straight to R2, so a document never touches the app server's
  * disk. The exact content type is pinned in the policy rather than a prefix:
  * for claim documents the allowed set is three specific types, and R2 should
@@ -96,9 +126,22 @@ export async function presignClaimDocUpload(
   });
 }
 
-/** The only way to read a claim document, and only from the admin route. */
-export function presignClaimDocView(key: string): Promise<string> {
-  return presignGet(claimDocsEnv(), key, CLAIM_DOC_VIEW_TTL_SECONDS);
+/**
+ * The only way to read a claim document, and only from the admin route.
+ *
+ * Served as a download of the type the KEY says it is — the extension the
+ * server chose from the content type it signed the upload for — never the
+ * type the object was uploaded with. `async` for the same reason as the
+ * upload: the caller's try/catch sees a rejection, not a throw.
+ */
+export async function presignClaimDocView(key: string): Promise<string> {
+  const bucket = claimDocsEnv();
+  const ext = key.slice(key.lastIndexOf(".") + 1);
+  const contentType = CONTENT_TYPES[ext];
+  if (contentType === undefined) {
+    throw new Error(`presignClaimDocView: .${ext} is not allowed here`);
+  }
+  return presignGet(bucket, key, { ttlSeconds: CLAIM_DOC_VIEW_TTL_SECONDS, contentType });
 }
 
 export function deleteClaimDoc(key: string): Promise<void> {
