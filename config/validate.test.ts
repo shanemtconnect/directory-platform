@@ -4,6 +4,8 @@ import {
   validateEnv,
   validateCountry,
   validateProductionConfig,
+  validateStatsRetention,
+  MIN_STATS_RETENTION_DAYS,
   ConfigError,
   RUNTIME_ENV,
   RUNTIME_ENV_PHASE5,
@@ -336,5 +338,36 @@ describe("billing environment", () => {
 
   it("does not require PAYPAL_ENV: the default is the sandbox, which is the safe way to be wrong", () => {
     expect(BILLING_ENV).not.toContain("PAYPAL_ENV");
+  });
+});
+
+describe("validateStatsRetention", () => {
+  const tiers = { free: { statsWindowDays: 30 }, essential: { statsWindowDays: 365 }, pro: { statsWindowDays: 365 } };
+
+  it("passes for the shipped config", () => {
+    expect(() => validateStatsRetention(siteConfig)).not.toThrow();
+  });
+
+  it("keeps stats for at least thirty days", () => {
+    expect(MIN_STATS_RETENTION_DAYS).toBe(30);
+    expect(() => validateStatsRetention({ stats: { retentionDays: 29 }, tiers }))
+      .toThrow(ConfigError);
+    expect(() => validateStatsRetention({ stats: { retentionDays: 29 }, tiers }))
+      .toThrow(/retentionDays/);
+  });
+
+  it("refuses a window shorter than any tier's stats window, which would purge what an owner is shown", () => {
+    expect(() => validateStatsRetention({ stats: { retentionDays: 90 }, tiers }))
+      .toThrow(/statsWindowDays/);
+  });
+
+  it("refuses a non-integer or non-finite value rather than letting the cutoff drift", () => {
+    expect(() => validateStatsRetention({ stats: { retentionDays: 400.5 }, tiers })).toThrow(ConfigError);
+    expect(() => validateStatsRetention({ stats: { retentionDays: Number.NaN }, tiers })).toThrow(ConfigError);
+    expect(() => validateStatsRetention({ stats: { retentionDays: Number.POSITIVE_INFINITY }, tiers })).toThrow(ConfigError);
+  });
+
+  it("accepts exactly the longest tier window", () => {
+    expect(() => validateStatsRetention({ stats: { retentionDays: 365 }, tiers })).not.toThrow();
   });
 });

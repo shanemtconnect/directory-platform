@@ -195,6 +195,12 @@ export const siteConfig = {
     footerCitiesPerCategory: 18,
   },
 
+  stats: {
+    // A year and a bit: covers the 365-day paid window with room for an
+    // owner to compare this month against the same month last year.
+    retentionDays: 400,
+  },
+
   legal: {
     privacyLastUpdated: "2026-09-08",
     termsLastUpdated: "2026-09-08",

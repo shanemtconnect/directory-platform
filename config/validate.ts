@@ -279,6 +279,45 @@ export function validateCountry(config: {
 }
 
 /**
+ * The least the stats purge may keep. A month is the free tier's window and
+ * the shortest history a renewal conversation can be had over.
+ */
+export const MIN_STATS_RETENTION_DAYS = 30;
+
+/**
+ * `stats.retentionDays` must cover what an owner is shown. A retention shorter
+ * than a tier's `statsWindowDays` means the nightly purge deletes days the
+ * owner panel then renders as zero — a paid window that silently shrinks. A
+ * non-integer would move the cutoff by a fraction of a day; refused for the
+ * same reason as a typo: the build is where it is cheap to find.
+ */
+export function validateStatsRetention(config: {
+  stats: { retentionDays: number };
+  tiers: { readonly [tier: string]: { statsWindowDays: number } };
+}): void {
+  const days = config.stats.retentionDays;
+  const problems: string[] = [];
+  if (!Number.isInteger(days)) {
+    problems.push(`stats.retentionDays must be a whole number of days, got ${String(days)}`);
+  } else if (days < MIN_STATS_RETENTION_DAYS) {
+    problems.push(`stats.retentionDays is ${days}; the minimum is ${MIN_STATS_RETENTION_DAYS}`);
+  }
+  for (const [tier, spec] of Object.entries(config.tiers)) {
+    if (Number.isInteger(days) && spec.statsWindowDays > days) {
+      problems.push(
+        `stats.retentionDays (${days}) is shorter than tiers.${tier}.statsWindowDays ` +
+          `(${spec.statsWindowDays}); the purge would delete days that tier is shown`,
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Stats retention configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
+/**
  * A clone starts life full of placeholders, which is fine right up until it is
  * serving the public. `legalEntity: "TBC"` reaches the footer, the terms page
  * and the Organization JSON-LD; an @example.com support address means a

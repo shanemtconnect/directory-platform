@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { listingStatsDaily, listings, profiles } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
@@ -262,4 +262,30 @@ export async function applyStatDeltas(
   }
 
   return written.length;
+}
+
+/**
+ * The retention purge's write: delete every `listing_stats_daily` row whose
+ * day is before `cutoffDay` (exclusive — the cutoff day itself is the oldest
+ * day kept). The worker computes the cutoff from `siteConfig.stats.retentionDays`
+ * (`worker/jobs/purge-stats.ts`); this only does the delete, and refuses a
+ * cutoff that is not a `YYYY-MM-DD` so nothing but a date reaches the WHERE.
+ *
+ * Nothing else is touched: `listings.view_count` is the lifetime total and
+ * outlives the daily rows on purpose.
+ *
+ * @returns how many rows went.
+ */
+export async function purgeStatsBefore(
+  tx: TestDb,
+  viewer: Viewer,
+  cutoffDay: string,
+): Promise<number> {
+  assertWorker(viewer);
+  if (!isDayKey(cutoffDay)) throw new Error(`purgeStatsBefore: not a day: ${cutoffDay}`);
+  const gone = await tx
+    .delete(listingStatsDaily)
+    .where(lt(listingStatsDaily.day, cutoffDay))
+    .returning({ id: listingStatsDaily.id });
+  return gone.length;
 }
