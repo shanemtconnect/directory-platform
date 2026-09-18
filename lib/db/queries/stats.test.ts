@@ -384,3 +384,79 @@ describe("applyStatDeltas", () => {
     });
   });
 });
+
+describe("applyStatDeltas — listings.view_count", () => {
+  const zero = { impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
+
+  async function viewCount(tx: TestDb, listingId: string): Promise<number> {
+    const [row] = await tx.select({ n: listings.viewCount }).from(listings)
+      .where(eq(listings.id, listingId));
+    return row!.n;
+  }
+
+  it("adds the batch's views to the listing's lifetime total", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { viewCount: 10 });
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId, day: "2026-09-12", views: 3, ...zero }]);
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId, day: "2026-09-12", views: 2, ...zero }]);
+
+      expect(await viewCount(tx, listingId)).toBe(15);
+    });
+  });
+
+  it("sums every day in one batch into one lifetime total", async () => {
+    // A flush that straddles midnight hands over two days for one listing;
+    // the total is the sum, applied once, not the last day's number.
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [
+        { listingId, day: "2026-09-11", views: 4, ...zero },
+        { listingId, day: "2026-09-12", views: 5, ...zero },
+      ]);
+
+      expect(await viewCount(tx, listingId)).toBe(9);
+    });
+  });
+
+  it("counts views only — impressions, enquiries and saves are not views", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{
+        listingId, day: "2026-09-12",
+        views: 0, impressions: 40, enquiries: 2, shortlistAdds: 3, badgeClicks: 1,
+      }]);
+
+      expect(await viewCount(tx, listingId)).toBe(0);
+    });
+  });
+
+  it("leaves an unpublished listing's total alone, like the daily row", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const archived = await makeListing(tx, ctx, { status: "archived", viewCount: 7 });
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId: archived, day: "2026-09-12", views: 3, ...zero }]);
+
+      expect(await viewCount(tx, archived)).toBe(7);
+    });
+  });
+
+  it("touches only the listings in the batch", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await makeListing(tx, ctx);
+      const b = await makeListing(tx, ctx, { viewCount: 1 });
+
+      await applyStatDeltas(tx, ADMIN_VIEWER, [{ listingId: a, day: "2026-09-12", views: 3, ...zero }]);
+
+      expect(await viewCount(tx, a)).toBe(3);
+      expect(await viewCount(tx, b)).toBe(1);
+    });
+  });
+});

@@ -193,6 +193,13 @@ export async function listingStats(
  * (`listingStats`) is deliberately NOT gated the same way: months a listing
  * was live stay visible to its owner after it comes down.
  *
+ * The same batch also moves `listings.view_count`, which is the lifetime
+ * total — the number the admin and owner tables sort by. Nothing else writes
+ * it: a page view is never a database write (that is the whole pipeline),
+ * so the flush is the one place "views, ever" can be kept true. The views
+ * are summed per listing first so a batch straddling midnight is one UPDATE
+ * per listing, not one per day, and the same published-only join applies.
+ *
  * @returns how many (listing, day) rows were written.
  */
 export async function applyStatDeltas(
@@ -235,6 +242,24 @@ export async function applyStatDeltas(
       updated_at     = now()
     returning listing_stats_daily.id
   `)) as unknown as unknown[];
+
+  const lifetime = new Map<string, number>();
+  for (const d of valid) {
+    const views = Math.trunc(d.views);
+    if (views > 0) lifetime.set(d.listingId, (lifetime.get(d.listingId) ?? 0) + views);
+  }
+  if (lifetime.size > 0) {
+    const totals = sql.join(
+      [...lifetime].map(([listingId, views]) => sql`(${listingId}::uuid, ${views}::int)`),
+      sql`, `,
+    );
+    await tx.execute(sql`
+      update listings l
+         set view_count = l.view_count + v.views
+        from (values ${totals}) as v(listing_id, views)
+       where l.id = v.listing_id and l.status = 'published'
+    `);
+  }
 
   return written.length;
 }
