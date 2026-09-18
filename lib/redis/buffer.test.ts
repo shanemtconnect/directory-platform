@@ -15,7 +15,7 @@ describe("CounterBuffer", () => {
     buffer.add("a");
     buffer.expire("a", 60);
     buffer.expire("missing", 60);
-    expect(buffer.take()).toEqual([{ key: "a", count: 1, expireSeconds: 60 }]);
+    expect(buffer.take()).toEqual([{ key: "a", count: 1, expireSeconds: 60, attempts: 0 }]);
   });
 
   it("take() hands everything over once and leaves the buffer empty", () => {
@@ -23,8 +23,8 @@ describe("CounterBuffer", () => {
     buffer.add("a", 2);
     buffer.add("b");
     expect(buffer.take()).toEqual([
-      { key: "a", count: 2, expireSeconds: null },
-      { key: "b", count: 1, expireSeconds: null },
+      { key: "a", count: 2, expireSeconds: null, attempts: 0 },
+      { key: "b", count: 1, expireSeconds: null, attempts: 0 },
     ]);
     expect(buffer.size).toBe(0);
     expect(buffer.take()).toEqual([]);
@@ -49,22 +49,36 @@ describe("CounterBuffer", () => {
     buffer.add("a");
     expect(buffer.dropped).toBe(0);
     expect(buffer.take()).toEqual([
-      { key: "a", count: 2, expireSeconds: null },
-      { key: "b", count: 1, expireSeconds: null },
+      { key: "a", count: 2, expireSeconds: null, attempts: 0 },
+      { key: "b", count: 1, expireSeconds: null, attempts: 0 },
     ]);
   });
 
-  it("logs the overflow once per outage, not once per dropped key", () => {
+  it("logs the overflow once per outage, not once per dropped key", async () => {
     const warn = vi.fn();
     const buffer = new CounterBuffer("badge", 2, warn);
     for (let i = 0; i < 10; i++) buffer.add(`k${i}`);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toContain("[badge]");
 
-    // A flush ends the outage; the next overflow is a new one and is logged again.
-    buffer.take();
+    // A flush that lands ends the outage; the next overflow is a new one and
+    // is logged again.
+    await buffer.flush(async () => {});
     for (let i = 0; i < 10; i++) buffer.add(`k${i}`);
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not log the overflow again after a flush that put everything back", async () => {
+    // A flapping Redis fails flush after flush; that is one outage, one line.
+    const warn = vi.fn();
+    const buffer = new CounterBuffer("badge", 2, warn);
+    for (let i = 0; i < 4; i++) buffer.add(`k${i}`);
+    expect(warn).toHaveBeenCalledTimes(1);
+    await buffer.flush(async () => {
+      throw new Error("connection reset");
+    });
+    for (let i = 0; i < 4; i++) buffer.add(`j${i}`);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("defaults to a cap in the region of ten thousand keys", () => {
@@ -82,8 +96,8 @@ describe("CounterBuffer", () => {
         applied.push(entry);
       });
       expect(applied).toEqual([
-        { key: "a", count: 3, expireSeconds: null },
-        { key: "b", count: 1, expireSeconds: 60 },
+        { key: "a", count: 3, expireSeconds: null, attempts: 0 },
+        { key: "b", count: 1, expireSeconds: 60, attempts: 0 },
       ]);
       expect(buffer.size).toBe(0);
     });
@@ -98,7 +112,25 @@ describe("CounterBuffer", () => {
       await buffer.flush(async (entry) => {
         if (entry.key === "broken") throw new Error("connection reset");
       });
-      expect(buffer.take()).toEqual([{ key: "broken", count: 4, expireSeconds: 60 }]);
+      expect(buffer.take()).toEqual([{ key: "broken", count: 4, expireSeconds: 60, attempts: 1 }]);
+    });
+
+    it("gives up on an entry whose replay has failed twice, so a flapping socket cannot double-count for ever", async () => {
+      // Each replay is at-least-once: the INCRBY may have landed before the
+      // reply was lost. Two tries bounds that at one possible extra count per
+      // key per outage; after that the entry is dropped, which is the old
+      // behaviour for a count that could not reach Redis.
+      const buffer = new CounterBuffer("test");
+      const fail = async () => {
+        throw new Error("connection reset");
+      };
+      buffer.add("a", 2);
+      await buffer.flush(fail);
+      expect(buffer.size).toBe(1);
+      await buffer.flush(fail);
+      expect(buffer.size).toBe(0);
+      expect(buffer.abandoned).toBe(1);
+      expect(buffer.take()).toEqual([]);
     });
 
     it("never rejects, whatever the apply function does", async () => {
@@ -120,7 +152,22 @@ describe("CounterBuffer", () => {
         // ... and then the flush of the original two fails.
         throw new Error("connection reset");
       });
-      expect(buffer.take()).toEqual([{ key: "a", count: 3, expireSeconds: null }]);
+      expect(buffer.take()).toEqual([{ key: "a", count: 3, expireSeconds: null, attempts: 1 }]);
+    });
+
+    it("counts a fresh hit merged into a put-back entry towards that entry's attempts", async () => {
+      // The merged entry carries the higher attempt count: a key that has
+      // failed twice is dropped whole, fresh hit included. Bounded loss, not
+      // unbounded retry — the fresh hit's own first attempt happens with the
+      // replay that fails a second time.
+      const buffer = new CounterBuffer("test");
+      const fail = async () => {
+        throw new Error("connection reset");
+      };
+      buffer.add("a");
+      await buffer.flush(fail);
+      buffer.add("a");
+      expect(buffer.take()).toEqual([{ key: "a", count: 2, expireSeconds: null, attempts: 1 }]);
     });
   });
 });
