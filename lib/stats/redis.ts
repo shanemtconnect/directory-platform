@@ -37,8 +37,11 @@ export interface StatsRedisClient {
   /**
    * SET NX EX: writes the key only if it is absent, with a TTL, atomically.
    * True when this call created it — the one caller that may act on it.
-   * Also true while Redis is away: the mark guards a counter that is being
-   * held rather than written, and a held view beats a dropped one.
+   * While Redis is away the first sight of a key in this process is true and
+   * every repeat is false, from an in-memory set (see `seenWhileAway`): the
+   * mark guards a counter that is being held rather than written, and a held
+   * view beats a dropped one — but a reload loop during the outage must not
+   * hold one view per post.
    */
   setIfAbsent(key: string, value: string, seconds: number): Promise<boolean>;
   /** One SCAN page. Never KEYS — this server also holds the page cache. */
@@ -68,6 +71,38 @@ export interface StatsRedisClient {
 
 /** Counts that could not reach Redis, written the next time a client can. */
 const pending = new CounterBuffer("stats");
+
+/** Same order of magnitude as the counter buffer's cap; one string per entry. */
+export const SEEN_WHILE_AWAY_MAX_KEYS = 10_000;
+
+/**
+ * Keys `setIfAbsent` has said yes to while the shared client was null.
+ *
+ * Stands in for the SET NX mark for this process only: repeats within the
+ * process are refused, repeats across processes (and a repeat after Redis is
+ * back, when this set is cleared and Redis is the authority again) are the
+ * bounded case — at most one extra held view per listing per web process per
+ * outage, inside BEACON_RATE_LIMIT. Bounded like the buffer: past the cap the
+ * oldest is evicted, and the set is dropped whole on a day change, since
+ * every key carries the day and yesterday's entries can never match again.
+ */
+const seenWhileAway = new Set<string>();
+let seenWhileAwayDay = "";
+
+function seenWhileAwayAdd(key: string): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== seenWhileAwayDay) {
+    seenWhileAway.clear();
+    seenWhileAwayDay = today;
+  }
+  if (seenWhileAway.has(key)) return false;
+  if (seenWhileAway.size >= SEEN_WHILE_AWAY_MAX_KEYS) {
+    const oldest = seenWhileAway.values().next().value;
+    if (oldest !== undefined) seenWhileAway.delete(oldest);
+  }
+  seenWhileAway.add(key);
+  return true;
+}
 
 /** Next sets this during `next build`; constraint 4 says never connect then. */
 const PRODUCTION_BUILD_PHASE = "phase-production-build";
@@ -136,7 +171,11 @@ async function writePending(c: RedisClientType): Promise<void> {
  */
 async function live(): Promise<RedisClientType | null> {
   const c = await getRedis();
-  if (c && pending.size > 0) await writePending(c);
+  if (c) {
+    // Redis is the authority again; the in-process marks have done their job.
+    if (seenWhileAway.size > 0) seenWhileAway.clear();
+    if (pending.size > 0) await writePending(c);
+  }
   return c;
 }
 
@@ -166,7 +205,7 @@ const stats: StatsRedisClient = {
   set: async (key, value) => wrap(await connected()).set(key, value),
   setIfAbsent: async (key, value, seconds) => {
     const c = await live();
-    if (!c) return true;
+    if (!c) return seenWhileAwayAdd(key);
     return wrap(c).setIfAbsent(key, value, seconds);
   },
   scan: async (cursor, match, count) => wrap(await connected()).scan(cursor, match, count),

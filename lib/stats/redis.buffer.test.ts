@@ -201,12 +201,44 @@ describe("statsRedis while the shared client is away", () => {
     expect(await c.incr(key)).toBe(1);
   });
 
-  it("answers a daily-view claim with yes while Redis is away", async () => {
+  it("answers a daily-view claim with yes while Redis is away, once per key per process", async () => {
     // The mark guards a counter; with Redis away the counter is held, not
-    // written, and a held view is better than a dropped one.
+    // written, and a held view is better than a dropped one. But the view is
+    // now written, not dropped, so a reload loop during the outage must not
+    // add one held view per post: repeats within this process are refused
+    // from an in-memory set until the client is back.
     const c = (await mod.statsRedis())!;
     void c.incr("stats:warm");
     expect(await settledThisTick(c.setIfAbsent("stats:seen:x", "1", 60))).toEqual({ value: true });
+    expect(await settledThisTick(c.setIfAbsent("stats:seen:x", "1", 60))).toEqual({ value: false });
+    expect(await settledThisTick(c.setIfAbsent("stats:seen:y", "1", 60))).toEqual({ value: true });
+  });
+
+  it("forgets the in-process seen marks once Redis is back, and asks Redis instead", async () => {
+    // Cross-process repeats — and a repeat after recovery — are the bounded
+    // case the memory set does not cover; Redis is the authority again.
+    const c = (await mod.statsRedis())!;
+    const first = c.incr("stats:warm");
+    await settledThisTick(c.setIfAbsent("stats:seen:x", "1", 60));
+    fakes[0]!.connected();
+    await first;
+    expect(await c.setIfAbsent("stats:seen:x", "1", 60)).toBe(true);
+    expect(await c.setIfAbsent("stats:seen:x", "1", 60)).toBe(false);
+  });
+
+  it("bounds the in-process seen marks, dropping the oldest", async () => {
+    const c = (await mod.statsRedis())!;
+    void c.incr("stats:warm");
+    await settledThisTick(c.setIfAbsent("stats:seen:0", "1", 60));
+    for (let i = 1; i <= mod.SEEN_WHILE_AWAY_MAX_KEYS; i++) {
+      void c.setIfAbsent(`stats:seen:${i}`, "1", 60);
+    }
+    await setImmediate();
+    // The oldest was evicted to admit the newest, so it is a first sight again.
+    expect(await settledThisTick(c.setIfAbsent("stats:seen:0", "1", 60))).toEqual({ value: true });
+    expect(await settledThisTick(c.setIfAbsent(`stats:seen:${mod.SEEN_WHILE_AWAY_MAX_KEYS}`, "1", 60))).toEqual({
+      value: false,
+    });
   });
 
   it("refuses a SCAN or GETDEL while Redis is away rather than answering with nothing", async () => {
