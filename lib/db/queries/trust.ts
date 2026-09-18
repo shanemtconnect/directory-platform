@@ -5,6 +5,7 @@ import { ensureProfile } from "@/lib/auth/profile";
 import { normaliseName } from "@/lib/import/guardrails";
 import { normalisePostcode } from "@/lib/geo/countries";
 import { notifyRemovalDecision } from "@/lib/email/notify";
+import { REJECTION_REASON_MIN_LENGTH } from "@/lib/trust/rejection";
 import { removalDueAt } from "@/lib/trust/working-days";
 import {
   cities,
@@ -306,12 +307,6 @@ export type DecisionResult =
   | { outcome: "forbidden" }
   /** A rejection with nothing to tell the requester. Only a removal can say this. */
   | { outcome: "reason-required" };
-
-/**
- * The shortest rejection reason worth sending. A requester is told why in the
- * email, and "no" or "nope" is not a why.
- */
-export const REJECTION_REASON_MIN_LENGTH = 10;
 
 /**
  * A takedown needs nothing but the moderator's IP. A refusal needs a reason

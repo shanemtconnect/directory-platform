@@ -8,6 +8,7 @@ import {
   rejectRemovalAction,
   type QueueState,
 } from "@/lib/actions/admin-trust";
+import { REJECTION_REASON_MIN_LENGTH } from "@/lib/trust/rejection";
 import type { OpenRemovalRequest, RemovalRelationship } from "@/lib/db/queries/trust";
 
 /**
@@ -135,14 +136,26 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
         <summary className="cursor-pointer text-sm">Turn this request down instead</summary>
         <p className="text-sm text-muted">
           The {siteConfig.entity.singular} stays exactly where it is and the requester is emailed
-          that we are not removing it. Only do this where there is a reason to keep the entry —
-          a request from somebody with no connection to it, or one already settled elsewhere. Say
-          why in the audit note when you have somewhere to put it; today the email does not carry
-          a reason.
+          that we are not removing it, along with the reason you give here. Only do this where
+          there is a reason to keep the entry — a request from somebody with no connection to it,
+          or one already settled elsewhere — and write it as you would say it to them, because
+          that is who reads it.
         </p>
         <form action={reject}>
           <input type="hidden" name="removalRequestId" value={request.id} />
           <input type="hidden" name="listingId" value={request.listingId} />
+          <label className="block text-sm" htmlFor={`rejection-reason-${request.id}`}>
+            Why we are not removing it
+          </label>
+          <textarea
+            id={`rejection-reason-${request.id}`}
+            name="reason"
+            required
+            minLength={REJECTION_REASON_MIN_LENGTH}
+            rows={3}
+            className="mb-2 block w-full"
+            data-testid="removal-reject-reason"
+          />
           <button type="submit" disabled={rejecting} data-testid="removal-reject">
             {rejecting ? "Saving…" : "Reject the request"}
           </button>
