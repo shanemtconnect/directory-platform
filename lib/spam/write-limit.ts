@@ -216,3 +216,15 @@ export const REVIEW_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as cons
  * it: a confirmed claim hands over a listing.
  */
 export const CLAIM_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+
+/**
+ * Ten an hour, on "where did you put the badge?".
+ *
+ * A signed-in, owner-only action — the session and the ownership check are
+ * the real gates — so the budget exists to stop a loop, not a person. Ten is
+ * room for an owner to correct a typo, move the badge to a different page and
+ * press "check now" a few times in one sitting; what it stops is a script
+ * making the hourly worker fetch the same site over and over, or filling
+ * `audit_log` with one row per second.
+ */
+export const BADGE_BACKLINK_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as const;
