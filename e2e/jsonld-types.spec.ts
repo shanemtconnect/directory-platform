@@ -1,3 +1,5 @@
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { siteConfig } from "@/config/site.config";
 import { paginatingCity } from "./fixtures";
@@ -86,10 +88,17 @@ test.describe("JSON-LD @type per page type", () => {
     // out on a site that ships no posts, which is every clone.
     const posts = page.locator("main a[href^='/blog/']");
     if ((await posts.count()) === 0) {
-      // A clone ships without posts; the demo does not. On the demo leg an
-      // empty /blog is a regression, not a reason to skip.
-      expect(process.env.E2E_DEMO_MODE, "the demo site has lost its blog posts")
-        .not.toBe("true");
+      // A clone ships without posts; the demo does not. Skipping is only
+      // honest when the repo under test has no demo posts to serve — with the
+      // demo folder present and demo mode on, an empty /blog is a regression.
+      const demoDir = path.join(process.cwd(), "content", "blog", "demo");
+      const demoPosts = existsSync(demoDir)
+        ? readdirSync(demoDir).filter((f) => f.endsWith(".mdx")).length
+        : 0;
+      expect(
+        process.env.E2E_DEMO_MODE === "true" && demoPosts > 0,
+        `the demo site has lost its blog posts (${demoPosts} on disk, demo mode ${process.env.E2E_DEMO_MODE})`,
+      ).toBe(false);
       test.skip(true, "no blog post to sample: this site ships without posts");
       return;
     }
