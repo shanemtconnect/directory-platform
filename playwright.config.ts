@@ -100,6 +100,10 @@ const SERVER_ENV: Record<string, string> = {
     : {}),
 };
 
+// Specs run in this process, not the server's, so the one server setting a
+// spec has to know about is mirrored here: whether the demo blog posts exist.
+process.env.E2E_DEMO_MODE = SERVER_ENV.NEXT_PUBLIC_DEMO_MODE;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
