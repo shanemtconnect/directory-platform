@@ -171,7 +171,7 @@ if grep -qi "ignores the column" "$PROOF_DIR/new-site.log"; then
 fi
 # The demo config and its seed set must not survive into the clone's output —
 # the wizard replaced one and the other is simply not this site's.
-# Whole words (-w): "groomer" contains "groom" and must pass; "groom" must not.
+# Whole words (-w): a longer word that merely contains a banned one must pass.
 if grep -qiwE "$DEMO_WORDS" config/site.config.ts; then
   fail "config/site.config.ts still names the demo niche: $(grep -inwE "$DEMO_WORDS" config/site.config.ts | head -3)"
 fi
@@ -269,7 +269,7 @@ check_page() { # path, then a grep pattern the body must contain
   if grep -qi "x-robots-tag: noindex" "$PROOF_DIR/headers.txt"; then
     fail "$path carries X-Robots-Tag: noindex on a SITE_ENV=production build"
   fi
-  # Whole words, case-insensitive: "groomer" is fine, "groom" is not.
+  # Whole words, case-insensitive: a longer word containing a banned one is fine.
   if grep -qiwE "$DEMO_WORDS" <<<"$body"; then
     fail "$path mentions the demo niche: $(grep -oiwE "$DEMO_WORDS" <<<"$body" | sort | uniq -c | head -3)"
   fi
