@@ -7,7 +7,9 @@
 # currency and set of nouns, from docs/examples/answers.example.json — and then
 # does to that clone everything a real one has to survive before launch:
 #
-#   1. git archive HEAD into a scratch directory, node_modules symlinked in.
+#   1. git archive HEAD into a scratch directory, dependencies installed from
+#      the lockfile (Turbopack refuses a node_modules symlink that points
+#      outside the project, and a real clone installs anyway).
 #   2. `pnpm new-site --answers …` non-interactively, first run, no flags.
 #   3. Its own throwaway database, migrated, seeded from the CSVs the wizard
 #      copied in. NEVER the dev, test or e2e database.
@@ -145,12 +147,20 @@ mkdir -p "$CLONE_DIR"
 # HEAD, not the working tree: the proof is of what is committed. Anything
 # uncommitted that the clone needs is a failure this step is meant to produce.
 git archive --format=tar HEAD | tar -x -C "$CLONE_DIR"
-ln -s "$ROOT/node_modules" "$CLONE_DIR/node_modules"
 [ -f "$CLONE_DIR/$ANSWERS" ] || fail "no answers file at $ANSWERS in HEAD"
 echo "    $CLONE_DIR"
 finish
 
 cd "$CLONE_DIR"
+
+begin "pnpm install --frozen-lockfile"
+# From the pnpm store, so this is seconds, not minutes — and it is what a
+# clone does on day one. `--offline` first so a run never depends on the
+# network; a store that lacks something falls back to a normal install.
+corepack pnpm install --frozen-lockfile --offline > "$PROOF_DIR/install.log" 2>&1 \
+  || corepack pnpm install --frozen-lockfile > "$PROOF_DIR/install.log" 2>&1 \
+  || fail "install: $(tail -20 "$PROOF_DIR/install.log")"
+finish
 
 # --- 2. the wizard, non-interactively ----------------------------------------
 begin "pnpm new-site --answers"
