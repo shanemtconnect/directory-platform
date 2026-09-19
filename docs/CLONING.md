@@ -33,6 +33,39 @@ corepack pnpm new-site --answers answers.json --dry-run
 | `--allow-placeholders` | Accept `legalEntity: "TBC"`. A production build will not.        |
 | `--overwrite`          | Replace an existing config and seed CSVs.                        |
 
+A fresh checkout carries the demo niche's `config/site.config.ts`; the wizard
+recognises it as the template and replaces it without `--overwrite`. The flag
+is only for replacing a config the wizard itself wrote earlier.
+
+### `--answers`
+
+The answers file is a JSON object keyed by question key — one key per row of
+the table below, every key optional, a missing one taking the question's
+default. [`docs/examples/answers.example.json`](examples/answers.example.json)
+is a complete one: a US dog-groomer directory, every question answered, with
+its seed CSVs beside it in `docs/examples/seeds/`. Copy it, change the values,
+and keep it in the repo: it is the whole input, so the site is reproducible
+from it, and it is what `scripts/verify-clone.sh` runs.
+
+```bash
+cp docs/examples/answers.example.json answers.json
+$EDITOR answers.json
+corepack pnpm new-site --answers answers.json --dry-run   # look first
+corepack pnpm new-site --answers answers.json
+```
+
+Value types follow the question: strings for text and choices, numbers for
+prices and caps (`null` for an unlimited image cap), booleans for the feature
+flags and yes/no questions, and arrays of objects for the two lists —
+`customFields` items are `{ key, label, type, options?, searchable?,
+showInCard?, tier? }` and `reviewCriteria` items are `{ key, label }`. A
+string given for a number or boolean is coerced the way a typed answer would
+be. The three `seed*Csv` paths are read relative to the directory you run the
+wizard from and are only asked when `seedSource` is `csv`; a key for a
+question that is not asked, or a key the wizard does not know, is reported as
+an error along with every other problem in the file, so one run shows you all
+of them.
+
 It writes three things and nothing else:
 
 - `config/site.config.ts` — the only file a clone edits.
@@ -505,8 +538,21 @@ corepack pnpm test
 corepack pnpm check:strings     # no niche word left in a component
 corepack pnpm build:flags-off   # the site builds with every feature off
 corepack pnpm build:flags-on    # and with every feature on
+bash scripts/verify-clone.sh    # the clone proof, end to end
 ```
 
 `check:strings` derives its banned list from the current niche. Regenerate it
 for the new site — a plumber directory should ban "plumber", not the word the
 template happened to ship with.
+
+**Run `bash scripts/verify-clone.sh` before you announce.** It is the one check
+that exercises the product rather than the template: it takes a clean copy of
+`HEAD`, answers the wizard from `docs/examples/answers.example.json`, gives the
+result its own database (`directory_clone`, never the dev or test one),
+migrates, seeds, type-checks, string-checks, builds for production, boots the
+standalone server on port 3240 against Redis database 6, fetches the home
+page, a city, a listing, the sitemap and `robots.txt` — refusing any page that
+still mentions the demo niche — and then runs the whole Playwright suite
+against it. It prints a timing table and exits non-zero on the first failure.
+`--keep` leaves the clone and its database behind to look at. Anything it
+finds is a platform bug: fix it in the tree, with a test, not in the script.
