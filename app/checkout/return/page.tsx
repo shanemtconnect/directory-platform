@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
@@ -8,6 +7,7 @@ import { ensureProfile } from "@/lib/auth/profile";
 import { getPayPalClient } from "@/lib/billing/paypal";
 import { reconcileSubscription } from "@/lib/billing/subscriptions";
 import { subscriptionForOwnerByProviderId } from "@/lib/db/queries/billing";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -83,9 +83,11 @@ export default async function CheckoutReturnPage({
         // changes — and that is true of every change the state machine
         // applied, not only the activation this page congratulates the buyer
         // on. A cancellation or expiry the webhook missed and this call caught
-        // up on has moved the tier just the same.
-        revalidatePath(owned.listingPath);
-        revalidatePath(owned.cityPath);
+        // up on has moved the tier just the same. The list is `listingPaths`,
+        // read inside the transaction by `applyEffect`: the same pages the
+        // webhook and the sync job bust, paginated city pages and the
+        // category pillar included.
+        revalidateListingPaths(out.paths);
       }
     }
   }

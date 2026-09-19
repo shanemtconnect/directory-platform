@@ -23,6 +23,8 @@ import { ensureProfile } from "@/lib/auth/profile";
 import { resetClock, setClock } from "@/lib/clock";
 import * as fx from "./__fixtures__/paypal";
 import { reconcileSubscription, startCheckout } from "./subscriptions";
+import { listingPaths } from "@/lib/db/queries/paths";
+import { ADMIN_VIEWER } from "@/worker/viewer";
 import type { CreateSubscriptionInput, PayPalClient, PayPalSubscriptionView } from "./paypal";
 
 const ENV = { PAYPAL_PLAN_PREMIUM_ANNUAL: fx.PLAN_ID, PAYPAL_PLAN_PREMIUM_MONTHLY: "P-PRE-M" };
@@ -458,6 +460,10 @@ describe("reconcileSubscription", () => {
         providerSubscriptionId: fx.SUB_ID,
       });
       expect(out.outcome).toBe("applied");
+      if (out.outcome !== "applied") return;
+      // The checkout return page busts these, the same list the webhook and
+      // the sync job use, rather than naming the listing and city itself.
+      expect(out.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, s.listingId));
 
       const [row] = await tx.select().from(subscriptions);
       expect(row!.status).toBe("active");

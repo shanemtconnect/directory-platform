@@ -6,6 +6,8 @@ import { makeListing, makeScaffold } from "@/test/factories";
 import { auditLog, claims, listings, profiles, user } from "@/lib/db/schema";
 import { resetClock, setClock } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
+import { listingPaths } from "./paths";
 import { hashToken } from "@/lib/security/token-hash";
 import {
   attachClaimDocument,
@@ -181,6 +183,10 @@ describe("verifyClaimToken", () => {
       const { token, listingId, profileId } = await requested(tx);
       const result = await verifyClaimToken(tx, { role: "public" }, token);
       expect(result.outcome).toBe("approved");
+      if (result.outcome !== "approved") return;
+      // The route busts what `listingPaths` says — the listing page now says
+      // who owns it, and the city pages print the claimed badge.
+      expect(result.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, listingId));
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing?.claimStatus).toBe("claimed");

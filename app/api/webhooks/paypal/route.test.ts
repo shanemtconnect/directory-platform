@@ -4,7 +4,7 @@ import type { WebhookRequest, WebhookResult } from "@/lib/billing/process";
 
 const processPayPalWebhook = vi.fn<(tx: unknown, req: WebhookRequest) => Promise<WebhookResult>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
-const revalidatePath = vi.fn<(path: string) => void>();
+const revalidateListingPaths = vi.fn<(paths: readonly string[]) => void>();
 
 vi.mock("@/lib/db/client", () => ({
   db: { transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({}) },
@@ -18,7 +18,9 @@ vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/spam/write-limit")>()),
   limitPublicWrite: (...args: unknown[]) => limitPublicWrite(...args),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(path) }));
+vi.mock("@/lib/revalidate/listing", () => ({
+  revalidateListingPaths: (paths: readonly string[]) => revalidateListingPaths(paths),
+}));
 
 const allowed: RateLimitResult = { allowed: true, remaining: 99, retryAfterSeconds: 0 };
 const blocked: RateLimitResult = { allowed: false, remaining: 0, retryAfterSeconds: 42 };
@@ -51,7 +53,7 @@ describe("POST /api/webhooks/paypal", () => {
     processPayPalWebhook.mockResolvedValue({ status: 200, outcome: "applied" });
     limitPublicWrite.mockReset();
     limitPublicWrite.mockResolvedValue(allowed);
-    revalidatePath.mockReset();
+    revalidateListingPaths.mockReset();
   });
 
   it("hands the processor the raw body and the signature headers", async () => {
@@ -117,17 +119,26 @@ describe("POST /api/webhooks/paypal", () => {
     expect(processPayPalWebhook).not.toHaveBeenCalled();
   });
 
-  it("revalidates the paths the processor reports", async () => {
-    processPayPalWebhook.mockResolvedValue({
-      status: 200,
-      outcome: "applied",
-      revalidate: { listingPath: "/a-city/a-listing", cityPath: "/a-city" },
-    });
+  it("hands the paths the processor reports to the one revalidate helper, once the transaction is back", async () => {
+    // `listingPaths` is read inside the transaction; `revalidatePath` is a
+    // Next primitive that is legal in a route handler, and it runs here after
+    // the transaction has committed so nothing re-caches the old row between
+    // "marked stale" and "committed".
+    const paths = ["/a-city/a-listing", "/a-city/a-listing/reviews", "/a-city", "/a-city/page/2", "/a-city/barns"];
+    processPayPalWebhook.mockResolvedValue({ status: 200, outcome: "applied", revalidate: { paths } });
 
     await send(EVENT);
 
-    expect(revalidatePath).toHaveBeenCalledWith("/a-city/a-listing");
-    expect(revalidatePath).toHaveBeenCalledWith("/a-city");
+    expect(revalidateListingPaths).toHaveBeenCalledTimes(1);
+    expect(revalidateListingPaths).toHaveBeenCalledWith(paths);
+  });
+
+  it("revalidates nothing when the processor applied nothing", async () => {
+    processPayPalWebhook.mockResolvedValue({ status: 200, outcome: "ignored" });
+
+    await send(EVENT);
+
+    expect(revalidateListingPaths).not.toHaveBeenCalled();
   });
 
   it("refuses GET", async () => {

@@ -1,7 +1,6 @@
 "use server";
 
 import { headers } from "next/headers";
-import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { isEnabled } from "@/lib/features/flags";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
@@ -11,6 +10,7 @@ import {
   resendReviewVerification as resendVerificationToken,
 } from "@/lib/db/queries/reviews";
 import { notifyReviewResent, notifyReviewSubmitted } from "@/lib/email/notify";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
@@ -172,9 +172,10 @@ export async function replyToReview(
       return { ok: false, message: "That review could not be found." };
     case "created":
       // The reviews page is ISR-cached; without this the owner's own reply is
-      // invisible to them for an hour and they write it again.
-      revalidatePath(`${result.listingPath}/reviews`);
-      revalidatePath(result.listingPath);
+      // invisible to them for an hour and they write it again. `paths` is
+      // `listingPaths`, read by the query inside the transaction, so the
+      // listing page (reply count) and the city pages go with it.
+      revalidateListingPaths(result.paths);
       return { ok: true };
   }
 }

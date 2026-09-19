@@ -5,6 +5,8 @@ import { withTestDb, type TestDb } from "@/test/db";
 import { makeScaffold, makeListing } from "@/test/factories";
 import { auditLog, listings, profiles, reviews, reviewInvites, user } from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
+import { listingPaths } from "./paths";
 import { setClock, resetClock } from "@/lib/clock";
 import { hashToken } from "@/lib/security/token-hash";
 import {
@@ -179,6 +181,7 @@ describe("verifyReviewToken", () => {
       expect(verified.outcome).toBe("verified");
       if (verified.outcome !== "verified") return;
       expect(verified.status).toBe("published");
+      expect(verified.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, listingId));
       expect(verified.flaggedReason).toBeNull();
       expect(verified.path).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
 
@@ -204,6 +207,8 @@ describe("verifyReviewToken", () => {
       if (verified.outcome !== "verified") return;
       expect(verified.status).toBe("pending");
       expect(verified.flaggedReason).toBe("link");
+      // Nothing public changed, so nothing to bust.
+      expect(verified.paths).toEqual([]);
 
       const [row] = await tx.select().from(reviews).where(eq(reviews.id, verified.reviewId));
       expect(row!.status).toBe("pending");
@@ -808,6 +813,10 @@ describe("createReviewReply", () => {
         body: "Thanks for taking the time — glad it went well.",
       });
       expect(first.outcome).toBe("created");
+      if (first.outcome !== "created") return;
+      // The reply is on the reviews page and the listing page; the action
+      // busts whatever `listingPaths` says, not a list of its own.
+      expect(first.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, listingId));
 
       const second = await createReviewReply(tx, viewer, {
         reviewId: verified.reviewId, body: "And again.",

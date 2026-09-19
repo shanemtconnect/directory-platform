@@ -8,6 +8,7 @@ import { now } from "@/lib/clock";
 import { ensureProfile } from "@/lib/auth/profile";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { publishedListings } from "@/lib/db/queries/listings";
+import { resolveListingPaths } from "@/lib/db/queries/paths";
 import { writeAuditAs } from "@/lib/db/queries/audit";
 import { flagReview } from "@/lib/reviews/moderation";
 import type { TestDb } from "@/lib/db/types";
@@ -261,6 +262,12 @@ export type VerifyReviewResult =
       flaggedReason: string | null;
       /** True when the link had already been used — a second click, not a fault. */
       repeat: boolean;
+      /**
+       * What the route busts. Non-empty only when THIS click published the
+       * review: a held review changed nothing public, and a repeat click
+       * changed nothing at all.
+       */
+      paths: string[];
     };
 
 /**
@@ -331,6 +338,7 @@ export async function verifyReviewToken(
       status: review.status === "published" ? "published" : "pending",
       flaggedReason: review.flaggedReason,
       repeat: true,
+      paths: [],
     };
   }
 
@@ -375,6 +383,7 @@ export async function verifyReviewToken(
       status: review.status === "published" ? "published" : "pending",
       flaggedReason: review.flaggedReason,
       repeat: true,
+      paths: [],
     };
   }
 
@@ -388,6 +397,9 @@ export async function verifyReviewToken(
     status,
     flaggedReason: reason,
     repeat: false,
+    // The reviews page carries the review and the listing page the average;
+    // the city pages print the rating too. A held review shows nowhere yet.
+    paths: status === "published" ? await resolveListingPaths(tx, invite.listingId) : [],
   };
 }
 
@@ -618,7 +630,12 @@ export async function moderateReview(
 /* ------------------------------------------------------------------- replies */
 
 export type CreateReplyResult =
-  | { outcome: "created"; replyId: string; listingPath: string }
+  | {
+      outcome: "created";
+      replyId: string;
+      /** What the action busts: the reviews page carries the reply, the listing page its count. */
+      paths: string[];
+    }
   | { outcome: "not-owner" }
   | { outcome: "already-replied" }
   | { outcome: "unknown-review" };
@@ -685,7 +702,7 @@ export async function createReviewReply(
   return {
     outcome: "created",
     replyId: row.id,
-    listingPath: `/${review.citySlug}/${review.listingSlug}`,
+    paths: await resolveListingPaths(tx, review.listingId),
   };
 }
 

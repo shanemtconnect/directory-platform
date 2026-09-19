@@ -16,6 +16,7 @@ import type { Interval } from "@/lib/pricing";
 import type { CurrentSubscription, Effect } from "@/lib/billing/webhooks";
 import type { TestDb } from "@/lib/db/types";
 import { writeAuditAs } from "@/lib/db/queries/audit";
+import { listingPaths } from "@/lib/db/queries/paths";
 
 /**
  * Every database access billing makes.
@@ -337,8 +338,13 @@ export async function subscriptionForEvent(
 }
 
 export interface AppliedEffect {
-  readonly listingPath: string;
-  readonly cityPath: string;
+  /**
+   * What the caller busts once the transaction has committed: the listing
+   * page, its reviews page, the city pillar (featured row and sort order),
+   * every paginated page of it and the category pillar — `listingPaths`, the
+   * same list the worker's subscription sync hands to the revalidate route.
+   */
+  readonly paths: readonly string[];
 }
 
 /** Verification checks that are still live. A closed one may be reopened. */
@@ -428,7 +434,7 @@ export async function applyEffect(
     },
   });
 
-  return { listingPath: sub.listingPath, cityPath: sub.cityPath };
+  return { paths: await listingPaths(tx, viewer, sub.listingId) };
 }
 
 /* ------------------------------------------------------------------- account */

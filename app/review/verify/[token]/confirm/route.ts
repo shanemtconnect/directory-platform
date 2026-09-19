@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { isEnabled } from "@/lib/features/flags";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { verifyReviewToken } from "@/lib/db/queries/reviews";
 import { notifyReviewVerified } from "@/lib/email/notify";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { siteOrigin } from "@/lib/site-env";
 import { REVIEW_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/lib/db/types";
@@ -66,9 +66,11 @@ export async function POST(
   if (result.status === "published") {
     // The reviews page is ISR-cached, so without this the reviewer follows the
     // link and does not see their own review for up to an hour — and writes it
-    // again. The listing page carries the average, so it goes too.
-    revalidatePath(`${result.path}/reviews`);
-    revalidatePath(result.path);
+    // again. The listing page carries the average and the city pages print
+    // the rating, so `paths` is the full `listingPaths` list, read by the
+    // query inside the transaction; empty for a repeat click, which changed
+    // nothing.
+    revalidateListingPaths(result.paths);
     return NextResponse.redirect(`${origin}${result.path}/reviews`, 303);
   }
 

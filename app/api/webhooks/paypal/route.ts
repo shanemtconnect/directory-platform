@@ -1,9 +1,9 @@
-import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { getPayPalClient } from "@/lib/billing/paypal";
 import { processPayPalWebhook } from "@/lib/billing/process";
 import { PAYPAL_WEBHOOK_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/lib/db/types";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 
 /**
  * PayPal's delivery endpoint.
@@ -14,11 +14,16 @@ import type { TestDb } from "@/lib/db/types";
  *
  *  - The body is read as TEXT and parsed once, inside the processor, because
  *    the signature is over the bytes PayPal sent.
- *  - `revalidatePath` is a Next primitive and can only be called from here, so
- *    the processor reports which paths changed and this file acts on it. A
- *    listing whose tier has just changed is ranked differently on its city
- *    page, and an ISR cache that still says 'free' is the customer's first
- *    impression of what they just bought.
+ *  - `revalidatePath` is a Next primitive and can only be called from here —
+ *    legal in a route handler, even one PayPal calls with no browser behind
+ *    it — so the processor reads `listingPaths` inside its transaction and
+ *    this file hands the list to `revalidateListingPaths` once that
+ *    transaction has committed. A listing whose tier has just changed is
+ *    ranked differently on its city page, sits in a different featured row,
+ *    and may be on a paginated page or a category pillar; an ISR cache that
+ *    still says 'free' is the customer's first impression of what they just
+ *    bought. The list is the same one every admin decision and the worker's
+ *    sync bust, so this route names no path of its own.
  *
  * And two things that happen BEFORE the body is read, because everything
  * after it costs something — buffering, a transaction, a verify call to
@@ -92,10 +97,7 @@ export async function POST(request: Request): Promise<Response> {
     processPayPalWebhook(tx as unknown as TestDb, { raw, headers, client }),
   );
 
-  if (result.revalidate) {
-    revalidatePath(result.revalidate.listingPath);
-    revalidatePath(result.revalidate.cityPath);
-  }
+  if (result.revalidate) revalidateListingPaths(result.revalidate.paths);
 
   return Response.json(
     { outcome: result.outcome, ...(result.detail === undefined ? {} : { detail: result.detail }) },

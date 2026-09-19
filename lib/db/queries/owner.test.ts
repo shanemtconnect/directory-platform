@@ -6,6 +6,8 @@ import { makeListing, makeScaffold } from "@/test/factories";
 import { auditLog, enquiries, listings, profiles, user } from "@/lib/db/schema";
 import { resetClock, setClock } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
+import { listingPaths } from "./paths";
 import {
   markEnquiryHandled,
   ownerEnquiries,
@@ -114,6 +116,10 @@ describe("updateOwnerListing", () => {
       const jo = await owned(tx);
       const result = await updateOwnerListing(tx, jo.viewer, jo.listingId, patch, "203.0.113.7");
       expect(result.outcome).toBe("saved");
+      if (result.outcome !== "saved") return;
+      // The edit shows on the listing page and on every page that prints its
+      // details; the action busts what `listingPaths` says, not its own list.
+      expect(result.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, jo.listingId));
 
       const [row] = await tx.select().from(listings).where(eq(listings.id, jo.listingId));
       expect(row?.description).toBe(patch.description);

@@ -6,6 +6,7 @@ import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { markEnquiryHandled, updateOwnerListing } from "@/lib/db/queries/owner";
 import { validateOwnerListing } from "@/lib/account/form";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { clientIp } from "@/lib/spam/client-ip";
 import type { Db } from "@/lib/db/client";
 
@@ -49,8 +50,12 @@ export async function saveOwnerListing(
     return { status: "error", message: "That listing could not be found." };
   }
 
-  // The public page is ISR-cached and has just changed.
-  revalidatePath(result.path);
+  // The public pages are ISR-cached and have just changed: `paths` is
+  // `listingPaths`, read by the query inside the transaction, so the city
+  // pages that print the phone and website go with the listing page. The
+  // owner's own edit page is not a listing path; it is the one this action
+  // names itself.
+  revalidateListingPaths(result.paths);
   revalidatePath(`/account/listings/${listingId}`);
   return { status: "saved" };
 }

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm
 import { cities, claims, listings, profiles, user } from "@/lib/db/schema";
 import { writeAuditAs } from "@/lib/db/queries/audit";
 import { publishedListings } from "@/lib/db/queries/listings";
+import { resolveListingPaths } from "@/lib/db/queries/paths";
 import { matchesListingDomain } from "@/lib/claims/domain";
 import { isTokenExpired, magicTokenExpiry, newMagicToken } from "@/lib/claims/token";
 import { hashToken } from "@/lib/security/token-hash";
@@ -238,7 +239,15 @@ export async function previewClaimToken(
 }
 
 export type VerifyResult =
-  | { outcome: "approved"; claimId: string; listingId: string; listingName: string; path: string }
+  | {
+      outcome: "approved";
+      claimId: string;
+      listingId: string;
+      listingName: string;
+      path: string;
+      /** What the route busts: the listing page now says who owns it, the city pages print the badge. */
+      paths: string[];
+    }
   | { outcome: "expired" }
   | { outcome: "already-claimed" }
   | { outcome: "unknown" };
@@ -281,20 +290,24 @@ export async function verifyClaimToken(
     .limit(1);
   if (!row) return { outcome: "unknown" };
 
+  // Approving burns the token, so a row found by it is all but always still
+  // pending; anything else is a claim that moved under us between the select
+  // and here, and the safe answer is the one that says nothing about it.
+  if (row.status !== "pending") return { outcome: "unknown" };
+  if (isTokenExpired(row.expiresAt)) return { outcome: "expired" };
+
   const path = `/${row.citySlug}/${row.listingSlug}`;
+  // Resolved once, for both ways out that report success below. A claim does
+  // not change the published count, so before or after the update makes no
+  // difference to the list.
   const approved = {
     outcome: "approved" as const,
     claimId: row.id,
     listingId: row.listingId,
     listingName: row.listingName,
     path,
+    paths: await resolveListingPaths(tx, row.listingId),
   };
-
-  // Approving burns the token, so a row found by it is all but always still
-  // pending; anything else is a claim that moved under us between the select
-  // and here, and the safe answer is the one that says nothing about it.
-  if (row.status !== "pending") return { outcome: "unknown" };
-  if (isTokenExpired(row.expiresAt)) return { outcome: "expired" };
 
   const at = now();
 

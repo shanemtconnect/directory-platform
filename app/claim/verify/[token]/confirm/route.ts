@@ -1,7 +1,7 @@
-import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { verifyClaimToken } from "@/lib/db/queries/claims";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { CLAIM_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import { clientIp } from "@/lib/spam/client-ip";
 import type { Db } from "@/lib/db/client";
@@ -57,7 +57,10 @@ export async function POST(
   if (result.outcome !== "approved") return back(request, result.outcome);
 
   // The listing page is ISR-cached and now says something different about who
-  // owns it. Without this the change is invisible until the cache turns over.
-  revalidatePath(result.path);
+  // owns it, and the city pages print the claimed badge. Without this the
+  // change is invisible until the cache turns over. `paths` is `listingPaths`,
+  // read by the query inside the transaction — the same list every admin
+  // claim decision busts.
+  revalidateListingPaths(result.paths);
   return back(request, "approved");
 }

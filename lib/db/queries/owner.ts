@@ -4,6 +4,7 @@ import { now } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 import type { Db } from "@/lib/db/client";
 import { writeAudit } from "./audit";
+import { resolveListingPaths } from "./paths";
 
 /**
  * The owner portal's data layer.
@@ -150,7 +151,11 @@ export interface OwnerListingPatch {
 }
 
 export type OwnerUpdateResult =
-  | { outcome: "saved"; path: string }
+  | {
+      outcome: "saved";
+      /** What the action busts: the listing page, and every page that prints its details. */
+      paths: string[];
+    }
   | { outcome: "not-found" };
 
 export async function updateOwnerListing(
@@ -191,7 +196,7 @@ export async function updateOwnerListing(
     ip,
   });
 
-  return { outcome: "saved", path: existing.path };
+  return { outcome: "saved", paths: await resolveListingPaths(tx, listingId) };
 }
 
 export interface OwnerEnquiry {

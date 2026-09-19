@@ -7,6 +7,8 @@ import { makeListing, makeScaffold } from "@/test/factories";
 import { ensureProfile } from "@/lib/auth/profile";
 import { resetClock, setClock } from "@/lib/clock";
 import { createPendingSubscription } from "@/lib/db/queries/billing";
+import { listingPaths } from "@/lib/db/queries/paths";
+import { ADMIN_VIEWER } from "@/worker/viewer";
 import * as fx from "./__fixtures__/paypal";
 import { processPayPalWebhook } from "./process";
 import type { PayPalClient } from "./paypal";
@@ -114,8 +116,9 @@ describe("processPayPalWebhook", () => {
 
       expect(out.status).toBe(200);
       expect(out.outcome).toBe("applied");
-      expect(out.revalidate?.listingPath).toMatch(/^\//);
-      expect(out.revalidate?.cityPath).toMatch(/^\//);
+      // The route busts exactly what `listingPaths` says — one list for the
+      // webhook, the sync job and every admin decision.
+      expect(out.revalidate?.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, s.listingId));
 
       const [listing] = await tx.select().from(listings).where(eq(listings.id, s.listingId));
       expect(listing!.tier).toBe("premium");

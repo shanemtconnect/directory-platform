@@ -6,7 +6,7 @@ import { makeCategory, makeListing, makeScaffold } from "@/test/factories";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import { PER_PAGE } from "./listings";
-import { listingPaths } from "./paths";
+import { listingPaths, resolveListingPaths } from "./paths";
 
 async function citySlug(tx: Parameters<typeof listingPaths>[0], cityId: string): Promise<string> {
   const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, cityId));
@@ -128,6 +128,20 @@ describe("listingPaths", () => {
     await withTestDb(async (tx) => {
       expect(await listingPaths(tx, ADMIN_VIEWER, "11111111-1111-4111-8111-111111111111")).toEqual([]);
       expect(await listingPaths(tx, ADMIN_VIEWER, "not-a-uuid")).toEqual([]);
+    });
+  });
+
+  it("resolveListingPaths is the same list with no viewer gate, for query functions that have already authorised", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "The Old Mill" });
+
+      const gated = await listingPaths(tx, ADMIN_VIEWER, listingId);
+      const ungated = await resolveListingPaths(tx, listingId);
+
+      expect(ungated).toEqual(gated);
+      expect(ungated.length).toBeGreaterThan(0);
+      expect(await resolveListingPaths(tx, "not-a-uuid")).toEqual([]);
     });
   });
 

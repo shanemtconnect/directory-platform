@@ -25,6 +25,7 @@ import {
   subscriptionForOwner,
   subscriptionForOwnerByProviderId,
 } from "./billing";
+import { listingPaths } from "./paths";
 
 const ADMIN = { role: "admin" as const, userId: "worker" };
 
@@ -243,8 +244,11 @@ describe("applyEffect", () => {
       expect(checks).toHaveLength(1);
       expect(checks[0]!.status).toBe("open");
 
-      expect(out.listingPath).toMatch(/^\//);
-      expect(out.cityPath).toMatch(/^\//);
+      // Everything a tier change moves: the listing page, its reviews page,
+      // the city pillar (featured row and sort), every paginated page of it,
+      // and the category pillar — the same list the worker's sync busts.
+      expect(out.paths).toEqual(await listingPaths(tx, ADMIN, s.listingId));
+      expect(out.paths.length).toBeGreaterThanOrEqual(3);
     });
   });
 

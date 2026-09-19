@@ -52,6 +52,27 @@ export async function listingPaths(
   // Slugs are public, but the count and the join are work only an admin
   // decision or the worker has a reason to ask for.
   if (!isAdmin(viewer)) throw new Error("FORBIDDEN");
+  return resolveListingPaths(tx, listingId);
+}
+
+/**
+ * The same list, with no viewer gate.
+ *
+ * For query functions that have ALREADY proved the caller's right to change
+ * this listing inside the same transaction — the owner's profile matched
+ * `listings.owner_id` (`updateOwnerListing`, `createReviewReply`), the token
+ * matched a row (`verifyReviewToken`, `verifyClaimToken`), or the billing
+ * viewer applied what PayPal reported (`applyEffect`) — and return the paths
+ * as part of their result so the action or route that called them busts
+ * exactly what `listingPaths` would have. That is what keeps "one helper,
+ * every caller" true for the callers that do not run as an admin.
+ *
+ * Actions and routes take `listingPaths`, never this. The gate up there is a
+ * cost guard, not a data guard (every slug here is public), but it is the
+ * one place that decides who may ask a count and a join of a listing, and
+ * request-path code importing this would be deciding for itself.
+ */
+export async function resolveListingPaths(tx: TestDb, listingId: string): Promise<string[]> {
   if (!UUID.test(listingId)) return [];
 
   const [row] = await tx

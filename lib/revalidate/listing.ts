@@ -10,11 +10,15 @@ import { revalidatePath } from "next/cache";
  * count. This is the other half: called once that transaction has returned,
  * so nothing re-caches the old row between "marked stale" and "committed".
  *
- * Every server action that approves, rejects, takes down, moderates a review
- * on or approves a claim for a listing goes through here rather than naming
+ * Every caller inside the Next process goes through here rather than naming
  * paths itself, so the day a page is added to the list it is added for all
- * of them. The worker has its own route to the same end (lib/revalidate/
- * client.ts); this one is for code that runs inside the Next process.
+ * of them: the admin actions (approve, reject, takedown, review moderation,
+ * claim decision), the owner's edit and review reply, the two magic-link
+ * confirm routes (review verify, claim verify), the PayPal webhook and the
+ * checkout return page. The callers that do not run as an admin get their
+ * list from the query that authorised them — `resolveListingPaths`, the
+ * same list without the viewer gate — as a `paths` field on its result. The
+ * worker has its own route to the same end (lib/revalidate/client.ts).
  */
 export function revalidateListingPaths(paths: readonly string[]): void {
   for (const path of new Set(paths)) revalidatePath(path);

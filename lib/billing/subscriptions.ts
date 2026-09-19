@@ -161,7 +161,12 @@ export type ReconcileOutcome =
   | { outcome: "not-found" }
   | { outcome: "provider-error"; message: string }
   | { outcome: "pending"; status: string }
-  | { outcome: "applied"; action: string };
+  | {
+      outcome: "applied";
+      action: string;
+      /** What the checkout return page busts — `listingPaths`, via `applyEffect`. */
+      paths: readonly string[];
+    };
 
 /**
  * PayPal's subscription status, expressed as the webhook this site would have
@@ -232,6 +237,6 @@ export async function reconcileSubscription(
   const effect = decide(event, sub, { env: input.env ?? process.env, at });
   if (effect.action === "ignore") return { outcome: "pending", status: view.status };
 
-  await applyEffect(tx, WORKER, sub, effect, { eventId: event.id });
-  return { outcome: "applied", action: effect.action };
+  const { paths } = await applyEffect(tx, WORKER, sub, effect, { eventId: event.id });
+  return { outcome: "applied", action: effect.action, paths };
 }

@@ -7,6 +7,7 @@ process.env.NEXT_PUBLIC_SITE_URL = "http://localhost:3215";
 const verifyReviewToken = vi.fn<(...a: unknown[]) => Promise<VerifyReviewResult>>();
 const notifyReviewVerified = vi.fn<(...a: unknown[]) => Promise<void>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
+const revalidateListingPaths = vi.fn<(paths: readonly string[]) => void>();
 
 vi.mock("@/lib/db/client", () => ({
   db: { transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({}) },
@@ -23,7 +24,11 @@ vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/spam/write-limit")>()),
   limitPublicWrite: (...args: unknown[]) => limitPublicWrite(...args),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("@/lib/revalidate/listing", () => ({
+  revalidateListingPaths: (paths: readonly string[]) => revalidateListingPaths(paths),
+}));
+
+const PATHS = ["/a-city/a-listing", "/a-city/a-listing/reviews", "/a-city", "/a-city/barns"];
 
 const allowed: RateLimitResult = { allowed: true, remaining: 29, retryAfterSeconds: 0 };
 const blocked: RateLimitResult = { allowed: false, remaining: 0, retryAfterSeconds: 30 };
@@ -45,12 +50,13 @@ describe("POST /review/verify/[token]/confirm", () => {
     notifyReviewVerified.mockResolvedValue(undefined);
     limitPublicWrite.mockReset();
     limitPublicWrite.mockResolvedValue(allowed);
+    revalidateListingPaths.mockReset();
   });
 
   it("confirms and sends the reviewer to their review", async () => {
     verifyReviewToken.mockResolvedValue({
       outcome: "verified", reviewId: "r", listingId: "l", path: "/a-city/a-listing",
-      status: "published", flaggedReason: null, repeat: false,
+      status: "published", flaggedReason: null, repeat: false, paths: PATHS,
     });
     const { POST } = await import("./route");
 
@@ -58,6 +64,32 @@ describe("POST /review/verify/[token]/confirm", () => {
 
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("http://localhost:3215/a-city/a-listing/reviews");
+  });
+
+  it("busts every page the query reports for a review that went live, and names none itself", async () => {
+    verifyReviewToken.mockResolvedValue({
+      outcome: "verified", reviewId: "r", listingId: "l", path: "/a-city/a-listing",
+      status: "published", flaggedReason: null, repeat: false, paths: PATHS,
+    });
+    const { POST } = await import("./route");
+
+    await POST(...confirm("tok-live"));
+
+    expect(revalidateListingPaths).toHaveBeenCalledTimes(1);
+    expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
+  });
+
+  it("busts nothing for a review held for moderation", async () => {
+    verifyReviewToken.mockResolvedValue({
+      outcome: "verified", reviewId: "r", listingId: "l", path: "/a-city/a-listing",
+      status: "pending", flaggedReason: "link", repeat: false, paths: [],
+    });
+    const { POST } = await import("./route");
+
+    const res = await POST(...confirm("tok-held"));
+
+    expect(res.headers.get("location")).toBe("http://localhost:3215/leave-review/l/thanks");
+    expect(revalidateListingPaths).not.toHaveBeenCalled();
   });
 
   it("counts every confirm against the bucket the landing page uses", async () => {

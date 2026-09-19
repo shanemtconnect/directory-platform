@@ -15,7 +15,7 @@ import type { OwnerSubscription } from "@/lib/db/queries/billing";
 const currentViewer = vi.fn<() => Promise<Viewer>>();
 const reconcileSubscription = vi.fn<() => Promise<ReconcileOutcome>>();
 const subscriptionForOwnerByProviderId = vi.fn<() => Promise<OwnerSubscription | null>>();
-const revalidatePath = vi.fn<(path: string) => void>();
+const revalidateListingPaths = vi.fn<(paths: readonly string[]) => void>();
 
 const HANDLE = { marker: "the transaction" };
 const transaction = vi.fn(
@@ -27,7 +27,9 @@ vi.mock("next/navigation", () => ({
     throw new Error(`REDIRECT ${to}`);
   },
 }));
-vi.mock("next/cache", () => ({ revalidatePath: (p: string) => revalidatePath(p) }));
+vi.mock("@/lib/revalidate/listing", () => ({
+  revalidateListingPaths: (paths: readonly string[]) => revalidateListingPaths(paths),
+}));
 vi.mock("@/lib/db/client", () => ({ db: { transaction: (fn: never) => transaction(fn) } }));
 vi.mock("@/lib/auth/viewer", () => ({ currentViewer: () => currentViewer() }));
 vi.mock("@/lib/auth/profile", () => ({
@@ -47,6 +49,9 @@ const OWNED = {
   cityPath: "/richmond",
 } as unknown as OwnerSubscription;
 
+/** What `applyEffect` reports through `reconcileSubscription`: `listingPaths`, read in the transaction. */
+const PATHS = ["/richmond/the-old-hall", "/richmond/the-old-hall/reviews", "/richmond", "/richmond/page/2", "/richmond/halls"];
+
 async function render() {
   const { default: page } = await import("./page");
   return await page({ searchParams: Promise.resolve({ subscription_id: "I-ABC123" }) });
@@ -57,28 +62,30 @@ beforeEach(() => {
   currentViewer.mockReset().mockResolvedValue({ role: "owner", userId: "user_owner" });
   subscriptionForOwnerByProviderId.mockReset().mockResolvedValue(OWNED);
   reconcileSubscription.mockReset();
-  revalidatePath.mockReset();
+  revalidateListingPaths.mockReset();
 });
 
 describe("/checkout/return", () => {
-  it("busts the listing and town pages when the activation is applied", async () => {
-    reconcileSubscription.mockResolvedValue({ outcome: "applied", action: "activate" });
+  it("busts every page the state machine reports when the activation is applied", async () => {
+    reconcileSubscription.mockResolvedValue({ outcome: "applied", action: "activate", paths: PATHS });
 
     await render();
 
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall");
-    expect(revalidatePath).toHaveBeenCalledWith("/richmond");
+    // The page names no paths of its own: the list is `listingPaths`, read
+    // inside the transaction, so a paginated city page or the category pillar
+    // is busted here exactly as it is for the webhook.
+    expect(revalidateListingPaths).toHaveBeenCalledTimes(1);
+    expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
   });
 
   it.each(["cancel", "expire", "suspend", "reactivate"])(
     "busts the same pages for any other applied change (%s) — the tier moved either way",
     async (action) => {
-      reconcileSubscription.mockResolvedValue({ outcome: "applied", action });
+      reconcileSubscription.mockResolvedValue({ outcome: "applied", action, paths: PATHS });
 
       await render();
 
-      expect(revalidatePath).toHaveBeenCalledWith("/richmond/the-old-hall");
-      expect(revalidatePath).toHaveBeenCalledWith("/richmond");
+      expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
     },
   );
 
@@ -87,7 +94,7 @@ describe("/checkout/return", () => {
 
     await render();
 
-    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateListingPaths).not.toHaveBeenCalled();
   });
 
   it("never reconciles or revalidates a subscription this viewer does not own", async () => {
@@ -96,6 +103,6 @@ describe("/checkout/return", () => {
     await render();
 
     expect(reconcileSubscription).not.toHaveBeenCalled();
-    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateListingPaths).not.toHaveBeenCalled();
   });
 });
