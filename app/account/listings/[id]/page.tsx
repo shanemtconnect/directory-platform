@@ -7,6 +7,7 @@ import { ownerListing } from "@/lib/db/queries/owner";
 import { listingStats } from "@/lib/db/queries/stats";
 import { ListingEditor } from "@/components/account/ListingEditor";
 import { ListingStats } from "@/components/stats/ListingStats";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Edit your listing",
@@ -54,15 +55,26 @@ export default async function EditListingPage({ params }: Props) {
 
   return (
     <main>
-      <p className="text-sm text-muted"><a href="/account">← Your account</a></p>
-      <h1>{listing.name}</h1>
-      <p className="text-muted">
-        <a href={listing.path}>View the public page</a>
-        {" · "}
-        <a href={`/account/listings/${listing.id}/enquiries`}>Enquiries</a>
-        {" · "}
-        <a href={`/advertise/badge/mine?id=${listing.id}`} data-testid="badge-link">Get your badge</a>
-      </p>
+      <PageHeader
+        title={listing.name}
+        back={{ href: "/account", label: "Your account" }}
+        lede={`Edit what the public page says, then see how the ${siteConfig.entity.singular} is doing below.`}
+      >
+        <p className="flex flex-wrap gap-1">
+          <span className={listing.status === "published" ? "pill pill-on" : "pill"}>
+            {listing.status === "published" ? "Live" : `Status: ${listing.status}`}
+          </span>
+          <span className={listing.tier === "free" ? "pill" : "pill pill-primary"}>{tier.label}</span>
+          {listing.claimStatus === "verified" && <span className="pill pill-on">Verified</span>}
+        </p>
+        <p>
+          <a href={listing.path}>View the public page</a>
+          {" · "}
+          <a href={`/account/listings/${listing.id}/enquiries`}>Enquiries</a>
+          {" · "}
+          <a href={`/advertise/badge/mine?id=${listing.id}`} data-testid="badge-link">Get your badge</a>
+        </p>
+      </PageHeader>
 
       <ListingEditor
         listingId={listing.id}

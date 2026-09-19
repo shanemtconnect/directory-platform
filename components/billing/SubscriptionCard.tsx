@@ -1,6 +1,7 @@
 import { siteConfig } from "@/config/site.config";
 import type { OwnerSubscription } from "@/lib/db/queries/billing";
 import { CancelButton } from "./CancelButton";
+import { Notice } from "@/components/ui/Notice";
 
 /**
  * One subscription, in the owner's own words.
@@ -53,7 +54,7 @@ export function SubscriptionCard({
       <h2 className="mt-0 text-[length:var(--text-h3)]">
         <a href={subscription.listingPath}>{subscription.listingName}</a>
       </h2>
-      <dl>
+      <dl className="kv">
         <dt>Plan</dt>
         <dd data-testid="sub-plan">
           {spec.label}, billed {subscription.interval === "annual" ? "yearly" : "monthly"}
@@ -61,7 +62,17 @@ export function SubscriptionCard({
 
         <dt>Status</dt>
         <dd data-testid="sub-status">
-          {STATUS_LABELS[subscription.status] ?? subscription.status}
+          <span
+            className={
+              subscription.status === "active"
+                ? "pill pill-on"
+                : subscription.status === "past_due" || subscription.status === "suspended"
+                  ? "pill pill-danger"
+                  : "pill"
+            }
+          >
+            {STATUS_LABELS[subscription.status] ?? subscription.status}
+          </span>
         </dd>
 
         {trialEnd !== null && (
@@ -80,10 +91,10 @@ export function SubscriptionCard({
       </dl>
 
       {cancelling ? (
-        <p data-testid="sub-cancelling">
+        <Notice variant="status" testId="sub-cancelling">
           This subscription is cancelled and will not renew
           {periodEnd === null ? "." : `, so it ends on ${periodEnd}.`}
-        </p>
+        </Notice>
       ) : (
         live && <CancelButton subscriptionId={subscription.id} periodEndLabel={periodEnd} />
       )}

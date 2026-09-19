@@ -6,6 +6,7 @@ import { siteConfig } from "@/config/site.config";
 import { ChangePasswordForm } from "@/components/auth/ChangePasswordForm";
 import { ProfileSettingsForm } from "@/components/auth/ProfileSettingsForm";
 import { UnverifiedEmailBanner } from "@/components/auth/UnverifiedEmailBanner";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Account settings",
@@ -49,12 +50,11 @@ export default async function AccountSettingsPage() {
 
   return (
     <main>
-      <p className="text-sm">
-        <a href="/account" data-testid="settings-back">
-          Back to your account
-        </a>
-      </p>
-      <h1>Account settings</h1>
+      <PageHeader
+        title="Account settings"
+        back={{ href: "/account", label: "Back to your account", testId: "settings-back" }}
+        lede="Your name, phone number and password, and how to close the account."
+      />
 
       <UnverifiedEmailBanner />
 
@@ -68,12 +68,12 @@ export default async function AccountSettingsPage() {
         />
       </section>
 
-      <section aria-labelledby="settings-password" className="mt-8">
+      <section aria-labelledby="settings-password">
         <h2 id="settings-password">Password</h2>
         <ChangePasswordForm />
       </section>
 
-      <section aria-labelledby="settings-delete" className="mt-8">
+      <section aria-labelledby="settings-delete">
         <h2 id="settings-delete">Close your account</h2>
         <div className="card max-w-xl">
           <p>
