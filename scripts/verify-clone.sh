@@ -127,6 +127,13 @@ cleanup() {
   # (The keep case keeps the directory and the database, not the cache — a
   # kept clone booted again starts cold, which is what a redeploy does.)
   docker exec "$REDIS_CONTAINER" redis-cli -n "$RDB" flushdb >/dev/null 2>&1 || true
+  # A failed run keeps its logs whatever --keep says: the point of a proof
+  # that fails is to read why, and the directory is what holds the answer.
+  if [ "$code" -ne 0 ] && [ "$KEEP" != "1" ]; then
+    echo
+    echo "failed (exit $code): logs kept under $PROOF_DIR (build.log, server.log, e2e.log)"
+    KEEP=1
+  fi
   if [ "$KEEP" = "1" ]; then
     echo
     echo "kept: $CLONE_DIR and database $DB_NAME"
@@ -197,7 +204,7 @@ begin "create + migrate $DB_NAME"
 psql_admin "drop database if exists ${DB_NAME} with (force)" >/dev/null
 psql_admin "create database ${DB_NAME}" >/dev/null
 DB_CREATED=1
-DATABASE_URL="$DB_URL" corepack pnpm db:migrate 2>&1 | tail -3
+DATABASE_URL="$DB_URL" corepack pnpm db:migrate 2>&1 | tail -3 || fail "migrating $DB_NAME failed"
 MIGRATIONS=$(psql_clone "select count(*) from drizzle.__drizzle_migrations")
 EXPECTED=$(grep -c '"idx"' drizzle/meta/_journal.json)
 [ "$MIGRATIONS" = "$EXPECTED" ] || fail "expected $EXPECTED migrations applied, got $MIGRATIONS"
@@ -312,8 +319,8 @@ finish
 # --- 6. the suite ------------------------------------------------------------
 begin "playwright e2e against the clone"
 E2E_PORT="$PORT" DATABASE_URL="$DB_URL" REDIS_URL="$REDIS_URL" SITE_ENV=production \
-  corepack pnpm test:e2e 2>&1 | tee "$PROOF_DIR/e2e.log" | tail -25
-[ "${PIPESTATUS[0]}" -eq 0 ] || fail "the Playwright suite failed against the clone — see $PROOF_DIR/e2e.log"
+  corepack pnpm test:e2e 2>&1 | tee "$PROOF_DIR/e2e.log" | tail -25 \
+  || fail "the Playwright suite failed against the clone — see $PROOF_DIR/e2e.log"
 grep -qE "[1-9][0-9]* passed" "$PROOF_DIR/e2e.log" || fail "the suite reported no passing tests"
 finish
 

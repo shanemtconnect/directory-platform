@@ -541,6 +541,14 @@ corepack pnpm build:flags-on    # and with every feature on
 bash scripts/verify-clone.sh    # the clone proof, end to end
 ```
 
+Knobs, all optional: `CLONE_ANSWERS` (repo-relative path to the answers file,
+default `docs/examples/answers.example.json`), `CLONE_PORT` (3240),
+`CLONE_REDIS_URL` (`redis://localhost:6380/6` — use an index nothing else uses),
+`CLONE_DB_NAME` (`directory_clone`, always created fresh and dropped after),
+`CLONE_PROOF_DIR` (where the copy is built; defaults to your temp dir), and
+`--keep` to leave the copy, the database and the logs behind. A failed run
+keeps its logs regardless.
+
 `check:strings` derives its banned list from the current niche. Regenerate it
 for the new site — a plumber directory should ban "plumber", not the word the
 template happened to ship with.

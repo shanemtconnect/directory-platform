@@ -86,6 +86,10 @@ test.describe("JSON-LD @type per page type", () => {
     // out on a site that ships no posts, which is every clone.
     const posts = page.locator("main a[href^='/blog/']");
     if ((await posts.count()) === 0) {
+      // A clone ships without posts; the demo does not. On the demo leg an
+      // empty /blog is a regression, not a reason to skip.
+      expect(process.env.NEXT_PUBLIC_DEMO_MODE, "the demo site has lost its blog posts")
+        .not.toBe("true");
       test.skip(true, "no blog post to sample: this site ships without posts");
       return;
     }
