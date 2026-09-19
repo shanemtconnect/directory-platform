@@ -22,6 +22,55 @@
       "when": 1788868082113,
       "tag": "0002_black_doorman",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788868939080,
+      "tag": "0003_deep_pride",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788869476307,
+      "tag": "0004_small_purple_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788870500000,
+      "tag": "0005_reconcile_parallel_migrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788871629782,
+      "tag": "0006_sturdy_psynapse",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788872697401,
+      "tag": "0007_job_queue_delivered",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789173585196,
+      "tag": "0008_unusual_sprite",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789742625323,
+      "tag": "0009_removal_rejection_reason",
+      "breakpoints": true
     }
   ]
 }

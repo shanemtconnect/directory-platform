@@ -1,7 +1,12 @@
-import type { SiteConfig } from "./types";
+import type { CustomField, SiteConfig } from "./types";
 
 /**
  * THE ONLY FILE A CLONE EDITS.
+ *
+ * @template-config: replaced by `pnpm new-site` — this is the demo niche the
+ * repository ships with. The wizard writes over it without --overwrite; the
+ * config it writes does not carry this line, so a real clone's config is
+ * never replaced by accident.
  *
  * Every value here is niche-specific. If a string in a component would need to
  * change when this repo is cloned for a different niche, it belongs in here or
@@ -194,4 +199,36 @@ export const siteConfig = {
     requireIntroCopyToIndex: true,
     footerCitiesPerCategory: 18,
   },
+
+  stats: {
+    // A year and a bit: covers the 365-day paid window with room for an
+    // owner to compare this month against the same month last year.
+    retentionDays: 400,
+  },
+
+  legal: {
+    privacyLastUpdated: "2026-09-08",
+    termsLastUpdated: "2026-09-08",
+    dataController: "TBC",
+  },
 } as const satisfies SiteConfig;
+
+/**
+ * Widened accessors.
+ *
+ * `as const satisfies SiteConfig` is load-bearing — it keeps the literal types
+ * the feature-flag tree-shaking depends on. The cost is that it narrows
+ * `customFields` to a union of exact object shapes, so an optional key like
+ * `searchable` or `showInCard` does not exist on members that omit it, and
+ * `.filter(f => f.showInCard)` is a compile error rather than a false.
+ *
+ * That has now caught three separate pieces of work. Read fields through here
+ * instead of reaching into the const.
+ */
+export const customFields: readonly CustomField[] = siteConfig.customFields;
+
+export const searchableFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.searchable === true);
+
+export const cardFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.showInCard === true);

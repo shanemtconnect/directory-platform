@@ -4,7 +4,9 @@ import { siteConfig } from "@/config/site.config";
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
-  title: `Advertise on ${siteConfig.name}`,
+  // No site name: the root layout's title template appends it, and hardcoding
+  // it here doubled up as "Advertise on X | X".
+  title: "Advertise",
   description: `Reach people who are actively choosing a ${siteConfig.entity.singular} — what a listing gets you, what each tier includes, and the free badge for your own site.`,
   alternates: { canonical: "/advertise" },
 };

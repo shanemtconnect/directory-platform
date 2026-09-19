@@ -1,14 +1,17 @@
-import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { listings } from "@/lib/db/schema";
+import { after } from "next/server";
 import { siteConfig } from "@/config/site.config";
+import { badgeListing } from "@/lib/db/queries/badges";
+import { db } from "@/lib/db/client";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { parseBadgeStyle, renderBadgeSvg } from "@/lib/badge/svg";
+import { recordBadgeImpression } from "@/lib/badge/counters";
 
 /**
  * GET /badge/{listingId}?style=dark|light|compact|rating
  *
- * Served to third-party websites, so it is deliberately dumb: no cookies, no
- * session, no viewer. It reads one published row and renders an image.
+ * Served to third-party websites, so it is deliberately dumb: no cookies and
+ * no session. It reads one published row as the public viewer and renders an
+ * image.
  *
  * Cached for 24h. The badge changes only when a listing is renamed or its
  * claim status moves, neither of which is urgent enough to pay for a database
@@ -16,8 +19,6 @@ import { parseBadgeStyle, renderBadgeSvg } from "@/lib/badge/svg";
  */
 
 export const dynamic = "force-dynamic";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const CACHE = "public, max-age=86400, s-maxage=86400";
 
@@ -34,24 +35,23 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  if (!UUID.test(id)) return notFound();
-
   const style = parseBadgeStyle(new URL(request.url).searchParams.get("style"));
 
-  const [row] = await db
-    .select({
-      name: listings.name,
-      claimStatus: listings.claimStatus,
-      ratingAvg: listings.ratingAvg,
-      ratingCount: listings.ratingCount,
-    })
-    .from(listings)
-    // Published only. An unpublished, rejected or removed listing must not be
-    // able to display a badge on someone else's website.
-    .where(and(eq(listings.id, id), eq(listings.status, "published")))
-    .limit(1);
-
+  // Published only, and the query is the thing that enforces it: an
+  // unpublished, rejected or removed listing must not be able to display a
+  // badge on someone else's website.
+  const row = await badgeListing(db as never, PUBLIC_VIEWER, id);
   if (!row) return notFound();
+
+  // Counted in Redis and folded into `badges.impression_count` by the worker
+  // once a minute. One UPDATE per impression would mean a row lock on every
+  // page view of every site that ever pasted the snippet — the one traffic
+  // shape this application does not control. Deferred past the response, and
+  // swallowing its own errors: the image renders whether or not the cache is
+  // reachable.
+  after(() => {
+    void recordBadgeImpression(row.id).catch(() => {});
+  });
 
   const svg = renderBadgeSvg({
     siteName: siteConfig.name,

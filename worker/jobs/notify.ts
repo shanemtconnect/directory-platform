@@ -1,0 +1,634 @@
+import {
+  AUTH_TOKEN_TTL_SECONDS,
+  NOTIFY_AUTH_RESET,
+  NOTIFY_AUTH_VERIFY,
+  NOTIFY_CLAIM_DECIDED,
+  NOTIFY_CLAIM_LINK,
+  NOTIFY_CLAIM_SUBMITTED,
+  NOTIFY_DECISION,
+  NOTIFY_ENQUIRY,
+  NOTIFY_KINDS,
+  NOTIFY_REMOVAL,
+  NOTIFY_REMOVAL_ACTIONED,
+  NOTIFY_REMOVAL_REJECTED,
+  NOTIFY_REPORT,
+  NOTIFY_REVIEW_SUBMITTED,
+  NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_SUBMISSION,
+} from "@/lib/email/notify";
+import {
+  submissionApproved,
+  submissionReceived,
+  submissionRejected,
+  submissionToAdmin,
+} from "@/lib/email/templates/submission";
+import { siteUrl } from "@/lib/schema/builders";
+import {
+  claimNextJob,
+  completeJob,
+  failJob,
+  markDelivered,
+  type QueuedJob,
+} from "@/lib/db/queries/jobs";
+import {
+  decisionNotification,
+  enquiryNotification,
+  parkedSubmissionNotification,
+  submissionNotification,
+  type SubmissionNotification,
+} from "@/lib/db/queries/notifications";
+import { ADMIN_VIEWER } from "@/worker/viewer";
+import { sendEmail, type EmailMessage } from "@/lib/email/sender";
+import { enquiryToAdmin, enquiryToOwner } from "@/lib/email/templates/enquiry";
+import { removalDecisionNotification, removalNotification, reportNotification } from "@/lib/db/queries/trust";
+import {
+  removalActioned,
+  removalReceived,
+  removalRejected,
+  removalToAdmin,
+  reportToAdmin,
+} from "@/lib/email/templates/trust";
+import { reviewNotification } from "@/lib/db/queries/reviews";
+import { reviewToAdmin, reviewToOwner, reviewVerification } from "@/lib/email/templates/review";
+import {
+  claimApproved, claimMagicLink, claimRejected, claimToAdmin,
+} from "@/lib/email/templates/claim";
+import { claimNotification } from "@/lib/db/queries/claims";
+import { MAGIC_TOKEN_TTL_MINUTES, isTokenExpired } from "@/lib/claims/token";
+import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
+import { authEmailRecipient } from "@/lib/db/queries/profile";
+import { hashToken } from "@/lib/security/token-hash";
+import type { Db } from "@/lib/db/client";
+
+/**
+ * Drains the notification queue.
+ *
+ * Runs inside the transaction `withAdvisoryLock` opens, so the row locks
+ * `claimNextJob` takes last exactly as long as the tick does and a crash
+ * mid-batch releases every job it had claimed.
+ */
+
+/**
+ * One tick's worth. The cap exists because the claim holds a row lock for the
+ * whole transaction: a queue that has backed up should take several ticks
+ * rather than one very long one.
+ */
+const BATCH = 25;
+
+/** Thrown to mark a job for retry. The message becomes `last_error`. */
+class Retryable extends Error {}
+
+/** How much of a failure message reaches the log line. */
+const LOGGED_ERROR_CHARS = 200;
+
+let warnedNoAdmin = false;
+
+function adminAddress(): string {
+  const address = process.env.ADMIN_NOTIFICATION_EMAIL?.trim() ?? "";
+  if (address === "" && !warnedNoAdmin) {
+    // Otherwise every admin notification is dropped by sendEmail's
+    // no-recipient path and the queue looks perfectly healthy.
+    warnedNoAdmin = true;
+    console.warn("[worker] ADMIN_NOTIFICATION_EMAIL is unset — no admin notifications");
+  }
+  return address;
+}
+
+/**
+ * Payloads come back out of a jsonb column, so they are read rather than cast.
+ * A shape the handler cannot use is a bug worth seeing in `last_error`, not a
+ * TypeError that takes the whole tick down.
+ */
+function readId(payload: Record<string, unknown>, key: string): string | null {
+  const value = payload[key];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/**
+ * A job's recipients, tracked one at a time.
+ *
+ * A notification goes to two or three people and the retry is per JOB, so
+ * without this a single bad address — a mistyped ADMIN_NOTIFICATION_EMAIL is
+ * the obvious one — sends the owner of a claimed listing the same enquiry once
+ * per attempt, six times over. `done` is what earlier attempts reached; `fresh`
+ * is what this one did, and is written back whether the job as a whole
+ * succeeds or fails.
+ *
+ * The keys are roles rather than addresses: they have to be the same string on
+ * every attempt, and an address read from a row that has since been edited
+ * would not be.
+ */
+interface Delivery {
+  done: Set<string>;
+  fresh: string[];
+}
+
+const OWNER = "owner";
+const ADMIN = "admin";
+const SUBMITTER = "submitter";
+const REQUESTER = "requester";
+const CLAIMANT = "claimant";
+
+/**
+ * A send that never reached the provider — no key, no address — is not a
+ * failure of this job. Retrying it would park every notification a site
+ * accumulates before its mail is configured, and lose them.
+ */
+async function deliver(d: Delivery, key: string, message: EmailMessage): Promise<void> {
+  // Already sent on an earlier attempt: the retry is for the ones that failed.
+  if (d.done.has(key)) return;
+
+  const result = await sendEmail(message);
+  if (!result.sent && result.reason === "rejected") {
+    throw new Retryable(result.error ?? "the mail provider rejected the message");
+  }
+  // Anything that is not a rejection is as done as this recipient will get:
+  // the job will not be retried on its account.
+  d.fresh.push(key);
+}
+
+async function runEnquiry(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const enquiryId = readId(payload, "enquiryId");
+  if (enquiryId === null) throw new Retryable("The job carries no enquiryId");
+
+  const data = await enquiryNotification(db, ADMIN_VIEWER, enquiryId);
+  if (!data) throw new Retryable(`No notifiable enquiry ${enquiryId}`);
+
+  const content = {
+    listingName: data.listing.name,
+    listingUrl: siteUrl(data.listing.path),
+    from: data.enquiry,
+    message: data.enquiry.message,
+  };
+
+  // An unclaimed listing's contact address is one we hold, not one anybody
+  // asked us to write to. Enquiries reach a business once it has claimed the
+  // listing and not before.
+  if (data.listing.claimed && data.listing.email !== null && data.listing.email.trim() !== "") {
+    await deliver(d, OWNER, { to: data.listing.email, ...enquiryToOwner(content) });
+  }
+
+  // Always. Until a listing is claimed we are the only one who will answer,
+  // and the admin copy is the record that the lead existed at all.
+  await deliver(d, ADMIN, { to: adminAddress(), ...enquiryToAdmin(content) });
+}
+
+async function runSubmission(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const listingId = readId(payload, "listingId");
+  const parkedId = readId(payload, "parkedId");
+
+  let data: SubmissionNotification | null = null;
+  if (listingId !== null) {
+    data = await submissionNotification(db, ADMIN_VIEWER, listingId);
+  } else if (parkedId !== null) {
+    data = await parkedSubmissionNotification(db, ADMIN_VIEWER, parkedId);
+  } else {
+    throw new Retryable("The job names neither a listing nor a parked submission");
+  }
+  if (!data) throw new Retryable("The submission this job names is not there");
+
+  const content = { ...data, reviewUrl: siteUrl("/admin") };
+
+  // The person who is waiting for it goes first. The admin copy is a record we
+  // keep for ourselves, and a wrong address on it must not hold up the receipt
+  // the submitter is owed.
+  await deliver(d, SUBMITTER, { to: content.submitter.email, ...submissionReceived(content) });
+  await deliver(d, ADMIN, { to: adminAddress(), ...submissionToAdmin(content) });
+}
+
+async function runReport(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const reportId = readId(payload, "reportId");
+  if (reportId === null) throw new Retryable("The job carries no reportId");
+
+  const data = await reportNotification(db, ADMIN_VIEWER, reportId);
+  if (!data) throw new Retryable(`No notifiable report ${reportId}`);
+
+  // Us only. A report is a correction queue, not something to forward to the
+  // business it is about — the reporter did not write to them.
+  await deliver(d, ADMIN, {
+    to: adminAddress(),
+    ...reportToAdmin({
+      listingName: data.listingName,
+      listingUrl: siteUrl(data.listingPath),
+      reason: data.reason,
+      detail: data.detail,
+      reporterEmail: data.reporterEmail,
+      reviewUrl: siteUrl("/admin"),
+    }),
+  });
+}
+
+async function runRemoval(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const removalRequestId = readId(payload, "removalRequestId");
+  if (removalRequestId === null) throw new Retryable("The job carries no removalRequestId");
+
+  const data = await removalNotification(db, ADMIN_VIEWER, removalRequestId);
+  if (!data) throw new Retryable(`No notifiable removal request ${removalRequestId}`);
+
+  const content = {
+    listingName: data.listingName,
+    listingUrl: siteUrl(data.listingPath),
+    requester: { name: data.requesterName, email: data.requesterEmail },
+    relationship: data.relationship,
+    reason: data.reason,
+    dueAt: data.dueAt,
+    reviewUrl: siteUrl("/admin"),
+  };
+
+  // The person waiting for an answer goes first, as on a submission: a wrong
+  // address on our own copy must not hold up the acknowledgement they are owed.
+  await deliver(d, REQUESTER, { to: data.requesterEmail, ...removalReceived(content) });
+  await deliver(d, ADMIN, { to: adminAddress(), ...removalToAdmin(content) });
+}
+
+/**
+ * The reply every removal page promises: "we email you when it is done."
+ * Requester only — a decision on somebody's own removal request is not the
+ * admin's news to receive a second time.
+ */
+async function runRemovalDecision(
+  db: Db,
+  d: Delivery,
+  payload: Record<string, unknown>,
+  build: typeof removalActioned,
+): Promise<void> {
+  const removalRequestId = readId(payload, "removalRequestId");
+  if (removalRequestId === null) throw new Retryable("The job carries no removalRequestId");
+
+  const data = await removalDecisionNotification(db, ADMIN_VIEWER, removalRequestId);
+  if (!data) throw new Retryable(`No notifiable removal request ${removalRequestId}`);
+
+  await deliver(d, REQUESTER, {
+    to: data.requesterEmail,
+    ...build({
+      listingName: data.listingName,
+      requesterName: data.requesterName,
+      rejectionReason: data.rejectionReason,
+    }),
+  });
+}
+
+/**
+ * The approve/reject email. One recipient: the person who submitted it.
+ *
+ * The decision is read from the PAYLOAD rather than from the row's status —
+ * see DecisionJobPayload. The row is still re-read for everything else, so the
+ * name, town and reason are whatever they are when the email goes out.
+ */
+async function runDecision(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const listingId = readId(payload, "listingId");
+  if (listingId === null) throw new Retryable("The job carries no listingId");
+
+  const decision = readId(payload, "decision");
+  if (decision !== "approved" && decision !== "rejected") {
+    throw new Retryable(`The job carries no decision to send (${String(decision)})`);
+  }
+
+  const data = await decisionNotification(db, ADMIN_VIEWER, listingId);
+  if (!data) throw new Retryable(`No notifiable submitter on listing ${listingId}`);
+
+  const content = {
+    listingName: data.listingName,
+    cityName: data.cityName,
+    listingUrl: siteUrl(data.listingPath),
+    submitter: data.submitter,
+  };
+
+  const message =
+    decision === "approved"
+      ? submissionApproved(content)
+      : submissionRejected({ ...content, reason: data.rejectedReason });
+
+  await deliver(d, SUBMITTER, { to: data.submitter.email, ...message });
+}
+
+/**
+ * The three claim notifications.
+ *
+ * All of them re-read the claim rather than trusting the payload for anything
+ * but the token itself, so a link that has since been replaced by a resend is
+ * never the one that goes out, and a decision that has since been changed is
+ * never announced twice differently.
+ */
+async function runClaim(db: Db, d: Delivery, kind: string, payload: Record<string, unknown>): Promise<void> {
+  const claimId = readId(payload, "claimId");
+  if (claimId === null) throw new Retryable("The job carries no claimId");
+
+  const claim = await claimNotification(db, ADMIN_VIEWER, claimId);
+  if (!claim) throw new Retryable(`No such claim ${claimId}`);
+
+  const listing = { listingName: claim.listingName, listingUrl: siteUrl(claim.listingPath) };
+
+  if (kind === NOTIFY_CLAIM_LINK) {
+    // Nothing to send, and nothing to retry. A claim that has been decided
+    // since the job was enqueued — approved from the other rung, rejected,
+    // withdrawn — or whose token has aged out while the worker was behind, has
+    // no live credential. Retrying would bury the log and then fail the job;
+    // mailing a spent link would send somebody to a dead page. Complete.
+    if (claim.status !== "pending" || isTokenExpired(claim.magicTokenExpiresAt)) return;
+    if (claim.magicTokenHash === null || claim.businessEmail === null) {
+      throw new Retryable("The claim has no live magic link to send");
+    }
+    // The token comes from the payload: the row holds only its digest. A job
+    // without one cannot send anything that works, and says so in last_error
+    // — without the token, which is never written anywhere but the email.
+    const token = readId(payload, "token");
+    if (token === null) throw new Retryable("The job carries no token");
+    // A resend minted a newer link after this job was queued: that job sends
+    // it, and this one has nothing live to send. Complete, do not retry.
+    if (hashToken(token) !== claim.magicTokenHash) return;
+    // Only ever to the address on the business's own domain. Copying an admin
+    // would hand a credential to somebody the claimant never authorised.
+    return deliver(d, CLAIMANT, {
+      to: claim.businessEmail,
+      ...claimMagicLink({
+        ...listing,
+        verifyUrl: siteUrl(`/claim/verify/${encodeURIComponent(token)}`),
+        expiresInMinutes: MAGIC_TOKEN_TTL_MINUTES,
+      }),
+    });
+  }
+
+  if (kind === NOTIFY_CLAIM_SUBMITTED) {
+    return deliver(d, ADMIN, {
+      to: adminAddress(),
+      ...claimToAdmin({
+        ...listing,
+        claimantName: claim.claimantName,
+        claimantEmail: claim.accountEmail ?? claim.businessEmail,
+        reviewUrl: siteUrl(`/admin/claims/${claim.claimId}`),
+      }),
+    });
+  }
+
+  // NOTIFY_CLAIM_DECIDED. The account that asked is told, not the business
+  // address: a rejection going to a shared inbox tells the business somebody
+  // tried to take their listing, which is not ours to broadcast.
+  const to = claim.accountEmail ?? claim.businessEmail;
+  if (to === null) throw new Retryable("The claim has nobody to tell");
+  if (claim.status === "approved") {
+    return deliver(d, CLAIMANT, {
+      to,
+      ...claimApproved({ ...listing, dashboardUrl: siteUrl("/account") }),
+    });
+  }
+  if (claim.status === "rejected") {
+    return deliver(d, CLAIMANT, {
+      to,
+      ...claimRejected({ ...listing, reason: claim.rejectionReason ?? "" }),
+    });
+  }
+  // Enqueued inside the deciding transaction, so a claim that is still pending
+  // means the decision rolled back. Retrying is right: the next attempt reads
+  // whatever the database settled on.
+  throw new Retryable(`Claim ${claimId} has no decision to announce`);
+}
+
+async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
+  switch (job.kind) {
+    case NOTIFY_ENQUIRY:
+      return runEnquiry(db, d, job.payload);
+    case NOTIFY_SUBMISSION:
+      return runSubmission(db, d, job.payload);
+    case NOTIFY_REPORT:
+      return runReport(db, d, job.payload);
+    case NOTIFY_REMOVAL:
+      return runRemoval(db, d, job.payload);
+    case NOTIFY_REMOVAL_ACTIONED:
+      return runRemovalDecision(db, d, job.payload, removalActioned);
+    case NOTIFY_REMOVAL_REJECTED:
+      return runRemovalDecision(db, d, job.payload, removalRejected);
+    case NOTIFY_DECISION:
+      return runDecision(db, d, job.payload);
+    // Appended by the reviews module; the handler is at the foot of the file.
+    case NOTIFY_REVIEW_SUBMITTED:
+      return runReviewSubmitted(db, d, job.payload);
+    case NOTIFY_REVIEW_VERIFIED:
+      return runReviewVerified(db, d, job.payload);
+    case NOTIFY_CLAIM_LINK:
+    case NOTIFY_CLAIM_SUBMITTED:
+    case NOTIFY_CLAIM_DECIDED:
+      return runClaim(db, d, job.kind, job.payload);
+    case NOTIFY_AUTH_RESET:
+      return runAuthEmail(db, d, job.payload, passwordReset, passwordResetLink);
+    case NOTIFY_AUTH_VERIFY:
+      return runAuthEmail(db, d, job.payload, verifyEmailAddress, verifyEmailLink);
+    default:
+      // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
+      // kind is added to that list without a case here.
+      throw new Retryable(`No handler for job kind ${job.kind}`);
+  }
+}
+
+/** Returns how many jobs completed, for the worker's log line. */
+export async function processNotifications(db: Db): Promise<number> {
+  let done = 0;
+
+  for (let n = 0; n < BATCH; n++) {
+    const job = await claimNextJob(db, ADMIN_VIEWER, NOTIFY_KINDS);
+    if (!job) break;
+
+    const d: Delivery = { done: new Set(job.delivered), fresh: [] };
+
+    try {
+      // A savepoint per job, not one transaction per tick.
+      //
+      // The advisory lock opened a single transaction and every completeJob in
+      // the batch lands in it. A Postgres-level error inside one handler — a
+      // malformed id, a dropped connection — aborts that transaction, so every
+      // job already completed is rolled back AFTER its email has gone out and
+      // the next tick sends all of them again. Rolling back to a savepoint
+      // undoes only the job that failed and leaves the transaction usable, so
+      // the failure can still be recorded and the batch can carry on.
+      await db.transaction(async (sp) => {
+        await run(sp as unknown as Db, d, job);
+      });
+      await completeJob(db, ADMIN_VIEWER, job.id);
+      done++;
+    } catch (e) {
+      // Caught rather than thrown on: the failure has to be RECORDED, and a
+      // throw here would roll back the transaction the record lives in.
+      const message = e instanceof Error ? e.message : String(e);
+      // Before the failure, so the retry it schedules knows what already went
+      // out. Otherwise the surviving recipients get a copy per attempt.
+      if (d.fresh.length > 0) {
+        await markDelivered(db, ADMIN_VIEWER, job.id, [...d.done, ...d.fresh]);
+      }
+      const outcome = await failJob(db, ADMIN_VIEWER, job.id, message);
+      // Truncated for the log: a mailer's error can quote the request it
+      // rejected, recipient address and all, and a log line is shipped to
+      // places a queue row is not. The full text is in `last_error`.
+      console.error(
+        `[worker] ${job.kind} ${job.id} ${outcome.status === "failed" ? "PARKED" : "failed"}` +
+          ` after ${outcome.attempts}: ${message.slice(0, LOGGED_ERROR_CHARS)}`,
+      );
+    }
+  }
+
+  return done;
+}
+
+/* ------------------------------------------------------ reviews (Task 22) */
+
+/**
+ * A fourth recipient role. It has to be a stable string across attempts for
+ * the same reason the other three do: it is what stops a retry sending the
+ * verification link twice.
+ */
+const REVIEWER = "reviewer";
+
+/** Reviews live under the listing they are about. */
+function reviewsUrl(listingPath: string): string {
+  return siteUrl(`${listingPath}/reviews`);
+}
+
+/**
+ * The verification link.
+ *
+ * A review with no live token has already been verified — someone clicked the
+ * link before the queue drained, or a retry is running after the fact — and
+ * there is nothing left to send. That is a completed job, not a failure: a
+ * retry would only re-send a link that no longer works. The same goes for a
+ * link a resend has since replaced: the newer job sends the newer link.
+ *
+ * The token itself comes from the payload; the invite row holds its digest.
+ */
+async function runReviewSubmitted(
+  db: Db, d: Delivery, payload: Record<string, unknown>,
+): Promise<void> {
+  const reviewId = readId(payload, "reviewId");
+  if (reviewId === null) throw new Retryable("The job carries no reviewId");
+
+  const data = await reviewNotification(db, ADMIN_VIEWER, reviewId);
+  if (!data) throw new Retryable(`No review ${reviewId}`);
+  if (data.tokenHash === null) return;
+
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+  if (hashToken(token) !== data.tokenHash) return;
+
+  await deliver(d, REVIEWER, {
+    to: data.authorEmail,
+    ...reviewVerification({
+      listingName: data.listing.name,
+      listingUrl: siteUrl(data.listing.path),
+      reviewsUrl: reviewsUrl(data.listing.path),
+      verifyUrl: siteUrl(`/review/verify/${encodeURIComponent(token)}`),
+      author: data.authorDisplayName ?? "",
+      rating: data.rating,
+      title: data.title,
+      body: data.body,
+      flaggedReason: data.flaggedReason,
+    }),
+  });
+}
+
+/**
+ * What the click decided.
+ *
+ * The owner hears about it only when the review is actually on the page and
+ * only when the listing is claimed — the same rule the enquiry handler uses,
+ * and for the same reason: an unclaimed listing's contact address is one we
+ * hold, not one anybody asked us to write to.
+ */
+async function runReviewVerified(
+  db: Db, d: Delivery, payload: Record<string, unknown>,
+): Promise<void> {
+  const reviewId = readId(payload, "reviewId");
+  if (reviewId === null) throw new Retryable("The job carries no reviewId");
+
+  const data = await reviewNotification(db, ADMIN_VIEWER, reviewId);
+  if (!data) throw new Retryable(`No review ${reviewId}`);
+
+  const content = {
+    listingName: data.listing.name,
+    listingUrl: siteUrl(data.listing.path),
+    reviewsUrl: reviewsUrl(data.listing.path),
+    // The link is spent by the time this job runs; nothing in these two
+    // emails uses it, and it must not be re-published to anyone.
+    verifyUrl: siteUrl(data.listing.path),
+    author: data.authorDisplayName ?? "",
+    rating: data.rating,
+    title: data.title,
+    body: data.body,
+    flaggedReason: data.flaggedReason,
+  };
+
+  if (
+    data.status === "published" &&
+    data.listing.claimed &&
+    data.listing.email !== null &&
+    data.listing.email.trim() !== ""
+  ) {
+    await deliver(d, OWNER, { to: data.listing.email, ...reviewToOwner(content) });
+  }
+
+  await deliver(d, ADMIN, { to: adminAddress(), ...reviewToAdmin(content) });
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Auth emails (password reset, address verification).
+ *
+ * A self-contained tail: the handlers live here, their imports in the
+ * header with everything else's.
+ * ---------------------------------------------------------------------------
+ */
+import { passwordResetLink, verifyEmailLink } from "@/lib/auth/links";
+
+const ACCOUNT = "account";
+
+/**
+ * How long the links in these two emails last, stated in the body.
+ *
+ * It has to agree with `resetPasswordTokenExpiresIn` and
+ * `emailVerification.expiresIn` in lib/auth/server.ts, which is why both read
+ * AUTH_TOKEN_TTL_SECONDS rather than each naming an hour.
+ */
+const TOKEN_TTL_MINUTES = Math.round(AUTH_TOKEN_TTL_SECONDS / 60);
+
+/**
+ * A password reset or an address confirmation. One recipient — the account
+ * itself — and deliberately no admin copy: a working reset link in our own
+ * inbox is a way into somebody else's account.
+ *
+ * The link is built HERE, from the payload's token and our own origin. The
+ * payload reaches this function through a jsonb column, and anything that can
+ * write a row in `job_queue` would otherwise be writing the href of a link we
+ * send, signed with our domain, to an address we look up for it. That is a
+ * phishing kit, not a notification — so a `url` in the payload is not read.
+ *
+ * Nothing thrown from here names the token: `last_error` is a column an admin
+ * reads, and a log line is a place a reset link must never appear.
+ */
+async function runAuthEmail(
+  db: Db,
+  d: Delivery,
+  payload: Record<string, unknown>,
+  build: typeof passwordReset,
+  link: (token: string) => string,
+): Promise<void> {
+  const userId = readId(payload, "userId");
+  if (userId === null) throw new Retryable("The job carries no userId");
+
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+
+  let url: string;
+  try {
+    url = link(token);
+  } catch (e) {
+    // Only ever "no origin configured"; the message carries no token.
+    throw new Retryable(e instanceof Error ? e.message : "The link could not be built");
+  }
+
+  const recipient = await authEmailRecipient(db, ADMIN_VIEWER, userId);
+  // Not retryable: the account has gone, so there is nobody to tell and
+  // nothing a later attempt could do about it.
+  if (!recipient) return;
+
+  await deliver(d, ACCOUNT, {
+    to: recipient.email,
+    ...build({ name: recipient.name, url, expiresInMinutes: TOKEN_TTL_MINUTES }),
+  });
+}

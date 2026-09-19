@@ -1,0 +1,80 @@
+{
+  "name": "Find a Dog Groomer",
+  "shortName": "FDG",
+  "domain": "findadoggroomer.com",
+  "legalEntity": "Find a Dog Groomer LLC",
+  "supportEmail": "hello@findadoggroomer.com",
+
+  "entitySingular": "dog groomer",
+  "entityPlural": "dog groomers",
+  "entitySingularCapitalised": "Dog Groomer",
+  "entityPluralCapitalised": "Dog Groomers",
+  "entityVerb": "list",
+  "entityOwnerNoun": "groomer",
+  "tagline": "Find trusted dog groomers near you",
+
+  "country": "US",
+  "locale": "en-US",
+  "currency": "USD",
+  "timezone": "America/Chicago",
+  "regionLabel": "state",
+  "siteMode": "niche-national",
+
+  "schemaListingType": "HealthAndBeautyBusiness",
+  "schemaOrganizationType": "Organization",
+  "schemaPriceRangeEnabled": true,
+
+  "themePrimary": "#2F5D50",
+  "themeAccent": "#E07A2F",
+  "fontHeading": "DM Sans",
+  "fontBody": "Source Sans 3",
+  "themeRadius": "0.5rem",
+
+  "maxDescriptionChars": 2000,
+  "customFields": [
+    { "key": "mobile_service", "label": "Comes to you", "type": "boolean", "searchable": true, "showInCard": true },
+    { "key": "cats_welcome", "label": "Grooms cats too", "type": "boolean", "searchable": true },
+    { "key": "max_dog_size", "label": "Largest dog accepted", "type": "select", "options": ["small", "medium", "large", "giant"], "searchable": true, "showInCard": true },
+    { "key": "price_from", "label": "Full grooming from", "type": "currency", "tier": "essential" }
+  ],
+  "reviewCriteria": [
+    { "key": "value", "label": "Value for money" },
+    { "key": "care", "label": "Care and handling" },
+    { "key": "finish", "label": "Finish" }
+  ],
+
+  "essentialPriceMonthly": 12,
+  "essentialPriceAnnual": 120,
+  "premiumPriceMonthly": 29,
+  "premiumPriceAnnual": 290,
+  "trialDays": 14,
+  "freeMaxImages": 3,
+  "essentialMaxImages": 12,
+  "premiumMaxImages": null,
+
+  "feature_reviews": true,
+  "feature_shortlist": true,
+  "feature_quoteBroadcast": true,
+  "feature_contentHub": true,
+  "feature_footerLinkMatrix": true,
+  "feature_claimOutreach": true,
+  "feature_costGuides": false,
+  "feature_jobBoard": false,
+  "feature_awards": false,
+  "feature_affiliates": false,
+  "feature_utilityTool": false,
+  "feature_storefrontExtras": false,
+  "feature_events": false,
+  "feature_bookings": false,
+  "feature_multiLocale": false,
+
+  "seoMinListingsToIndex": 3,
+  "seoRequireIntroCopyToIndex": true,
+  "seoFooterCitiesPerCategory": 12,
+
+  "niche": "dog-groomers",
+  "seedSource": "csv",
+  "seedCitiesCsv": "docs/examples/seeds/cities.csv",
+  "seedCategoriesCsv": "docs/examples/seeds/categories.csv",
+  "seedListingsCsv": "docs/examples/seeds/listings.csv"
+}

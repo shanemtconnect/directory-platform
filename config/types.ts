@@ -2,6 +2,21 @@ export type TierName = "free" | "essential" | "premium";
 
 export type CustomFieldType = "number" | "boolean" | "text" | "select" | "currency";
 
+/**
+ * The families the theme layer ships webfonts for.
+ *
+ * ONE list, here. A clone's font is chosen by the wizard (lib/clone/questions.ts)
+ * and read by lib/theme.ts, and a second copy of the union in either place is a
+ * font that can be written into a config nothing knows how to load.
+ */
+export type FontFamily =
+  | "Fraunces"
+  | "Inter"
+  | "Playfair Display"
+  | "Source Sans 3"
+  | "DM Sans"
+  | "Lora";
+
 export interface CustomField {
   readonly key: string;
   readonly label: string;
@@ -126,8 +141,8 @@ export interface SiteConfig {
   readonly theme: {
     readonly primary: string;
     readonly accent: string;
-    readonly fontHeading: string;
-    readonly fontBody: string;
+    readonly fontHeading: FontFamily;
+    readonly fontBody: FontFamily;
     readonly radius: string;
   };
 
@@ -153,5 +168,36 @@ export interface SiteConfig {
     readonly minListingsToIndex: number;
     readonly requireIntroCopyToIndex: boolean;
     readonly footerCitiesPerCategory: number;
+  };
+
+  readonly stats: {
+    /**
+     * How many days of `listing_stats_daily` the worker keeps; older rows are
+     * deleted nightly. At least 30, and at least the longest tier
+     * `statsWindowDays` — anything shorter would purge days an owner is still
+     * shown. `config/validate.ts` refuses the build otherwise.
+     */
+    readonly retentionDays: number;
+  };
+
+  /**
+   * The facts /privacy and /terms state about themselves.
+   *
+   * Those two pages are templates with the boilerplate written out and every
+   * clone-specific claim marked "[Confirm with counsel]". These are the fields
+   * that are safe to fill in from config — who the controller is, and when each
+   * document was last revised. A stale "last updated" is worse than none, so it
+   * is a value here rather than a build date.
+   */
+  readonly legal: {
+    /** ISO date, e.g. "2026-09-08". Bump it whenever the policy text changes. */
+    readonly privacyLastUpdated: string;
+    readonly termsLastUpdated: string;
+    /**
+     * The entity that decides how personal data is used. Usually the same as
+     * `legalEntity`, but not always — a site operated by one company on behalf
+     * of another has two different answers, and only one of them is right.
+     */
+    readonly dataController: string;
   };
 }

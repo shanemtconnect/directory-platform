@@ -1,11 +1,16 @@
 "use server";
 
-import { and, eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db/client";
-import { enquiries, listings } from "@/lib/db/schema";
+import { createEnquiry } from "@/lib/db/queries/enquiries";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { notifyEnquiry } from "@/lib/email/notify";
+import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
+import { ENQUIRY_RATE_LIMIT } from "@/lib/spam/write-limit";
+import type { TestDb } from "@/lib/db/types";
+import { validateEnquiry } from "./validation";
 
 export interface EnquiryState {
   status: "idle" | "sent" | "error";
@@ -13,48 +18,33 @@ export interface EnquiryState {
   fieldErrors?: Record<string, string>;
 }
 
-const MAX = { name: 120, email: 254, phone: 40, message: 2000 } as const;
-
-function validate(form: FormData): { values?: {
-  name: string; email: string; phone: string | null; message: string;
-}; errors?: Record<string, string> } {
-  const errors: Record<string, string> = {};
-  const name = String(form.get("name") ?? "").trim();
-  const email = String(form.get("email") ?? "").trim();
-  const phone = String(form.get("phone") ?? "").trim();
-  const message = String(form.get("message") ?? "").trim();
-
-  if (name.length < 2) errors.name = "Please give your name.";
-  if (name.length > MAX.name) errors.name = "That name is too long.";
-  // Deliberately permissive: over-strict email regexes reject valid addresses,
-  // and the address is verified by whether the reply arrives, not by us.
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errors.email = "Please give a valid email address.";
-  if (email.length > MAX.email) errors.email = "That email address is too long.";
-  if (phone.length > MAX.phone) errors.phone = "That phone number is too long.";
-  if (message.length < 10) errors.message = "Please write a little more.";
-  if (message.length > MAX.message) errors.message = "Please keep it under 2000 characters.";
-
-  if (Object.keys(errors).length > 0) return { errors };
-  return { values: { name, email, phone: phone || null, message } };
-}
-
 export async function submitEnquiry(
   _prev: EnquiryState,
   form: FormData,
 ): Promise<EnquiryState> {
-  const listingId = String(form.get("listingId") ?? "");
-  if (!listingId) return { status: "error", message: "Something went wrong. Please try again." };
-
   // Silent success for the honeypot: telling a bot it was caught just teaches
   // the operator to stop filling that field.
   if (isHoneypotTripped(form.get("company_website"))) {
     return { status: "sent" };
   }
 
-  const h = await headers();
-  const ip = (h.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || "unknown";
+  // Validation comes first, and that ordering is load-bearing. A Turnstile
+  // token is single-use: spending it on a submission that then fails on a
+  // typo leaves the visitor unable to retry without solving a new challenge.
+  // Nor should a typo cost one of the five hourly attempts.
+  const { values, errors } = validateEnquiry(form);
+  if (errors) {
+    return {
+      status: "error",
+      fieldErrors: errors,
+      // listingId is a hidden field, so its error has nowhere to render.
+      message: errors.listingId ? "Something went wrong. Please try again." : undefined,
+    };
+  }
 
-  const limit = await rateLimit(`enquiry:${ip}`, { limit: 5, windowSeconds: 3600 });
+  const ip = clientIp(await headers());
+  const subject = rateLimitSubject(ip);
+  const limit = await rateLimit(subject && `enquiry:${subject}`, ENQUIRY_RATE_LIMIT);
   if (!limit.allowed) {
     return {
       status: "error",
@@ -64,39 +54,27 @@ export async function submitEnquiry(
 
   const turnstile = await verifyTurnstile(
     (form.get("cf-turnstile-response") as string | null) ?? null,
-    ip,
+    ip ?? undefined,
   );
   if (!turnstile.ok) {
     return { status: "error", message: "We couldn't verify that you're human. Please try again." };
   }
 
-  const { values, errors } = validate(form);
-  if (errors) return { status: "error", fieldErrors: errors };
-
-  // Only published listings can receive an enquiry — the same gate the pillar
-  // pages use. A pending or removed listing must not collect leads.
-  const [target] = await db
-    .select({ id: listings.id })
-    .from(listings)
-    .where(and(eq(listings.id, listingId), eq(listings.status, "published")))
-    .limit(1);
-  if (!target) return { status: "error", message: "That listing is no longer available." };
-
-  await db.transaction(async (tx) => {
-    await tx.insert(enquiries).values({
-      listingId,
-      name: values!.name,
-      email: values!.email,
-      phone: values!.phone,
-      message: values!.message,
-      ip,
-    });
-    await tx
-      .update(listings)
-      .set({ enquiryCount: sql`${listings.enquiryCount} + 1` })
-      .where(eq(listings.id, listingId));
+  // The published-only gate and the counter bump both live in the query, and
+  // the transaction is here so they land together.
+  const result = await db.transaction(async (tx) => {
+    // Same cast the test harness uses: a transaction handle and the root
+    // client expose the same query surface to lib/db/queries.
+    const handle = tx as unknown as TestDb;
+    const created = await createEnquiry(handle, PUBLIC_VIEWER, { ...values, ip });
+    await notifyEnquiry(handle, PUBLIC_VIEWER, created);
+    return created;
   });
+  if (result.outcome === "unknown-listing") {
+    return { status: "error", message: "That listing is no longer available." };
+  }
 
-  // Phase 3 sends the owner notification email; the enquiry is durable either way.
+  // The notification is a queued job committed with the enquiry above, so a
+  // dead mail provider cannot cost us the lead — or slow this response down.
   return { status: "sent" };
 }

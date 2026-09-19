@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { postDirectories } from "@/lib/blog/demo";
 import { siteUrl } from "@/lib/schema/builders";
 import { prune, type JsonLd } from "@/lib/schema/types";
 
@@ -15,8 +16,6 @@ import { prune, type JsonLd } from "@/lib/schema/types";
  *  - Link hrefs are allow-listed to http(s), site-relative and fragment URLs,
  *    so `javascript:` and `data:` never reach an anchor.
  */
-
-const POSTS_DIR = path.join(process.cwd(), "content", "blog");
 
 export interface PostMeta {
   slug: string;
@@ -137,9 +136,17 @@ function asList(value: FrontmatterValue | undefined): string[] {
 
 const SAFE_HREF = /^(https?:\/\/|\/|#|mailto:)/i;
 
+/**
+ * `//evil.example/x` and `/\evil.example/x` both parse as protocol-relative
+ * off-site URLs while looking site-relative to the `^\/` branch above, so they
+ * are rejected before the allow-list is consulted.
+ */
+const PROTOCOL_RELATIVE = /^\/[/\\]/;
+
 function href(raw: string): string | null {
   const url = raw.trim();
   if (url === "") return null;
+  if (PROTOCOL_RELATIVE.test(url)) return null;
   return SAFE_HREF.test(url) ? url : null;
 }
 
@@ -171,6 +178,25 @@ const NUMBER_RE = /^\s*\d+\.\s+(.*)$/;
 const FENCE_RE = /^\s*```\s*([A-Za-z0-9+#-]*)\s*$/;
 
 /**
+ * The smallest heading level the body uses, ignoring anything inside a fence.
+ * A body with no headings answers 1, which shifts nothing it would render.
+ */
+function topHeadingLevel(lines: string[]): number {
+  let top = 6;
+  let fenced = false;
+  for (const line of lines) {
+    if (FENCE_RE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const heading = HEADING_RE.exec(line);
+    if (heading && heading[1] !== undefined) top = Math.min(top, heading[1].length);
+  }
+  return top === 6 && !lines.some((l) => HEADING_RE.test(l)) ? 1 : top;
+}
+
+/**
  * Markdown → HTML. Supports headings, paragraphs, links, bold, italic,
  * ordered and unordered lists, inline code and fenced code blocks.
  *
@@ -181,6 +207,7 @@ export function renderMarkdown(source: string): string {
   // \u0000 is the code-span placeholder marker; strip any in the source first.
   const lines = escapeHtml(source.replace(/\r\n/g, "\n").replace(/\u0000/g, "")).split("\n");
   const out: string[] = [];
+  const shift = 2 - topHeadingLevel(lines);
   let i = 0;
 
   // The fence marker survives escaping, but a language like `c++` does not
@@ -210,7 +237,11 @@ export function renderMarkdown(source: string): string {
 
     const heading = HEADING_RE.exec(line);
     if (heading && heading[1] !== undefined) {
-      const level = heading[1].length;
+      // Shifted so the post's TOP level lands on h2: the page renders the
+      // title as its h1, so a body `#` must not produce a second one, and a
+      // post written from `##` down must not open with an h3 under that h1
+      // (a skipped level fails the heading-order audit on every post).
+      const level = Math.min(heading[1].length + shift, 6);
       out.push(`<h${level}>${inline(heading[2] ?? "")}</h${level}>`);
       i += 1;
       continue;
@@ -279,20 +310,52 @@ export function toPost(slug: string, source: string): Post | null {
   };
 }
 
-function readDir(): string[] {
-  try {
-    return fs.readdirSync(POSTS_DIR).filter((f) => f.endsWith(".mdx"));
-  } catch {
-    return [];
+interface PostFile {
+  slug: string;
+  path: string;
+}
+
+/**
+ * Every `.mdx` file across the directories `postDirectories()` names, in
+ * precedence order.
+ *
+ * The demo directory sits INSIDE the posts directory, so this read is
+ * deliberately non-recursive: `readdirSync` reports `demo` as one more entry,
+ * `isFile()` rejects it, and the demo posts are therefore only ever reached
+ * through the second directory `postDirectories()` returns — which it only
+ * returns when the demo flag is on.
+ *
+ * The first directory to supply a slug keeps it, so a clone's own post always
+ * beats a demo fixture of the same name.
+ */
+function readPostFiles(): PostFile[] {
+  const files: PostFile[] = [];
+  const seen = new Set<string>();
+
+  for (const dir of postDirectories()) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".mdx")) continue;
+      const slug = entry.name.slice(0, -".mdx".length);
+      if (seen.has(slug)) continue;
+      seen.add(slug);
+      files.push({ slug, path: path.join(dir, entry.name) });
+    }
   }
+
+  return files;
 }
 
 /** Newest first. Drafts are never returned. */
 export function getAllPosts(): Post[] {
   const posts: Post[] = [];
-  for (const file of readDir()) {
-    const source = fs.readFileSync(path.join(POSTS_DIR, file), "utf8");
-    const post = toPost(file.replace(/\.mdx$/, ""), source);
+  for (const file of readPostFiles()) {
+    const post = toPost(file.slug, fs.readFileSync(file.path, "utf8"));
     if (post && !post.draft) posts.push(post);
   }
   return posts.sort((a, b) => (a.date === b.date ? a.slug.localeCompare(b.slug) : b.date.localeCompare(a.date)));
@@ -305,16 +368,21 @@ export function getPostSlugs(): string[] {
 
 export function getPost(slug: string): Post | null {
   if (!/^[a-z0-9-]+$/.test(slug)) return null;
-  const file = path.join(POSTS_DIR, `${slug}.mdx`);
-  if (!file.startsWith(POSTS_DIR + path.sep)) return null;
-  let source: string;
-  try {
-    source = fs.readFileSync(file, "utf8");
-  } catch {
-    return null;
+
+  for (const dir of postDirectories()) {
+    const file = path.join(dir, `${slug}.mdx`);
+    if (!file.startsWith(dir + path.sep)) continue;
+    let source: string;
+    try {
+      source = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const post = toPost(slug, source);
+    return post && !post.draft ? post : null;
   }
-  const post = toPost(slug, source);
-  return post && !post.draft ? post : null;
+
+  return null;
 }
 
 export function formatDate(iso: string, locale: string): string {
@@ -331,7 +399,12 @@ export function formatDate(iso: string, locale: string): string {
 /* ------------------------------------------------------------------- schema */
 
 /**
- * `Article` for a single post.
+ * `BlogPosting` for a single post.
+ *
+ * The precise type, not its `Article` supertype: these are posts on a blog, at
+ * /blog/[slug], listed on /blog. Schema.org's rule is to use the most specific
+ * type that is true, and consumers that only understand Article still read a
+ * BlogPosting as one — so the specific type costs nothing and says more.
  *
  * Built optimistically and pruned, following the convention in
  * lib/schema/builders.ts: a post with no author emits no `author` key rather
@@ -342,7 +415,7 @@ export function articleSchema(post: Post): JsonLd {
   const url = siteUrl(`/blog/${post.slug}`);
   return prune({
     "@context": "https://schema.org",
-    "@type": "Article",
+    "@type": "BlogPosting",
     "@id": `${url}#article`,
     headline: post.title,
     description: post.description,

@@ -4,8 +4,10 @@ import {
   anchorVariants,
   badgeImageUrl,
   badgeKit,
+  badgeClickUrl,
   badgeSnippetHtml,
   badgeTargetUrl,
+  badgeTrackedSnippetHtml,
   escapeHtml,
   UTM,
   type SnippetInput,
@@ -88,6 +90,56 @@ describe("badgeSnippetHtml", () => {
   });
 });
 
+describe("badgeClickUrl", () => {
+  it("is /api/badge-click?id={id} on the site origin", () => {
+    const url = badgeClickUrl(CLEAN.listingId);
+    expect(url).toContain(`/api/badge-click?id=${CLEAN.listingId}`);
+    expect(url.startsWith("http")).toBe(true);
+  });
+
+  it("url-encodes the id so a crafted id cannot add query parameters", () => {
+    expect(badgeClickUrl("abc?x=1&y=2")).toContain("abc%3Fx%3D1%26y%3D2");
+  });
+});
+
+describe("badgeTrackedSnippetHtml", () => {
+  it("points the anchor at the click endpoint, not straight at the listing", () => {
+    const html = badgeTrackedSnippetHtml(CLEAN);
+    expect(html).toContain(`/api/badge-click?id=${CLEAN.listingId}`);
+    // The direct target is what the redirect lands on; it must not be the href.
+    expect(html).not.toContain(`href="${badgeTargetUrl(CLEAN.listingPath)}"`);
+  });
+
+  it("carries rel=nofollow — a counted click is a redirect, not a backlink", () => {
+    const html = badgeTrackedSnippetHtml(CLEAN);
+    expect(html).toMatch(/rel="[^"]*nofollow[^"]*"/);
+  });
+
+  it("still embeds the same image at the same reserved dimensions", () => {
+    const html = badgeTrackedSnippetHtml({ ...CLEAN, style: "compact" });
+    const { width, height } = badgeDimensions("compact");
+    expect(html).toContain(badgeImageUrl(CLEAN.listingId, "compact").replace(/&/g, "&amp;"));
+    expect(html).toContain(`width="${width}" height="${height}"`);
+  });
+
+  it("escapes a hostile listing name in alt and title", () => {
+    const html = badgeTrackedSnippetHtml(HOSTILE);
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&quot;Grill&quot;");
+  });
+});
+
+describe("badgeSnippetHtml (default variant)", () => {
+  it("links straight to the listing, so the link is a real backlink", () => {
+    const html = badgeSnippetHtml(CLEAN);
+    expect(html).toContain(badgeTargetUrl(CLEAN.listingPath).replace(/&/g, "&amp;"));
+    expect(html).not.toContain("/api/badge-click");
+    // No nofollow: passing authority is the entire reason the badge exists.
+    expect(html).not.toContain("nofollow");
+  });
+});
+
 describe("anchorVariants", () => {
   it("offers three distinct branded variants", () => {
     const v = anchorVariants(CLEAN);
@@ -138,6 +190,9 @@ describe("badgeKit", () => {
       expect(kit.embed).toContain(`width="${kit.dimensions.width}"`);
       expect(kit.anchors).toHaveLength(3);
       expect(kit.targetUrl).toContain(UTM);
+      expect(kit.trackedEmbed).toContain("/api/badge-click");
+      expect(kit.trackedEmbed).toContain("nofollow");
+      expect(kit.clickUrl).toContain(`id=${CLEAN.listingId}`);
     }
   });
 });

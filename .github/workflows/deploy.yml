@@ -1,0 +1,109 @@
+name: Deploy
+
+# Two ways in:
+#
+#   1. `workflow_run` — automatic, after `CI` (ci.yml) finishes on `main`.
+#      GitHub Actions has no cross-workflow `needs:`, so this is the only way
+#      to gate a deploy on a *different* workflow file's result. The `if:`
+#      below checks `conclusion == 'success'` itself; a failed or cancelled CI
+#      run still fires this event, it just does not pass the gate.
+#   2. `workflow_dispatch` — manual. This re-runs the deploy for whatever
+#      Coolify's configured branch (`main`) currently points at — e.g. after
+#      fixing a secret, a failed smoke test, or a Coolify-side hiccup — and
+#      deliberately does NOT wait for CI: the person running it is the gate.
+#      It CANNOT deploy any other branch: Coolify redeploys the branch set on
+#      each application, and this workflow never changes that. (Branch deploys
+#      would be a `PATCH /api/v1/applications/<uuid>` of `git_branch` before
+#      the trigger — a separate task, not this one.)
+#
+# Neither builds anything: Coolify is git-connected and builds the image
+# itself from the pushed commit when `scripts/deploy-coolify.sh` tells it to
+# deploy. This workflow's job is the trigger, the wait, and the proof it came
+# up — not the build.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Ref this workflow checks out for its OWN scripts (deploy-coolify.sh, smoke.sh). It does NOT choose what Coolify deploys — Coolify always redeploys the branch configured on each application."
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one that is running: Coolify queues
+# per application, so a second run's smoke test could otherwise land while the
+# first run's container is still restarting (a false failure), or pass against
+# the first run's build (a false success for the second commit). Runs queue
+# behind each other instead.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    # Two sequential no-cache builds (see POLL_TIMEOUT_SECONDS below) plus the
+    # smoke test's warm-up, with headroom — and a ceiling so a hung poll can
+    # never sit for GitHub's six-hour default.
+    timeout-minutes: 60
+    # Auto-created on the first run with NO protection rules. The point of
+    # naming it is that repo → Settings → Environments → production is where
+    # a required reviewer or a deployment-branch rule (`main` only) goes if
+    # this clone wants a human gate on production; until someone adds one it
+    # is only a label on the run.
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event.workflow_run.head_sha }}
+
+      # See docs/CLONING.md → Deploy on Coolify, and README → Deploy, for
+      # where each of these four comes from. None of them are ever printed:
+      # deploy-coolify.sh logs the deployment_uuid Coolify hands back, not the
+      # token that requested it.
+      #
+      # scripts/deploy-coolify.sh does the POST-then-poll for both apps and
+      # exits non-zero if either fails or times out, which fails this step and
+      # the smoke test below never runs.
+      # Web first, then worker — in that order, one finished before the next
+      # is triggered, because migrations run at web boot (README → Migrating)
+      # and a worker must not start on a schema the web container has not yet
+      # applied. deploy-coolify.sh stops at the first failure.
+      #
+      # POLL_TIMEOUT_SECONDS is per app and starts when that app is triggered.
+      # `force=true` is a no-cache rebuild, and a cold Next.js build on a small
+      # VPS can take well over the script's 600 s default.
+      - name: Deploy web, then worker, on Coolify
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          WEB_UUID: ${{ secrets.COOLIFY_WEB_UUID }}
+          WORKER_UUID: ${{ secrets.COOLIFY_WORKER_UUID }}
+          POLL_TIMEOUT_SECONDS: "1500"
+        run: ./scripts/deploy-coolify.sh "web:$WEB_UUID" "worker:$WORKER_UUID"
+
+      # A deployment Coolify calls "finished" is a container that started, not
+      # one that is actually serving — this is the check that closes that gap.
+      # smoke.sh retries /api/health for up to 90 s first, because the
+      # Dockerfile HEALTHCHECK has a 60 s start period (MIGRATE_ON_BOOT may
+      # still be running) and Traefik answers 502/503 until then.
+      #
+      # SITE_URL is a repository VARIABLE (Settings → Actions → Variables),
+      # not a secret: it is the site's own public URL, the same value as
+      # NEXT_PUBLIC_SITE_URL. SMOKE_EXPECT_NOINDEX is deliberately NOT set:
+      # production must serve no X-Robots-Tag noindex, and smoke.sh fails if
+      # it does (an image built without --build-arg SITE_ENV=production).
+      - name: Smoke test
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: ./scripts/smoke.sh "$SITE_URL"

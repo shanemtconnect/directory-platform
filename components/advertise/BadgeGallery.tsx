@@ -60,9 +60,27 @@ export function BadgeGallery({
 
             <SnippetBlock
               heading="Paste this into your page"
+              note="The badge links straight to your listing. Nothing counts the clicks."
               code={kit.embed}
               copyLabel="Copy embed"
             />
+
+            <details className="mt-2">
+              <summary className="cursor-pointer text-sm text-neutral-600">
+                Or use the version that counts clicks
+              </summary>
+              <p className="mt-2 text-sm text-neutral-600">
+                This one sends the visitor through us first, so we can show you how many people
+                clicked — but the link is marked <code>nofollow</code>, because a link routed
+                through a redirect is not a recommendation and we are not going to pretend
+                otherwise. The plain badge above is the better link; this one is the better
+                number. Pick whichever you actually want.
+              </p>
+              <SnippetBlock
+                code={kit.trackedEmbed}
+                copyLabel="Copy tracked embed"
+              />
+            </details>
           </section>
         );
       })}

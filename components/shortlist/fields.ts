@@ -1,4 +1,4 @@
-import { siteConfig } from "@/config/site.config";
+import { cardFields, siteConfig } from "@/config/site.config";
 import type { CustomField, TierName } from "@/config/types";
 
 /**
@@ -7,13 +7,10 @@ import type { CustomField, TierName } from "@/config/types";
  *
  * `showInCard` is the config's own answer to "which of these actually helps
  * someone choose", so the comparison table uses exactly that set rather than
- * inventing a second list that drifts from it.
+ * inventing a second list that drifts from it. Read through the widened
+ * accessor in config, not the const — see the note there.
  */
-const allFields: readonly CustomField[] = siteConfig.customFields;
-
-export const comparisonFields: readonly CustomField[] = allFields.filter(
-  (f: CustomField) => f.showInCard === true,
-);
+export const comparisonFields: readonly CustomField[] = cardFields();
 
 /**
  * A field with a `tier` is a paid display benefit. Showing it for a listing

@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
@@ -10,9 +10,15 @@ import {
   countCategoryListings,
   citiesForCategory,
 } from "@/lib/db/queries/category-page";
+import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { Pagination } from "@/components/pillar/Pagination";
+import { LocationSwitcher } from "@/components/location/LocationSwitcher";
+import { cityScopedHref } from "@/components/location/switcher-links";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { pillarSchema, breadcrumbSchema } from "@/lib/schema/builders";
+import { categoryEarnsIndexing } from "@/lib/db/queries/sitemap";
+import { pageOpenGraph } from "@/lib/seo/open-graph";
+import { normalisePathSegments } from "@/lib/routing/resolve";
 
 export const revalidate = 3600;
 
@@ -43,37 +49,68 @@ interface Props {
   params: Promise<{ category: string[] }>;
 }
 
-/** Splits a trailing /page/N. Anything else with extra segments is a 404. */
-function parseSegments(segments: string[]): { slug: string; page: number } | null {
-  let rest = segments;
-  let page = 1;
+const BASE = "/categories";
 
-  if (segments.length >= 2 && segments[segments.length - 2] === "page") {
-    const n = Number(segments[segments.length - 1]);
-    if (!Number.isInteger(n) || n < 1) return null;
-    rest = segments.slice(0, -2);
-    page = n;
-  }
+type Parsed =
+  | { kind: "page"; slug: string; page: number }
+  | { kind: "redirect"; to: string }
+  | { kind: "not-found" };
 
-  if (rest.length !== 1) return null;
-  const slug = rest[0];
-  if (slug === undefined || slug === "") return null;
-  return { slug, page };
+/**
+ * The same two canonicalisation rules the city catch-all applies, from the same
+ * helper: /categories/Some-Slug 301s to /categories/some-slug, and
+ * /categories/some-slug/page/1 301s to /categories/some-slug.
+ *
+ * This route used to 404 the first and serve the second as a second copy of
+ * page 1 — so a link with a capital letter in it was a dead end, and the
+ * category page had a duplicate of itself at a second URL. Both are duplicate-
+ * content rules about URL shape, not about cities, which is why the helper is
+ * shared rather than reimplemented here (`normalisePathSegments` also owns the
+ * "one spelling of a page number" rule: "1e0", "0x2" and "02" are 404s).
+ */
+function parseSegments(segments: string[]): Parsed {
+  const normalised = normalisePathSegments(BASE, segments);
+  if (normalised.kind === "redirect") return { kind: "redirect", to: normalised.to };
+  if (normalised.kind === "not-found") return { kind: "not-found" };
+
+  // A national category page is exactly one segment. /categories/a/b is not a
+  // deeper page, it is a URL nothing generated.
+  if (normalised.segments.length !== 1) return { kind: "not-found" };
+  const slug = normalised.segments[0];
+  if (slug === undefined || slug === "") return { kind: "not-found" };
+  return { kind: "page", slug, page: normalised.page };
 }
 
 export default async function CategoryNationalPage({ params }: Props) {
   const { category: segments } = await params;
   const parsed = parseSegments(segments);
-  if (!parsed) notFound();
+  // next/navigation cannot emit a 301 from a server component; 308 is the same
+  // permanent signal and is what the city catch-all serves too.
+  if (parsed.kind === "redirect") permanentRedirect(parsed.to);
+  if (parsed.kind !== "page") notFound();
 
   const category = await getCategoryBySlug(db as never, PUBLIC_VIEWER, parsed.slug);
   if (!category) notFound();
 
-  const [rows, total, locations] = await Promise.all([
+  const [rows, total, locations, switcherCities] = await Promise.all([
     listCategoryListings(db as never, PUBLIC_VIEWER, category.id, { page: parsed.page }),
     countCategoryListings(db as never, PUBLIC_VIEWER, category.id),
     citiesForCategory(db as never, PUBLIC_VIEWER, category.id),
+    listSwitcherCities(db as never, PUBLIC_VIEWER),
   ]);
+
+  /*
+   * A category's route inside a city comes from the SLUG REGISTRY, not from
+   * `categories.slug`: the per-city entry can be disambiguated on collision, so
+   * building /{city}/{national slug} produces a 404 exactly when one happened.
+   * `citiesForCategory` has already joined the registry, so it is the authority
+   * on where this category lives in each city — and a city missing from it has
+   * nothing published under this category, which is not somewhere to send
+   * anyone. The switcher therefore offers the intersection: cities allowed to
+   * be linked at all, that this category actually has a page in.
+   */
+  const routedIn = new Map(locations.map((c) => [c.id, c.categorySlug]));
+  const switchable = switcherCities.filter((c) => routedIn.has(c.id));
 
   const basePath = `/categories/${category.slug}`;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
@@ -83,15 +120,20 @@ export default async function CategoryNationalPage({ params }: Props) {
 
   const e = siteConfig.entity;
   const isFirstPage = parsed.page === 1;
-  const noun = total === 1 ? e.singular : e.plural;
+  // The category's own nouns, so the count agrees with the H1 above it.
+  const noun = total === 1 ? category.singular : category.plural;
+  const pagePath = isFirstPage ? basePath : `${basePath}/page/${parsed.page}`;
 
   return (
     <>
       <JsonLd
         data={pillarSchema({
+          // Page N is its own document with its own listings; asserting page
+          // 1's url/@id makes the two collide.
           title: category.name,
-          path: basePath,
-          description: category.description,
+          path: pagePath,
+          // The description renders on page 1 only, so only page 1 claims it.
+          description: isFirstPage ? category.description : null,
           items: rows.map((r) => ({
             name: r.listing.name,
             path: `/${r.citySlug}/${r.listing.slug}`,
@@ -111,6 +153,18 @@ export default async function CategoryNationalPage({ params }: Props) {
         </nav>
 
         <h1>{category.name}</h1>
+
+        {/*
+          Constraint 18: this changes nothing about THIS URL. Every entry is an
+          <a href> to a city page that already exists and already returns
+          exactly this, whether it is reached from here or typed in.
+        */}
+        <LocationSwitcher
+          label={`See ${category.name} in`}
+          cities={switchable}
+          hrefFor={(city) => cityScopedHref(city.slug, routedIn.get(city.id))}
+          testId="category-location-switcher"
+        />
         {!isFirstPage && (
           <p data-testid="page-indicator">
             Page {parsed.page} of {totalPages}
@@ -178,17 +232,31 @@ export default async function CategoryNationalPage({ params }: Props) {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { category: segments } = await params;
   const parsed = parseSegments(segments);
-  if (!parsed) return {};
+  // No metadata for a URL that redirects or 404s — the page function is what
+  // serves the redirect, and metadata for a page nobody lands on is noise.
+  if (parsed.kind !== "page") return {};
 
   const category = await getCategoryBySlug(db as never, PUBLIC_VIEWER, parsed.slug);
   if (!category) return {};
 
   const total = await countCategoryListings(db as never, PUBLIC_VIEWER, category.id);
 
+  const basePath = `/categories/${category.slug}`;
+  const onPageOne = parsed.page === 1;
+  // Page N canonicalises to itself, not to page 1 — see the catch-all route.
+  const path = onPageOne ? basePath : `${basePath}/page/${parsed.page}`;
+  const title = onPageOne ? category.name : `${category.name} — page ${parsed.page}`;
+
+  const base =
+    category.description ?? `Browse ${category.plural} across every town and city we cover.`;
+
   return {
-    title: parsed.page > 1 ? `${category.name} — page ${parsed.page}` : category.name,
-    description:
-      category.description ?? `Browse ${category.plural} across every town and city we cover.`,
-    robots: total === 0 ? { index: false, follow: true } : undefined,
+    title,
+    description: onPageOne ? base : `${base} — page ${parsed.page}`,
+    alternates: { canonical: path },
+    openGraph: pageOpenGraph({ title, url: path }),
+    // The SAME rule the sitemap applies, so a category cannot be advertised
+    // in one place and noindexed in the other.
+    robots: categoryEarnsIndexing(total) ? undefined : { index: false, follow: true },
   };
 }

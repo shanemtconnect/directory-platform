@@ -98,7 +98,7 @@ describe("nearbyCities", () => {
       // Bradford is ~14km from Leeds; Plymouth ~450km. Alphabetically Bradford
       // also comes first, so give Plymouth a name that sorts earlier to prove
       // it is distance doing the work.
-      const rows = await nearbyCities(tx, leeds, 2);
+      const rows = await nearbyCities(tx, PUBLIC_VIEWER, leeds, 2);
       expect(rows[0]?.name).toBe("Bradford");
       expect(rows[1]?.name).toBe("Plymouth");
     });
@@ -109,7 +109,7 @@ describe("nearbyCities", () => {
       const leeds = await makeCity(tx, "Leeds", "West Yorkshire");
       await tx.update(cities).set({ lat: 53.8, lng: -1.54 }).where(eq(cities.id, leeds));
       await indexable(tx, leeds);
-      expect((await nearbyCities(tx, leeds)).map((r) => r.id)).not.toContain(leeds);
+      expect((await nearbyCities(tx, PUBLIC_VIEWER, leeds)).map((r) => r.id)).not.toContain(leeds);
     });
   });
 
@@ -119,14 +119,36 @@ describe("nearbyCities", () => {
       const thin = await makeCity(tx, "Thintown", "Nowhere");
       await tx.update(cities).set({ lat: 53.8, lng: -1.54 }).where(eq(cities.id, leeds));
       await tx.update(cities).set({ lat: 53.81, lng: -1.55 }).where(eq(cities.id, thin));
-      expect(await nearbyCities(tx, leeds)).toHaveLength(0);
+      expect(await nearbyCities(tx, PUBLIC_VIEWER, leeds)).toHaveLength(0);
+    });
+  });
+
+  it("shows an admin the thin neighbours the public must not be linked to", async () => {
+    await withTestDb(async (tx) => {
+      const leeds = await makeCity(tx, "Leeds", "West Yorkshire");
+      const thin = await makeCity(tx, "Thintown", "Nowhere");
+      await tx.update(cities).set({ lat: 53.8, lng: -1.54 }).where(eq(cities.id, leeds));
+      await tx.update(cities).set({ lat: 53.81, lng: -1.55 }).where(eq(cities.id, thin));
+      expect((await nearbyCities(tx, ADMIN, leeds)).map((r) => r.name)).toEqual(["Thintown"]);
+    });
+  });
+
+  it("hides an unpublished neighbour from an admin too — the page is not live", async () => {
+    await withTestDb(async (tx) => {
+      const leeds = await makeCity(tx, "Leeds", "West Yorkshire");
+      const hidden = await makeCity(tx, "Hiddentown", "Nowhere");
+      await tx.update(cities).set({ lat: 53.8, lng: -1.54 }).where(eq(cities.id, leeds));
+      await tx.update(cities)
+        .set({ lat: 53.81, lng: -1.55, isPublished: false })
+        .where(eq(cities.id, hidden));
+      expect(await nearbyCities(tx, ADMIN, leeds)).toHaveLength(0);
     });
   });
 
   it("returns nothing when the origin has no coordinates", async () => {
     await withTestDb(async (tx) => {
       const nowhere = await makeCity(tx, "Nocoords", "X");
-      expect(await nearbyCities(tx, nowhere)).toEqual([]);
+      expect(await nearbyCities(tx, PUBLIC_VIEWER, nowhere)).toEqual([]);
     });
   });
 });

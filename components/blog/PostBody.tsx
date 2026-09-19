@@ -7,5 +7,5 @@
  * list. Never pass anything to this component that has not been through it.
  */
 export function PostBody({ html }: { html: string }) {
-  return <div dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className="prose" dangerouslySetInnerHTML={{ __html: html }} />;
 }

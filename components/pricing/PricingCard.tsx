@@ -4,6 +4,13 @@ import { annualSaving, formatMoney, isFree, priceFor, type Interval } from "@/li
 /**
  * Everything on this card is read off the TierSpec. Nothing here knows how many
  * plans exist, what they are called, or what they cost.
+ *
+ * The call to action is built from the tier's own name and the interval, so a
+ * clone that adds a plan gets a working checkout link without editing this
+ * file. It carries no listing id: /pricing is a public, cached page and does
+ * not know whose business is reading it. The checkout page sends a signed-out
+ * visitor to /login with a way back, offers a signed-in owner a pick of their
+ * claimed listings, and refuses anyone who has not claimed one.
  */
 export function PricingCard({
   name,
@@ -26,17 +33,17 @@ export function PricingCard({
   const perLabel = interval === "annual" ? "per year" : "per month";
 
   return (
-    <li data-tier={name} data-testid={`plan-${name}`}>
-      <h2>{tier.label}</h2>
-      <p data-testid="strapline">{tier.strapline}</p>
+    <li data-tier={name} data-testid={`plan-${name}`} className="card flex flex-col">
+      <h2 className="mt-0 mb-1 text-[length:var(--text-h3)]">{tier.label}</h2>
+      <p data-testid="strapline" className="text-sm text-muted">{tier.strapline}</p>
 
-      <p data-testid="price">
-        <strong>{formatMoney(price, locale, currency)}</strong>
-        {!free && <span> {perLabel}</span>}
+      <p data-testid="price" className="mt-2">
+        <strong className="font-heading text-3xl">{formatMoney(price, locale, currency)}</strong>
+        {!free && <span className="text-muted"> {perLabel}</span>}
       </p>
 
       {!free && interval === "annual" && saving && (
-        <p data-testid="saving">
+        <p data-testid="saving" className="text-sm text-muted">
           Saves {formatMoney(saving.amount, locale, currency)} a year — {saving.months}{" "}
           {saving.months === 1 ? "month" : "months"} free compared with paying monthly.
         </p>
@@ -51,20 +58,30 @@ export function PricingCard({
       )}
 
       {tier.trialDays > 0 && (
-        <p data-testid="trial">
+        <p data-testid="trial" className="text-sm text-muted">
           Starts with a {tier.trialDays}-day free trial. Nothing is charged until it ends, and
           you can cancel before then.
         </p>
       )}
 
-      <ul data-testid="bullets">
+      <ul data-testid="bullets" className="mt-2 mb-0 list-disc space-y-1 pl-5 text-sm">
         {tier.bullets.map((b) => (
           <li key={b}>{b}</li>
         ))}
       </ul>
 
+      <p data-testid="plan-cta" className="mt-4 mb-0">
+        {free ? (
+          <a href="/add-listing">Add a free listing</a>
+        ) : (
+          <a href={`/checkout/${name}/${interval}`} rel="nofollow" data-testid="plan-checkout-link">
+            Choose {tier.label}
+          </a>
+        )}
+      </p>
+
       {tier.verificationIncluded && (
-        <p data-testid="verification-note">
+        <p data-testid="verification-note" className="mt-4 mb-0 border-t border-line pt-4 text-sm text-muted">
           Includes our verification check. Paying does not by itself put the Verified badge on
           your listing — the {ownerNoun} still has to pass the check that proves they control
           the business.

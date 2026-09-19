@@ -2,6 +2,7 @@ import {
   pgTable, uuid, text, integer, boolean, timestamp, jsonb,
   doublePrecision, numeric, uniqueIndex, index,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { base } from "./_base";
 import { listingStatus, listingTier, claimStatus, listingSource } from "./enums";
 import { cities, areas, verticals, categories } from "./geo";
@@ -41,6 +42,16 @@ export const listings = pgTable("listings", {
   priceRange: text("price_range"),
 
   rankBoost: integer("rank_boost").notNull().default(0),
+  /**
+   * The badge programme's own lever, kept apart from rank_boost.
+   *
+   * Writing the backlink reward into rank_boost meant clamping it to 0..5 to
+   * stop a weekly job stacking it — which quietly destroyed the admin's
+   * column: a hand-set +40 came back as 5 the first time a badge verified,
+   * and an admin's -10 penalty was floored to 0. Two columns, two owners.
+   * The ranking adds them (see lib/db/sort.ts).
+   */
+  backlinkBoost: integer("backlink_boost").notNull().default(0),
   // Trigger-maintained. NEVER seeded and NEVER written by hand.
   ratingAvg: numeric("rating_avg", { precision: 2, scale: 1 }),
   ratingCount: integer("rating_count").notNull().default(0),
@@ -69,6 +80,21 @@ export const listings = pgTable("listings", {
   index("listings_category_status_idx").on(t.primaryCategoryId, t.status),
   index("listings_owner_idx").on(t.ownerId),
   index("listings_geo_idx").on(t.lat, t.lng),
+  // The area axis had no index at all, so every local-multi-vertical area
+  // page was a sequential scan of the whole table.
+  index("listings_area_status_idx").on(t.areaId, t.status),
+  // The homepage featured row is premium-only and runs on every request that
+  // misses the ISR cache. Premium is a few per cent of the table, so a
+  // partial index is a fraction of the size of a full one.
+  index("listings_premium_status_idx").on(t.status).where(sql`${t.tier} = 'premium'`),
+  // The importer's duplicate check, expression for expression. Indexed on the
+  // normalised forms because that is what findDuplicate compares — an index
+  // on the raw columns would never be used.
+  index("listings_dupe_name_postcode_idx").on(
+    sql`lower(trim(${t.name}))`,
+    sql`lower(regexp_replace(${t.postcode}, '[\\s-]+', '', 'g'))`,
+  ),
+  index("listings_dupe_phone_idx").on(sql`regexp_replace(${t.phone}, '[^0-9]', '', 'g')`),
 ]);
 
 export const listingCategories = pgTable("listing_categories", {
@@ -83,6 +109,14 @@ export const listingImages = pgTable("listing_images", {
   storagePath: text("storage_path").notNull(),
   /** { thumb, card, hero, full } -> R2 keys, written by the worker at upload time. */
   derivatives: jsonb("derivatives"),
+  /**
+   * How many times the worker has tried and failed. The job picks up any row
+   * with no derivatives, so without a counter one corrupt upload was retried
+   * every minute for ever, burning an R2 GET and a sharp decode each time.
+   */
+  derivativesAttempts: integer("derivatives_attempts").notNull().default(0),
+  /** Why the last attempt failed, so a stuck image can be diagnosed. */
+  derivativesError: text("derivatives_error"),
   alt: text("alt"),
   width: integer("width"),
   height: integer("height"),

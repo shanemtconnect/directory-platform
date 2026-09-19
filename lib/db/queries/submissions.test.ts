@@ -2,16 +2,24 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
 import { auditLog, categories, cities, listings } from "@/lib/db/schema";
-import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeScaffold, makeCategoryInCity, makeCity, makeListing } from "@/test/factories";
+import { siteConfig } from "@/config/site.config";
+import { GEOCODER_UNCONFIGURED } from "@/lib/geo/geocode";
+import { scopeIndexability } from "@/lib/db/queries/indexing";
+import { ROOT_SCOPE, resolveSlug } from "@/lib/routing/slugs";
 import {
+  AUTO_CITY_ACTION,
   PARKED_SUBMISSION_ACTION,
   createSubmission,
   findSubmissionDuplicate,
   resolveSubmittedCity,
+  setListingStatus,
   submissionOptions,
   type SubmissionInput,
 } from "./submissions";
+
+const ADMIN: Viewer = { role: "admin", userId: "00000000-0000-4000-8000-00000000adm1" };
 
 function input(patch: Partial<SubmissionInput> = {}): SubmissionInput {
   return {
@@ -41,7 +49,7 @@ describe("createSubmission", () => {
   it("files a pending, public, unclaimed listing that is not live", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
 
       expect(result.outcome).toBe("created");
       if (result.outcome !== "created") return;
@@ -60,7 +68,7 @@ describe("createSubmission", () => {
   it("never sets a rating or a verified state from a form", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
       if (result.outcome !== "created") throw new Error("expected a created listing");
 
       const row = await readListing(tx, result.listingId);
@@ -76,6 +84,7 @@ describe("createSubmission", () => {
       const ctx = await makeScaffold(tx);
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: ctx.primaryCategoryId, requestedTier: "premium" }),
       );
       if (result.outcome !== "created") throw new Error("expected a created listing");
@@ -90,7 +99,7 @@ describe("createSubmission", () => {
   it("keeps the submitter's email off the published contact details", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
       if (result.outcome !== "created") throw new Error("expected a created listing");
 
       const row = await readListing(tx, result.listingId);
@@ -99,19 +108,210 @@ describe("createSubmission", () => {
     });
   });
 
-  it("does not create a city for an unknown town — it parks the submission", async () => {
+  it("creates the unknown town, unindexable and empty, and files the listing in it", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
+
+      const result = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+      );
+
+      expect(result.outcome).toBe("created");
+      if (result.outcome !== "created") return;
+
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
+      expect(city?.name).toBe("Otley");
+      // NOT the submitted region. The form's region <select> is built from the
+      // regions we already hold, so a submitter naming a town in a region we do
+      // not cover can only pick a wrong one — and a wrong region persisted here
+      // would be fed straight back into that select for everyone after them.
+      expect(city?.region).toBeNull();
+      expect(city?.country).toBe(siteConfig.country);
+      expect(city?.createdBy).toBe("auto");
+      // Renders, but earns nothing: no intro copy, no coordinates, no index.
+      expect(city?.isPublished).toBe(true);
+      expect(city?.isIndexable).toBe(false);
+      expect(city?.introHtml).toBeNull();
+      expect(city?.lat).toBeNull();
+      expect(city?.lng).toBeNull();
+
+      const row = await readListing(tx, result.listingId);
+      expect(row?.cityId).toBe(city?.id);
+      expect(row?.status).toBe("pending");
+    });
+  });
+
+  it("allocates the new city's slug through the registry, at the root scope", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const result = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+      );
+      if (result.outcome !== "created") throw new Error("expected a created listing");
+
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
+      const registered = await resolveSlug(tx, ROOT_SCOPE, "otley");
+      expect(registered?.kind).toBe("city");
+      expect(registered?.entityId).toBe(city?.id);
+    });
+  });
+
+  it("leaves the auto-created city's gate shut, judged by the same rule as any other", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+      );
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
+
+      const indexability = await scopeIndexability(tx, PUBLIC_VIEWER, {
+        type: "city",
+        cityId: city!.id,
+      });
+      expect(indexability).toEqual({ listingCount: 0, isIndexable: false });
+    });
+  });
+
+  it("records the auto-created city on the audit log, with why it has no coordinates", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+      );
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
+
+      const [row] = await tx
+        .select()
+        .from(auditLog)
+        .where(eq(auditLog.action, AUTO_CITY_ACTION))
+        .limit(1);
+      expect(row?.entityType).toBe("city");
+      expect(row?.entityId).toBe(city?.id);
+      expect(row?.ip).toBe("203.0.113.5");
+      const meta = row?.meta as {
+        name?: string;
+        region?: string | null;
+        submittedRegion?: string | null;
+        geocode?: string;
+      } | null;
+      expect(meta?.name).toBe("Otley");
+      expect(meta?.geocode).toBe(GEOCODER_UNCONFIGURED);
+      // The city's own region is null; what the submitter picked is kept here so
+      // an admin can set the real one without going back to the submitter.
+      expect(meta?.region).toBeNull();
+      expect(meta?.submittedRegion).toBe("West Yorkshire");
+    });
+  });
+
+  it("files a later submission for the same new town in the city the first one made", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const first = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+      );
+      if (first.outcome !== "created") throw new Error("expected a created listing");
+
+      // A different region, because the auto city holds none and the select the
+      // submitter picked from cannot offer the right one. Without the null-region
+      // match in resolveSubmittedCity, every submission after the first for the
+      // same new town would be "ambiguous" and park for ever.
+      const second = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({
+          categoryId: ctx.primaryCategoryId,
+          city: "Otley",
+          region: "Suffolk",
+          name: "The New Mill",
+          phone: "01632 960111",
+          postcode: "LS21 1AA",
+        }),
+      );
+      if (second.outcome !== "created") throw new Error("expected a created listing");
+
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "otley")).limit(1);
+      expect(await readListing(tx, second.listingId).then((r) => r?.cityId)).toBe(city?.id);
+      expect(await tx.select({ id: cities.id }).from(cities).where(eq(cities.name, "Otley")))
+        .toHaveLength(1);
+    });
+  });
+
+  it("numbers the slug when a second auto-created town slugifies to a taken one", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      // Two distinct names — the registry matches on the slug, not the name —
+      // so the second really is a second auto city wanting the same slug. With
+      // the region gone there is no disambiguator left, so it takes "-2", which
+      // is the accepted cost of never persisting a region we cannot trust.
+      await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Great Ayton", region: "West Yorkshire" }),
+      );
+      const second = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({
+          categoryId: ctx.primaryCategoryId,
+          city: "Great-Ayton",
+          region: "West Yorkshire",
+          name: "The New Mill",
+          phone: "01632 960222",
+          postcode: "TS9 6AA",
+        }),
+      );
+      expect(second.outcome).toBe("created");
+
+      const [a] = await tx.select().from(cities).where(eq(cities.name, "Great Ayton")).limit(1);
+      const [b] = await tx.select().from(cities).where(eq(cities.name, "Great-Ayton")).limit(1);
+      expect(a?.slug).toBe("great-ayton");
+      expect(b?.slug).toBe("great-ayton-2");
+      expect(await resolveSlug(tx, ROOT_SCOPE, "great-ayton-2")).toMatchObject({
+        kind: "city",
+        entityId: b?.id,
+      });
+    });
+  });
+
+  it("parks rather than creating a second town when the name is ambiguous", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeCity(tx, "Newport", "Isle of Wight");
+      await makeCity(tx, "Newport", "Pembrokeshire");
       const before = await tx.select({ id: cities.id }).from(cities);
 
       const result = await createSubmission(
         tx,
-        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: "West Yorkshire" }),
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Newport", region: null }),
       );
 
       expect(result.outcome).toBe("parked");
-      const after = await tx.select({ id: cities.id }).from(cities);
-      expect(after).toHaveLength(before.length);
+      expect(await tx.select({ id: cities.id }).from(cities)).toHaveLength(before.length);
+    });
+  });
+
+  it("parks a town whose name cannot be a root slug rather than throwing", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      // "search" is a reserved root slug: a city page there would shadow the
+      // search route, so allocateSlug refuses it.
+      const result = await createSubmission(
+        tx,
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Search", region: "Kent" }),
+      );
+      expect(result.outcome).toBe("parked");
       expect(await tx.select({ id: listings.id }).from(listings)).toHaveLength(0);
     });
   });
@@ -119,9 +319,12 @@ describe("createSubmission", () => {
   it("keeps the parked submission readable, with the town as typed", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
+      await makeCity(tx, "Otley", "West Yorkshire");
+      await makeCity(tx, "Otley", "Suffolk");
       const result = await createSubmission(
         tx,
-        input({ categoryId: ctx.primaryCategoryId, city: "Otley" }),
+        PUBLIC_VIEWER,
+        input({ categoryId: ctx.primaryCategoryId, city: "Otley", region: null }),
       );
       if (result.outcome !== "parked") throw new Error("expected a parked submission");
 
@@ -144,6 +347,7 @@ describe("createSubmission", () => {
       await makeScaffold(tx);
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: "00000000-0000-0000-0000-000000000000" }),
       );
       expect(result.outcome).toBe("unknown-category");
@@ -158,7 +362,7 @@ describe("createSubmission", () => {
         .set({ isActive: false })
         .where(eq(categories.id, ctx.primaryCategoryId));
 
-      const result = await createSubmission(tx, input({ categoryId: ctx.primaryCategoryId }));
+      const result = await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
       expect(result.outcome).toBe("unknown-category");
     });
   });
@@ -172,6 +376,7 @@ describe("createSubmission", () => {
 
       const result = await createSubmission(
         tx,
+        PUBLIC_VIEWER,
         input({ categoryId: ctx.primaryCategoryId, city: "newport", region: "Isle of Wight" }),
       );
       if (result.outcome !== "created") throw new Error("expected a created listing");
@@ -186,28 +391,70 @@ describe("resolveSubmittedCity", () => {
   it("matches regardless of case and surrounding space", async () => {
     await withTestDb(async (tx) => {
       const { cityId } = await makeScaffold(tx);
-      expect(await resolveSubmittedCity(tx, "  lEEds ", "West Yorkshire")).toBe(cityId);
+      expect(await resolveSubmittedCity(tx, "  lEEds ", "West Yorkshire"))
+        .toEqual({ kind: "found", cityId });
     });
   });
 
-  it("returns null for an unknown town", async () => {
+  it("calls a name we hold nothing like NEW, so the caller may create it", async () => {
     await withTestDb(async (tx) => {
       await makeScaffold(tx);
-      expect(await resolveSubmittedCity(tx, "Otley", "West Yorkshire")).toBeNull();
+      expect(await resolveSubmittedCity(tx, "Otley", "West Yorkshire"))
+        .toEqual({ kind: "new" });
     });
   });
 
-  it("returns null when the name is ambiguous and no region is given", async () => {
+  it("is ambiguous, never new, when the name is one we hold and no region is given", async () => {
     await withTestDb(async (tx) => {
       await makeCity(tx, "Newport", "Isle of Wight");
       await makeCity(tx, "Newport", "Pembrokeshire");
-      expect(await resolveSubmittedCity(tx, "Newport", null)).toBeNull();
+      expect(await resolveSubmittedCity(tx, "Newport", null)).toEqual({ kind: "ambiguous" });
+    });
+  });
+
+  it("is ambiguous when the name exists under a different region than the one typed", async () => {
+    await withTestDb(async (tx) => {
+      await makeScaffold(tx);
+      // A second Leeds may well be real, but "Leeds, Kent" from a form is far
+      // more often a mistyped county than a new town — an admin decides.
+      expect(await resolveSubmittedCity(tx, "Leeds", "Kent")).toEqual({ kind: "ambiguous" });
+    });
+  });
+
+  it("resolves to an auto-created city that holds no region, whatever region is typed", async () => {
+    await withTestDb(async (tx) => {
+      await makeScaffold(tx);
+      const auto = await makeCity(tx, "Otley", null);
+
+      // The submitter can only pick from the regions we hold, so the region they
+      // send for a town we auto-created is meaningless. Treating it as a
+      // mismatch would park every submission after the first one for ever.
+      expect(await resolveSubmittedCity(tx, "Otley", "Suffolk"))
+        .toEqual({ kind: "found", cityId: auto });
+      expect(await resolveSubmittedCity(tx, "Otley", null))
+        .toEqual({ kind: "found", cityId: auto });
+    });
+  });
+
+  it("still prefers an exact region match over the region-less namesake", async () => {
+    await withTestDb(async (tx) => {
+      const suffolk = await makeCity(tx, "Otley", "Suffolk");
+      await makeCity(tx, "Otley", null);
+      expect(await resolveSubmittedCity(tx, "Otley", "Suffolk"))
+        .toEqual({ kind: "found", cityId: suffolk });
+    });
+  });
+
+  it("never calls a blank town name new — there is no city to create", async () => {
+    await withTestDb(async (tx) => {
+      await makeScaffold(tx);
+      expect(await resolveSubmittedCity(tx, "   ", null)).toEqual({ kind: "ambiguous" });
     });
   });
 });
 
 describe("findSubmissionDuplicate", () => {
-  it("finds an existing listing by name and postcode, with a claim slug", async () => {
+  it("finds a published listing by name and postcode, with its canonical path", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const existing = await makeListing(tx, ctx, {
@@ -216,10 +463,15 @@ describe("findSubmissionDuplicate", () => {
         phone: null,
       });
 
-      const hit = await findSubmissionDuplicate(tx, input());
-      expect(hit?.listingId).toBe(existing);
-      expect(hit?.slug).toBe("the-old-mill");
-      expect(hit?.reason).toBe("matching name and postcode");
+      const hit = await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input());
+      expect(hit).toEqual({
+        kind: "match",
+        listingId: existing,
+        name: "The Old Mill",
+        slug: "the-old-mill",
+        citySlug: "leeds",
+        reason: "matching name and postcode",
+      });
     });
   });
 
@@ -237,10 +489,10 @@ describe("findSubmissionDuplicate", () => {
       // normalise, so that pair reaches admin review instead.
       const hit = await findSubmissionDuplicate(
         tx,
+        PUBLIC_VIEWER,
         input({ name: "The Old Mill", phone: "01632 960000" }),
       );
-      expect(hit?.listingId).toBe(existing);
-      expect(hit?.reason).toBe("matching phone");
+      expect(hit).toMatchObject({ kind: "match", listingId: existing, reason: "matching phone" });
     });
   });
 
@@ -249,7 +501,58 @@ describe("findSubmissionDuplicate", () => {
       const ctx = await makeScaffold(tx);
       await makeListing(tx, ctx, { name: "Somewhere Else", postcode: "LS9 9ZZ", phone: "01632 960111" });
 
-      expect(await findSubmissionDuplicate(tx, input())).toBeNull();
+      expect(await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input())).toBeNull();
+    });
+  });
+
+  it("tells the public a match is pending without naming it", async () => {
+    await withTestDb(async (tx) => {
+      // Otherwise the form is a lookup tool: type a phone number, read back
+      // the name and slug of a listing nobody is allowed to see yet.
+      const ctx = await makeScaffold(tx);
+      const existing = await makeListing(tx, ctx, {
+        name: "The Old Mill",
+        postcode: "LS1 4DY",
+        phone: null,
+      });
+      await tx.update(listings).set({ status: "pending" }).where(eq(listings.id, existing));
+
+      expect(await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input())).toEqual({
+        kind: "pending",
+      });
+    });
+  });
+
+  it("says nothing about a removed listing either", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const existing = await makeListing(tx, ctx, {
+        name: "The Old Mill",
+        postcode: "LS1 4DY",
+        phone: null,
+      });
+      await tx.update(listings).set({ status: "removed" }).where(eq(listings.id, existing));
+
+      expect(await findSubmissionDuplicate(tx, PUBLIC_VIEWER, input())).toEqual({
+        kind: "pending",
+      });
+    });
+  });
+
+  it("gives an admin the details of an unpublished match", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const existing = await makeListing(tx, ctx, {
+        name: "The Old Mill",
+        postcode: "LS1 4DY",
+        phone: null,
+      });
+      await tx.update(listings).set({ status: "pending" }).where(eq(listings.id, existing));
+
+      expect(await findSubmissionDuplicate(tx, ADMIN, input())).toMatchObject({
+        kind: "match",
+        name: "The Old Mill",
+      });
     });
   });
 });
@@ -277,6 +580,120 @@ describe("submissionOptions", () => {
       const options = await submissionOptions(tx, PUBLIC_VIEWER);
       expect(options.regions).not.toContain("Rutland");
       expect(options.regions).toContain("West Yorkshire");
+    });
+  });
+});
+
+
+/**
+ * Global constraint 9. The gate is the difference between a directory Google
+ * indexes and one it ignores, and nothing outside the seed and the importer
+ * used to move it — a listing could go live and leave its city noindexed with
+ * nothing to trigger a retry.
+ */
+describe("setListingStatus and the indexing gate", () => {
+  const INTRO = "<p>Leeds has a good spread of places.</p>";
+
+  async function cityRow(tx: TestDb, cityId: string) {
+    const [row] = await tx
+      .select({ isIndexable: cities.isIndexable, listingCount: cities.listingCount })
+      .from(cities)
+      .where(eq(cities.id, cityId))
+      .limit(1);
+    return row;
+  }
+
+  it("flips is_indexable when the third listing in a city is published", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await tx.update(cities).set({ introHtml: INTRO }).where(eq(cities.id, ctx.cityId));
+
+      await makeListing(tx, ctx, { status: "published" });
+      await makeListing(tx, ctx, { status: "published" });
+      const third = await makeListing(tx, ctx, { status: "pending" });
+
+      // Two published listings is one short of siteConfig.seo.minListingsToIndex.
+      await setListingStatus(tx, ADMIN, third, "archived");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 2 });
+
+      const result = await setListingStatus(tx, ADMIN, third, "published");
+      expect(result).toMatchObject({ outcome: "changed", from: "archived", to: "published" });
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: true, listingCount: 3 });
+    });
+  });
+
+  it("keeps the gate shut when the city has no intro copy", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { status: "published" });
+      await makeListing(tx, ctx, { status: "published" });
+      const third = await makeListing(tx, ctx, { status: "pending" });
+
+      await setListingStatus(tx, ADMIN, third, "published");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 3 });
+    });
+  });
+
+  it("closes the gate again when a listing is taken down", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await tx.update(cities).set({ introHtml: INTRO }).where(eq(cities.id, ctx.cityId));
+      await makeListing(tx, ctx, { status: "published" });
+      await makeListing(tx, ctx, { status: "published" });
+      const third = await makeListing(tx, ctx, { status: "published" });
+      await setListingStatus(tx, ADMIN, third, "published");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: true });
+
+      await setListingStatus(tx, ADMIN, third, "removed");
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 2 });
+    });
+  });
+
+  it("stamps published_at once and does not rewrite it on a republish", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const id = await makeListing(tx, ctx, { status: "pending", publishedAt: null });
+
+      await setListingStatus(tx, ADMIN, id, "published");
+      const first = (await readListing(tx, id))?.publishedAt;
+      expect(first).not.toBeNull();
+
+      await setListingStatus(tx, ADMIN, id, "archived");
+      await setListingStatus(tx, ADMIN, id, "published");
+      expect((await readListing(tx, id))?.publishedAt).toEqual(first);
+    });
+  });
+
+  it("is admin only, and says so without touching the row", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const id = await makeListing(tx, ctx, { status: "pending" });
+
+      expect(await setListingStatus(tx, PUBLIC_VIEWER, id, "published"))
+        .toEqual({ outcome: "forbidden" });
+      expect((await readListing(tx, id))?.status).toBe("pending");
+    });
+  });
+
+  it("reports an unknown listing rather than silently succeeding", async () => {
+    await withTestDb(async (tx) => {
+      expect(await setListingStatus(tx, ADMIN, "00000000-0000-4000-8000-0000000000ff", "published"))
+        .toEqual({ outcome: "unknown-listing" });
+    });
+  });
+
+  it("recomputes the city on a submission too, so a filed row cannot skip the gate", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await tx.update(cities).set({ introHtml: INTRO, listingCount: 99, isIndexable: true })
+        .where(eq(cities.id, ctx.cityId));
+      await makeListing(tx, ctx, { status: "published" });
+
+      await createSubmission(tx, PUBLIC_VIEWER, input({ categoryId: ctx.primaryCategoryId }));
+
+      // The stale count is corrected and the gate closes: one published
+      // listing, and a pending submission is not a published listing.
+      expect(await cityRow(tx, ctx.cityId)).toMatchObject({ isIndexable: false, listingCount: 1 });
     });
   });
 });

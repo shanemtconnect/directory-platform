@@ -1,0 +1,2 @@
+-- Two parallel branches each produced a migration 0003 (deep_pride and, renumbered, 0004_small_purple_man).
+-- Their snapshots were stale relative to each other; this migration carries the reconciled snapshot and no SQL.

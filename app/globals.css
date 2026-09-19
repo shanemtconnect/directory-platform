@@ -6,15 +6,565 @@
 @theme inline {
   --color-primary: var(--color-primary);
   --color-accent: var(--color-accent);
+  /* Derived from the two above by lib/theme.ts `readableOn`, so `text-on-primary`
+     is legible whatever colour a clone picked. Never hand-set. */
+  --color-on-primary: var(--color-on-primary);
+  --color-on-accent: var(--color-on-accent);
   --font-heading: var(--font-heading);
   --font-body: var(--font-body);
   --radius-token: var(--radius);
 }
 
-body {
-  font-family: var(--font-body), system-ui, -apple-system, sans-serif;
+/* The neutrals. Not in site.config.ts on purpose: a clone changes its brand
+   colour, not what "readable body text" means. Every pair below clears 4.5:1
+   against the surface it is used on. */
+@theme {
+  --color-canvas: #faf8f5;
+  --color-surface: #ffffff;
+  --color-raised: #f3efe9;
+  --color-ink: #1c1917;
+  --color-muted: #57534e;
+  --color-line: #e5ded5;
+  --color-danger: #b42318;
+
+  /* One type scale. Headings are fluid so a 3rem h1 does not overflow a 360px
+     phone; body sizes are fixed because 16px is the floor on every device. */
+  --text-display: clamp(2rem, 1.35rem + 2.6vw, 3rem);
+  --text-h1: clamp(1.75rem, 1.3rem + 1.9vw, 2.5rem);
+  --text-h2: clamp(1.375rem, 1.2rem + 0.8vw, 1.75rem);
+  --text-h3: 1.1875rem;
 }
 
-h1, h2, h3 {
-  font-family: var(--font-heading), Georgia, serif;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-body), system-ui, -apple-system, sans-serif;
+    font-size: 1rem;
+    line-height: 1.6;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Never removed, only replaced. A 3px primary ring clears 3:1 against every
+     surface token above; on a primary-filled control it flips to the derived
+     foreground so it is still visible. */
+  :focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .bg-primary :focus-visible,
+  .bg-accent :focus-visible {
+    outline-color: var(--color-on-primary);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-heading), Georgia, serif;
+    color: var(--color-ink);
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+
+  hr { border: 0; border-top: 1px solid var(--color-line); }
+
+  img, svg, video { max-width: 100%; height: auto; }
+
+  /* Inputs inherit nothing by default, and every form on this site is a plain
+     server-rendered one. Styling them here rather than per field is what keeps
+     a dozen forms consistent. */
+  input, select, textarea, button { font: inherit; color: inherit; }
+
+  ::placeholder { color: var(--color-muted); opacity: 1; }
+}
+
+@layer components {
+  /* ---- Page shell -------------------------------------------------------
+     Every route renders its own <main>, so the container lives here instead of
+     being repeated as a wrapper in twenty-five page files. */
+  main {
+    display: block;
+    flex: 1;
+    width: 100%;
+    max-width: 72rem;
+    margin-inline: auto;
+    padding-inline: 1rem;
+    padding-block: clamp(1.5rem, 4vw, 2.75rem) clamp(3rem, 7vw, 4.5rem);
+  }
+  @media (min-width: 640px) { main { padding-inline: 1.5rem; } }
+  @media (min-width: 1024px) { main { padding-inline: 2rem; } }
+
+  /* ---- Typographic rhythm inside a page ---------------------------------
+     One spacing scale, expressed in the type's own units so it tracks the
+     fluid heading sizes. */
+  main h1 { font-size: var(--text-h1); letter-spacing: -0.02em; margin-block-end: 0.5rem; }
+  main h2 { font-size: var(--text-h2); letter-spacing: -0.01em; margin-block: 2.5rem 0.75rem; }
+  main h3 { font-size: var(--text-h3); margin-block: 1.75rem 0.5rem; }
+  main :is(h1, h2, h3) + p { margin-block-start: 0; }
+
+  main p, main dl, main ol, main ul, main table, main pre, main blockquote {
+    margin-block: 0 1rem;
+  }
+  main :is(ul, ol):not([class]) { padding-inline-start: 1.25rem; }
+  main ul:not([class]) { list-style: disc; }
+  main ol:not([class]) { list-style: decimal; }
+  /* Only on a plain prose list. A grid or flex list has its own gap, and this
+     rule offsetting every item but the first is how a three-card row ends up
+     looking like a staircase. */
+  main :is(ul, ol):not([class]) > li + li { margin-block-start: 0.375rem; }
+
+  /* A readable measure everywhere, without a .prose wrapper on every page.
+     Cards and grid cells are already narrower than this, so the cap only bites
+     where a paragraph would otherwise run the full 72rem container. */
+  main :is(p, li, dd, dt) { max-width: 72ch; }
+
+  main section { margin-block-end: clamp(2rem, 5vw, 3rem); }
+  main section:last-child { margin-block-end: 0; }
+
+  main a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 0.15em; }
+  main a:hover { text-decoration-thickness: 2px; }
+
+  main small { color: var(--color-muted); font-size: 0.875rem; }
+  main address { font-style: normal; }
+
+  /* Errors read as errors without relying on the colour alone — they sit
+     directly under the field they belong to and are announced by role=alert. */
+  main [role="alert"] {
+    display: block;
+    color: var(--color-danger);
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-block-start: 0.375rem;
+  }
+
+  /* ---- Prose ------------------------------------------------------------
+     Long-form reading measure. Applied to legal pages, blog bodies and intro
+     copy — anywhere a paragraph runs the full width of a 72rem container and
+     becomes unreadable. */
+  .prose { max-width: 68ch; }
+  .prose :is(p, li) { color: var(--color-ink); }
+  .prose h2 { margin-block: 2.25rem 0.75rem; }
+
+  /* ---- Surfaces ---------------------------------------------------------- */
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-token);
+    padding: 1.25rem;
+  }
+  .card-hover {
+    transition: border-color 180ms ease-out, box-shadow 180ms ease-out;
+  }
+  .card-hover:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 8px 24px -12px rgb(0 0 0 / 0.18);
+  }
+
+  /* ---- Controls ----------------------------------------------------------
+     44px minimum on every interactive target, per the touch guidance. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0.625rem 1.25rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-token);
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .btn-primary {
+    background-color: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-secondary {
+    background-color: var(--color-surface);
+    border-color: var(--color-line);
+    color: var(--color-ink);
+  }
+  .btn-secondary:hover { border-color: var(--color-primary); }
+  .btn[disabled], .btn:disabled { opacity: 0.55; cursor: not-allowed; filter: none; }
+
+  /* Anchors styled as buttons must not also carry the body-link underline. */
+  main a.btn { color: var(--color-on-primary); text-decoration: none; }
+  main a.btn-secondary { color: var(--color-ink); }
+
+  /* Every form on the site is a plain <p>-per-field server form, so the field
+     styling is keyed off the element rather than a class nobody would add
+     consistently across six forms. */
+  main label { display: block; font-weight: 500; margin-block-end: 0.375rem; }
+  main :is(input, select, textarea):not([type="radio"], [type="checkbox"], [type="hidden"]) {
+    display: block;
+    width: 100%;
+    max-width: 34rem;
+    min-height: 2.75rem;
+    padding: 0.625rem 0.75rem;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-token);
+  }
+  main textarea { min-height: 8rem; resize: vertical; }
+  main [aria-invalid="true"] { border-color: var(--color-danger); }
+  main :is(input, select, textarea) + small,
+  main small[id$="-help"] {
+    display: block;
+    margin-block-start: 0.375rem;
+  }
+  main form p { margin-block-end: 1.25rem; }
+  main fieldset {
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-token);
+    padding: 1.25rem;
+    margin-block-end: 1.5rem;
+    background-color: var(--color-surface);
+  }
+  main legend {
+    /* Opaque, or the fieldset's own border draws straight through the words. */
+    background-color: var(--color-surface);
+    padding-inline: 0.5rem;
+    font-family: var(--font-heading), Georgia, serif;
+    font-size: var(--text-h3);
+  }
+  /* A radio's own label is the row, not a block above the control. */
+  main fieldset label:has(input[type="radio"], input[type="checkbox"]) {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-weight: 400;
+  }
+  main input[type="radio"], main input[type="checkbox"] {
+    width: 1.125rem;
+    height: 1.125rem;
+    accent-color: var(--color-primary);
+  }
+
+  main button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+    padding: 0.625rem 1.25rem;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-token);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  main button[type="submit"] {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+  main button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  /* ---- Link lists --------------------------------------------------------
+     The internal-linking blocks that make a directory crawlable: dense,
+     multi-column, no bullets. */
+  .link-grid {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.5rem 1.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  }
+  .link-grid li { margin: 0; }
+  .link-grid span { color: var(--color-muted); font-size: 0.875rem; }
+
+  .card-grid {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  }
+  .card-grid > li { margin: 0; }
+
+  /* ---- Tables ------------------------------------------------------------ */
+  main table { border-collapse: collapse; width: 100%; background-color: var(--color-surface); }
+  main caption { text-align: left; color: var(--color-muted); font-size: 0.875rem; padding-block-end: 0.5rem; }
+  main :is(th, td) {
+    text-align: left;
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--color-line);
+    vertical-align: top;
+  }
+  main thead th { font-weight: 600; background-color: var(--color-raised); }
+  /* Wide comparison grids scroll inside themselves; the page never does. */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--color-line); border-radius: var(--radius-token); }
+
+  /* ---- Skip link --------------------------------------------------------- */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 100;
+  }
+  .skip-link:focus {
+    left: 0.5rem;
+    top: 0.5rem;
+    padding: 0.75rem 1rem;
+    background-color: var(--color-surface);
+    border-radius: var(--radius-token);
+    box-shadow: 0 4px 16px -4px rgb(0 0 0 / 0.3);
+  }
+}
+
+/* ==========================================================================
+   Wave E — shared primitives for the signed-in and staff screens.
+   Additive: nothing above changes. Every colour is a token from the theme
+   block at the top of this file; every pair still clears 4.5:1.
+   ========================================================================== */
+@layer components {
+  /* ---- Notice ------------------------------------------------------------
+     One component, three variants. The left rule and the icon carry the
+     meaning; the tint is a hint, never the only signal. */
+  .notice {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 0.875rem 1rem;
+    margin-block: 0 1.25rem;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-left-width: 4px;
+    border-radius: var(--radius-token);
+    color: var(--color-ink);
+  }
+  .notice-icon { flex: none; margin-top: 0.15rem; }
+  .notice-body { min-width: 0; flex: 1; }
+  .notice-body > :last-child { margin-block-end: 0; }
+  .notice-title { display: block; margin-block-end: 0.25rem; }
+  .notice-status { border-left-color: var(--color-primary); }
+  .notice-status .notice-icon { color: var(--color-primary); }
+  .notice-success { border-left-color: #1f7a3f; background-color: #f2faf4; }
+  .notice-success .notice-icon { color: #1f7a3f; }
+  .notice-error { border-left-color: var(--color-danger); background-color: #fdf3f2; }
+  .notice-error .notice-icon { color: var(--color-danger); }
+  /* A notice under a field is an inline message, not a banner: the global
+     [role=alert] rule already colours and sizes it. */
+  main .notice[role="alert"] {
+    /* `display: flex` again: the global `main [role="alert"]` rule sets block
+       and outranks `.notice`, which stacked the icon above the message. */
+    display: flex;
+    font-size: 1rem; font-weight: 400; color: var(--color-ink);
+  }
+
+  /* ---- Page header -------------------------------------------------------- */
+  .page-header { margin-block-end: 1.5rem; }
+  .page-header-back { margin-block-end: 0.75rem; font-size: 0.875rem; }
+  .page-header-back a { color: var(--color-muted); text-decoration: none; }
+  .page-header-back a:hover { color: var(--color-primary); text-decoration: underline; }
+  .page-header h1 { margin-block-end: 0.375rem; }
+  .page-header-lede { margin-block: 0 0.5rem; max-width: 72ch; }
+  .page-header-meta { font-size: 0.875rem; color: var(--color-muted); }
+  .page-header-meta > p { margin-block: 0; }
+
+  /* ---- Empty state --------------------------------------------------------- */
+  .empty-state {
+    padding: 1.5rem 1.25rem;
+    border: 1px dashed var(--color-line);
+    border-radius: var(--radius-token);
+    background-color: var(--color-surface);
+    margin-block-end: 1.25rem;
+  }
+  .empty-state-icon { color: var(--color-muted); margin-block-end: 0.5rem; }
+  .empty-state-title { font-weight: 600; margin-block: 0 0.25rem; }
+  .empty-state-body { color: var(--color-muted); }
+  .empty-state-body > :last-child { margin-block-end: 0; }
+  .empty-state-action { margin-block: 1rem 0; }
+
+  /* ---- Steps ---------------------------------------------------------------- */
+  .steps {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    font-size: 0.875rem;
+  }
+  .steps li { display: inline-flex; align-items: center; gap: 0.5rem; margin: 0; color: var(--color-muted); }
+  .steps-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    border: 1.5px solid var(--color-line);
+    font-size: 0.75rem;
+    font-weight: 600;
+    flex: none;
+  }
+  .steps li[data-state="current"] { color: var(--color-ink); font-weight: 600; }
+  .steps li[data-state="current"] .steps-index {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+  .steps li[data-state="done"] .steps-index {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+  @media (max-width: 639.98px) {
+    .steps { gap: 0.5rem 0.75rem; }
+    .steps li:not([data-state="current"]) .steps-label { display: none; }
+  }
+
+  /* ---- Pills ----------------------------------------------------------------- */
+  .pill {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-line);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+  .pill-on { border-color: var(--color-primary); color: var(--color-ink); }
+  .pill-primary { background-color: var(--color-primary); border-color: var(--color-primary); color: var(--color-on-primary); }
+  .pill-danger { border-color: var(--color-danger); color: var(--color-danger); }
+
+  /* ---- Nav counts ------------------------------------------------------------- */
+  .nav-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.375rem;
+    height: 1.375rem;
+    padding-inline: 0.375rem;
+    margin-inline-start: 0.375rem;
+    border-radius: 999px;
+    background-color: var(--color-primary);
+    color: var(--color-on-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The staff sub-nav: one scrolling row on a phone, a wrapped row above. */
+  .admin-nav ul { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+  .admin-nav a { white-space: nowrap; }
+  @media (min-width: 640px) { .admin-nav ul { flex-wrap: wrap; overflow: visible; } }
+
+  /* ---- Action bar ----------------------------------------------------------------
+     The buttons at the foot of a queue card. On a phone they stick to the bottom
+     of the viewport while the card is in view, so a long report does not put
+     its "Mark actioned" three screens away. */
+  .action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-block-start: 1rem;
+  }
+  @media (max-width: 639.98px) {
+    .card > .action-bar, .card > form > .action-bar {
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      margin-inline: -1.25rem;
+      margin-block-end: -1.25rem;
+      padding: 0.75rem 1.25rem;
+      background-color: var(--color-surface);
+      border-top: 1px solid var(--color-line);
+      border-radius: 0 0 var(--radius-token) var(--radius-token);
+    }
+    .action-bar .btn, .action-bar button { flex: 1 1 auto; }
+  }
+
+  /* ---- Form actions ----------------------------------------------------------------
+     One primary button, secondaries beside it, links after. A submit that is
+     explicitly secondary must not inherit the primary fill from the
+     `main button[type=submit]` rule above. */
+  .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-block-start: 0.5rem; }
+  main button[type="submit"].btn-secondary,
+  main button.btn-secondary {
+    background-color: var(--color-surface);
+    border-color: var(--color-line);
+    color: var(--color-ink);
+  }
+  main button[type="submit"].btn-secondary:hover,
+  main button.btn-secondary:hover { border-color: var(--color-primary); }
+  main button[aria-busy="true"] { cursor: progress; }
+
+  /* ---- Tables that become cards ------------------------------------------------
+     Add `table-cards` to a <table> and `data-label` to each cell. Below 640px
+     the header row is hidden (still read by assistive technology) and every
+     row is a card whose cells print their own column name. The DOM is the
+     same table at every width, so tests and screen readers see one thing. */
+  @media (max-width: 639.98px) {
+    .table-scroll:has(> .table-cards) { border: 0; border-radius: 0; overflow: visible; }
+    main .table-cards, main .table-cards tbody, main .table-cards tr,
+    main .table-cards th, main .table-cards td { display: block; }
+    main .table-cards { background: transparent; }
+    main .table-cards thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    main .table-cards caption { display: block; }
+    main .table-cards tbody tr {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-line);
+      border-radius: var(--radius-token);
+      padding: 0.75rem 1rem;
+      margin-block-end: 0.75rem;
+    }
+    main .table-cards :is(th, td) { border: 0; padding: 0.25rem 0; }
+    main .table-cards [data-label]::before {
+      content: attr(data-label);
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+    main .table-cards td.max-w-sm { max-width: none; }
+  }
+
+  /* ---- Dashboard cards ---------------------------------------------------------- */
+  .dash-grid { list-style: none; padding: 0; margin: 0 0 1.25rem; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+  .dash-grid > li { margin: 0; display: flex; flex-direction: column; }
+  .dash-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block-end: 0.5rem; }
+  .dash-card-head h3 { margin: 0; font-size: var(--text-h3); }
+  .dash-card-next { margin-block: 0.75rem 0; padding-block-start: 0.75rem; border-top: 1px solid var(--color-line); }
+  .dash-spark { display: block; width: 100%; height: 2.25rem; margin-block: 0.25rem 0; }
+
+  /* ---- Definition lists as key/value rows ------------------------------------------ */
+  .kv { display: grid; gap: 0.25rem 1.5rem; margin-block-end: 1rem; }
+  .kv dt { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-muted); }
+  .kv dd { margin: 0 0 0.75rem; }
+  @media (min-width: 640px) {
+    .kv { grid-template-columns: max-content 1fr; align-items: baseline; }
+    .kv dt { padding-block-start: 0.2rem; }
+    .kv dd { margin-block-end: 0.375rem; }
+  }
 }

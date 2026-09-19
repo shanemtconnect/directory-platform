@@ -1,3 +1,5 @@
+import { pageWindow } from "./page-window";
+
 interface Props {
   basePath: string;
   page: number;
@@ -11,10 +13,24 @@ interface Props {
   searchStyle?: boolean;
 }
 
+/* Split so the current page can swap the background without two `bg-*`
+   utilities fighting: Tailwind orders those by its own sort, not by the order
+   they appear in the class attribute, so the loser is not the one you expect. */
+const SLOT =
+  "inline-flex min-h-11 min-w-11 items-center justify-center rounded-[var(--radius-token)] border px-3 no-underline";
+const LINK = `${SLOT} border-line bg-surface hover:border-primary`;
+const CURRENT = `${SLOT} border-primary bg-primary font-semibold text-on-primary`;
+
 /**
  * Every paginated link is a real <a href> to a real, server-rendered URL.
  * GeoDirectory's demo uses javascript:void(0) and pages 2+ of every category
  * are effectively invisible to crawlers. There is a CI test asserting this.
+ *
+ * The numbers are windowed by `pageWindow` rather than listed 1..N: a city with
+ * four hundred pages would otherwise put four hundred links on each of its four
+ * hundred paginated URLs. First, last and the current page's neighbours are all
+ * that a reader or a crawler needs, and prev/next carry rel so the sequence is
+ * still declared.
  */
 export function Pagination({ basePath, page, totalPages, searchStyle = false }: Props) {
   if (totalPages <= 1) return null;
@@ -27,22 +43,54 @@ export function Pagination({ basePath, page, totalPages, searchStyle = false }: 
   };
 
   return (
-    <nav aria-label="Pagination" data-testid="pagination">
-      <ul style={{ display: "flex", gap: "0.5rem", listStyle: "none", padding: 0 }}>
+    <nav
+      aria-label="Pagination"
+      data-testid="pagination"
+      className="mt-8 border-t border-line pt-6"
+    >
+      <ul className="flex list-none flex-wrap items-center gap-2 p-0">
         {page > 1 && (
-          <li><a href={href(page - 1)} rel="prev">Previous</a></li>
-        )}
-        {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
-          <li key={n}>
-            {n === page ? (
-              <span aria-current="page">{n}</span>
-            ) : (
-              <a href={href(n)}>{n}</a>
-            )}
+          <li>
+            <a href={href(page - 1)} rel="prev" className={LINK}>
+              Previous
+            </a>
           </li>
-        ))}
+        )}
+
+        {pageWindow(page, totalPages).map((slot, i) => {
+          if (slot === "gap") {
+            return (
+              // Not a link, and not announced: it stands for the pages between
+              // two links, and a screen reader reading "ellipsis" here is noise.
+              <li key={`gap-${i}`} aria-hidden="true" className="px-1 text-muted">
+                &hellip;
+              </li>
+            );
+          }
+          return (
+            <li key={slot}>
+              {slot === page ? (
+                <span
+                  aria-current="page"
+                  className={CURRENT}
+                >
+                  {slot}
+                </span>
+              ) : (
+                <a href={href(slot)} className={LINK} aria-label={`Page ${slot}`}>
+                  {slot}
+                </a>
+              )}
+            </li>
+          );
+        })}
+
         {page < totalPages && (
-          <li><a href={href(page + 1)} rel="next">Next</a></li>
+          <li>
+            <a href={href(page + 1)} rel="next" className={LINK}>
+              Next
+            </a>
+          </li>
         )}
       </ul>
     </nav>

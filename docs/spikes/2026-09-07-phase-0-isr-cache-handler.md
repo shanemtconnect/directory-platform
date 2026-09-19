@@ -94,3 +94,170 @@ The Quick Start block is labelled "not meant for production use" and it means it
   It also SIGTERM'd the first Redis container during its own startup — worth knowing
   before blaming code for a dead container.
 - Build of a 2-page app: **1.2 s** compile, ~4 s total.
+
+---
+
+## Follow-up, 2026-09-08 — the half of the gate the spike did not test
+
+The spike proved that a runtime-regenerated page survives a filesystem wipe.
+It did not check what the surviving page *references*, and that turns out to be
+where the design leaks.
+
+Cache keys are `nextjs:/<slug>` with no build id, so a redeploy re-serves HTML
+produced by the previous build. That HTML links hashed assets —
+`/_next/static/chunks/<hash>.css` — and `.next/static` is replaced wholesale on
+redeploy. Observed on a container built from this repo: a cached homepage asked
+for `/_next/static/chunks/3zwxupz86f3wk.css`, which the running image did not
+contain. The page returns 200 and renders unstyled.
+
+"Cache survives redeploy" is only a coherent design if old builds' static output
+stays servable. That is precisely what Vercel does, and it is not something a
+container gets for free.
+
+### The fix
+
+`docker-entrypoint.sh`: when `STATIC_ASSETS_DIR` is set, the image's
+`.next/static` is copied into it **without overwriting** (`cp -Rn`) and
+`.next/static` becomes a symlink to it. Each deploy adds its own hashes; the
+previous deploy's stay. Unset, the entrypoint does nothing.
+
+**Deploying this means mounting a volume.** The Coolify app needs a persistent
+volume at, say, `/data/next-static`, with `STATIC_ASSETS_DIR=/data/next-static`.
+Without it, a client that already holds a page from the previous build gets a
+404 for that build's assets until it reloads. (Written before the reversal
+below, when a purge was the only thing separating a deploy from unstyled pages;
+namespacing by build id is now what does that.)
+
+The volume grows by one build's static output per deploy and is never pruned.
+That is deliberate for now — it is small, and pruning it correctly means knowing
+which build ids still have live cache entries. Sweep it by hand if it matters.
+
+Two BusyBox details that cost real time, both now commented in the entrypoint:
+
+- `cp -Rn src/. dst/` exits 0 and copies **nothing**. The glob form works.
+- The volume Docker creates is root-owned, so the entrypoint runs as root and
+  drops to `nextjs` with `su-exec` rather than declaring `USER nextjs`.
+
+`scripts/verify-isr.sh` now covers this: it renames the chunk directory to
+simulate a rebuild with new hashes, asserts the cached page's stylesheet 404s
+without retention, applies the retention step, and asserts it returns 200.
+
+### Two more things the image got wrong
+
+**The cache handler was not loading at all in the image.** The runner copied
+`node_modules/@fortedigital` and `node_modules/@redis` out of a pnpm layout,
+where both are symlinks into `node_modules/.pnpm`. In the image they dangled,
+the import threw, and Next fell back to a per-container LRU — silently, which is
+the same failure mode this spike was written to prevent. Every deploy discarded
+the cache the spike proved would survive. The dependency stages now install with
+`--config.node-linker=hoisted`, and the runner takes that tree whole.
+
+Verify with `scripts/verify-image.sh`, which builds the image and runs
+`docker run --rm IMAGE node -e "import('./cache-handler.mjs')…"`. It cannot be a
+`RUN` step in the Dockerfile: importing the handler wants `REDIS_URL`.
+
+**`next build` was failing without a reachable database.** `/`, `/cities` and
+`/categories` prerender from it, and the build died on `ECONNREFUSED` — so for a
+while `DATABASE_URL` was a build arg, contradicting the "built once in CI with
+no site secrets" comment on the Dockerfile.
+
+*Superseded.* Those three routes now ask `prerenderingWithoutDatabase()`
+(`lib/db/build-phase.ts`) and prerender their empty-state shell when there is
+nothing to read; ISR fills in the real page on the first request, where a
+database is guaranteed because `instrumentation.ts` refuses to boot a server
+without one. `lib/db/client.ts` and `lib/auth/server.ts` also open their
+connection on first use rather than on import. **The build takes no
+`DATABASE_URL` and needs no database**, and the Dockerfile comment is true
+again. The two catch-all routes never needed one: their `generateStaticParams`
+return `[]`.
+
+---
+
+## Decision reversed 2026-09-08 — the cache is now cold on deploy
+
+The retention volume above treats the symptom. The cause is that this spike
+optimised the wrong thing: **"cache survives redeploy" was never a coherent
+goal**, and the phase gate should not have been written that way.
+
+### Why
+
+Cached HTML is not portable across builds. Two things in it are build-specific:
+
+- **Hashed asset paths.** `/_next/static/chunks/<hash>.css`. New build, new
+  hash; the old URL 404s and the page renders unstyled. That is the symptom the
+  follow-up above chased, and `STATIC_ASSETS_DIR` does genuinely fix it.
+- **Server-action ids.** A form in a cached page posts to the action id of the
+  build that rendered it. The new build has never heard of it, so **every POST
+  from that page fails** until the entry revalidates — up to an hour on listing
+  pages. No volume fixes this: the action does not exist in the new bundle.
+
+So the retention volume buys a page that looks right and does not work. Vercel
+does not have this problem because it does not serve one build's HTML from
+another build's server; each deployment is its own immutable unit.
+
+### What changed
+
+`cache-handler.mjs` derives the build id at runtime — `.next/BUILD_ID` relative
+to `process.cwd()` (the standalone server chdirs into `.next/standalone`, where
+the build output is copied), then `NEXT_BUILD_ID`, then `"dev"` — and keys every
+entry `nextjs:<buildId>:`. The derivation is in `lib/cache/build-id.mjs`, plain
+ESM with no dependencies because the standalone server loads the handler without
+a bundler, and unit-tested in `lib/cache/build-id.test.ts`.
+
+Observed on the standalone server, two builds against `redis://…/7`:
+
+```
+nextjs:kwsdX2O2_JjOKy60mMAFD:/index          <- build 1
+nextjs:kwsdX2O2_JjOKy60mMAFD:__sharedTags__
+nextjs:g3BTk_zTkf5ky9f01GsSn:/index          <- build 2, same URL, own namespace
+nextjs:g3BTk_zTkf5ky9f01GsSn:__sharedTags__
+```
+
+Build 2 served `/` fresh: its own build id in the HTML, its own stylesheet at
+200, and build 1's stylesheet 404 — untouched, because nothing asks for it.
+
+### What the cache guarantees now
+
+- **Shared across replicas.** Two web containers of the same build share one
+  warm cache. This was always the bigger win and it is unaffected.
+- **Survives a container or process restart of the same build.** A page
+  regenerated at runtime is still there after the container is replaced,
+  redeployed at the same commit, or OOM-killed.
+- **Cold on deploy, warmed on demand.** A new build starts with an empty
+  namespace and fills it as traffic arrives.
+- **No cross-build bleed.** A build can only ever read entries it wrote.
+
+### Operational consequence
+
+- **The first hit on each page after a deploy is a render**, not a cache read.
+  Sized for this app that is a database query and a React render, not a rebuild
+  of the site; the pages that matter warm within seconds of a deploy. If that
+  ever becomes a problem the answer is a warming sweep over the sitemap, not a
+  cache that outlives its build.
+- **Old namespaces need sweeping, and the app does it itself.** Nothing expires
+  them, so `CACHE_SWEEP_DELAY_MS` (default 60 s) after a container connects to
+  Redis the handler SCANs `nextjs:*` and deletes every key outside its own
+  prefix, including the un-namespaced `nextjs:/path` keys written before this
+  scheme. The delay is for rolling deploys: until traffic swaps, the previous
+  replica is still serving from its namespace. **Corrected 2026-09-08:** this
+  was first written as "run `scripts/purge-cache.sh` as a Coolify
+  post-deployment command", which cannot work — the runner image is
+  `node:24-alpine` with the standalone server and nothing else, so there is no
+  `scripts/`, no bash and no `redis-cli` in it. The script survives as the
+  manual tool for a host that has them.
+- **Keep `STATIC_ASSETS_DIR`.** It is no longer load-bearing for correctness,
+  but a client that already holds an old page — an open tab, a bfcache entry, a
+  prefetch in flight — still asks for the old build's assets. Retention keeps
+  those 200 instead of 404 while the client re-validates. It does nothing for
+  server-action skew, which is why it could not be the whole answer.
+
+### The gate wording
+
+> "Cache handler survives a redeploy with a warm cache, or fallback chosen."
+
+Read as written — a redeploy does not cold-start the ISR cache — this is no
+longer the goal and the code deliberately does the opposite. The gate is met by
+the second clause and by what the cache is actually for: shared across replicas,
+warm across restarts of one build, and a working LRU fallback when Redis is
+down. `scripts/verify-isr.sh` now asserts that, and fails with the original
+symptom if the build-agnostic key prefix is restored.

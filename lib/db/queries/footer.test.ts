@@ -79,7 +79,7 @@ describe("getFooterMatrix — indexability", () => {
       await makeListing(tx, { cityId: thin, verticalId: v, primaryCategoryId: cat });
       await indexable(tx, good);
 
-      const allowed = new Set((await sitemapCities(tx)).map((e) => e.path));
+      const allowed = new Set((await sitemapCities(tx, PUBLIC_VIEWER)).map((e) => e.path));
       const linkedCities = hrefs(await getFooterMatrix(tx, PUBLIC_VIEWER))
         .map((h) => `/${h.split("/")[1]}`);
 
@@ -255,5 +255,43 @@ describe("getFooterMatrix — cost", () => {
     } finally {
       await client.end({ timeout: 5 });
     }
+  });
+});
+
+
+/**
+ * The footer renders on every page of the site, so anything it selects is in
+ * the RSC payload of every page of the site.
+ */
+describe("getFooterMatrix carries no private listing data", () => {
+  it("projects names, hrefs and counts — never a submitter email or a moderator note", async () => {
+    await withTestDb(async (tx) => {
+      const v = await makeVertical(tx);
+      const city = await makeCity(tx, "Leeds", "West Yorkshire");
+      const cat = await makeCategoryInCity(tx, v, city, "Barn Halls");
+      await makeListing(tx, { cityId: city, verticalId: v, primaryCategoryId: cat }, {
+        submittedByEmail: "submitter@example.test",
+        verificationChecks: { companiesHouse: "passed" },
+        rejectedReason: "moderator note nobody outside may read",
+        customFields: {
+          capacity: 120,
+          submission: { email: "submitter@example.test", ip: "203.0.113.9" },
+        },
+      });
+      await indexable(tx, city);
+
+      const blocks = await getFooterMatrix(tx, PUBLIC_VIEWER);
+      expect(hrefs(blocks)).toEqual(["/leeds/barn-halls"]);
+
+      const cityLink = blocks[0]?.cities[0];
+      expect(cityLink).toBeDefined();
+      expect(Object.keys(cityLink ?? {})).toEqual(["name", "href", "listingCount"]);
+
+      const payload = JSON.stringify(blocks);
+      expect(payload).not.toContain("submitter@example.test");
+      expect(payload).not.toContain("203.0.113.9");
+      expect(payload).not.toContain("moderator note");
+      expect(payload).not.toContain("companiesHouse");
+    });
   });
 });

@@ -1,0 +1,209 @@
+import { expect, test } from "@playwright/test";
+import { randomBytes } from "node:crypto";
+import postgres from "postgres";
+import { E2E_DATABASE_URL } from "./database";
+import { paginatingCity } from "./fixtures";
+
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
+
+/**
+ * The whole review pipeline, end to end, against a production build and a real
+ * database: write → confirm the address → the review is on the page and the
+ * listing's average has moved.
+ *
+ * It has to be an e2e test rather than a unit test because the part most
+ * likely to break silently is the seam — a server action that validates, a
+ * route handler that writes and redirects, and an ISR-cached page that has to
+ * be revalidated or the reviewer follows their own link and sees nothing.
+ *
+ * The token is read out of the queued verification job because there is no mail
+ * provider in this environment. That is the same link the worker would send.
+ *
+ * Rate limit: the action allows 3 reviews per IP per hour. Running the suite
+ * repeatedly inside one hour against the same Redis will start failing this
+ * with the rate-limit message — the app behaving correctly, not a flake.
+ */
+
+const FLAGS_OFF = process.env.SITE_FLAGS_OVERRIDE === "off";
+
+// The same database the server under test runs on — never directory_dev.
+const DATABASE_URL = E2E_DATABASE_URL;
+
+/** Letters only: a digit run or a URL in the body would be held for moderation. */
+function marker(): string {
+  return randomBytes(8).toString("hex").replace(/\d/g, "x");
+}
+
+async function rows<T>(
+  query: (sql: ReturnType<typeof postgres>) => Promise<unknown>,
+): Promise<T[]> {
+  const sql = postgres(DATABASE_URL, { max: 1 });
+  try {
+    return (await query(sql)) as T[];
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+/**
+ * `review_invites.token` holds only the digest, so the raw token is read from
+ * the queued verification email that carries it to the worker (no worker runs
+ * under Playwright, so the payload is still intact).
+ */
+async function tokenFor(email: string): Promise<string> {
+  const found = await rows<{ token: string | null }>(
+    (sql) => sql`
+      select j.payload ->> 'token' as token
+      from job_queue j
+      join reviews r on r.id::text = j.payload ->> 'reviewId'
+      where j.kind = 'notify.review.submitted' and r.author_email = ${email}
+      order by j.created_at desc limit 1
+    `,
+  );
+  const token = found[0]?.token;
+  if (!token) throw new Error(`No queued verification email for ${email}`);
+  return token;
+}
+
+async function openFirstListing(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto(CITY);
+  await page.locator('[data-testid="listing-grid"] > li a').first().click();
+  await page.waitForURL(new RegExp(`${CITY}/[a-z0-9-]+$`));
+}
+
+test.describe("reviews", () => {
+  test.skip(FLAGS_OFF, "the reviews module is off in this build");
+
+  test("write, confirm, and the review is on the page", async ({ page }) => {
+    test.slow();
+
+    await openFirstListing(page);
+    const listingUrl = new URL(page.url()).pathname;
+
+    // The listing page always offers the route, whether or not it has reviews.
+    const leaveReview = page.locator('a[href^="/leave-review/"]').first();
+    await expect(leaveReview).toBeVisible();
+    await leaveReview.click();
+    await page.waitForURL(/\/leave-review\/[0-9a-f-]{36}$/);
+
+    const email = `e2e-review+${randomBytes(6).toString("hex")}@example.com`;
+    const body =
+      `Used them through this site and the whole thing was straightforward, ` +
+      `from the first reply through to the final invoice. Marker ${marker()}.`;
+
+    const form = page.locator('[data-testid="review-form"]');
+    await expect(form).toBeVisible();
+    await form.locator('input[name="rating"][value="5"]').check();
+    await form.locator("#rev-title").fill("Straightforward from start to finish");
+    await form.locator("#rev-body").fill(body);
+    await form.locator("#rev-name").fill("Playwright Smoke");
+    await form.locator("#rev-email").fill(email);
+
+    // The honeypot must stay empty — filling it returns a silent fake success.
+    await expect(form.locator("#company_website")).toHaveValue("");
+
+    await expect(form.locator('input[name="cf-turnstile-response"]'))
+      .not.toHaveValue("", { timeout: 15_000 });
+
+    await form.locator('button[type="submit"]').click();
+
+    const sent = page.locator('[data-testid="review-sent"]');
+    await expect(sent, "the form must confirm and say nothing is live yet").toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(sent).toContainText("Check your email");
+    await expect(page.locator('[data-testid="review-error"]')).toHaveCount(0);
+
+    // Nothing is published until the link is clicked.
+    await page.goto(`${listingUrl}/reviews`);
+    await expect(page.getByText(body)).toHaveCount(0);
+
+    const token = await tokenFor(email);
+
+    // Opening the link shows what is being confirmed and nothing more — a mail
+    // scanner following it must not be able to publish the review.
+    await page.goto(`/review/verify/${token}`);
+    const confirm = page.locator('[data-testid="review-confirm"]');
+    await expect(confirm).toBeVisible();
+    await expect(page.locator("h1")).toContainText("Confirm your review");
+
+    const [stillPending] = await rows<{ status: string; email_verified_at: string | null }>(
+      (sql) => sql`select status, email_verified_at from reviews where author_email = ${email}`,
+    );
+    expect(stillPending?.status, "a GET on the link must not publish anything").toBe("pending");
+    expect(stillPending?.email_verified_at).toBeNull();
+
+    await confirm.locator('button[type="submit"]').click();
+
+    // The button lands on the reviews page with the review on it.
+    await expect(page).toHaveURL(new RegExp(`${listingUrl}/reviews$`));
+    await expect(async () => {
+      await page.reload();
+      await expect(page.locator('[data-testid="review-list"]')).toContainText(body);
+    }).toPass({ timeout: 30_000 });
+
+    // And the listing page now carries the average it did not have before.
+    await page.goto(listingUrl);
+    await expect(page.locator('[data-testid="rating-summary"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rating-summary"]')).toContainText("out of 5");
+
+    // The rating is in the markup only because it is on the page.
+    const jsonLd = await page.locator('script[type="application/ld+json"]').allTextContents();
+    const business = jsonLd
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>)
+      .find((node) => typeof node["aggregateRating"] === "object");
+    expect(business, "aggregateRating must ship once the rating is rendered").toBeTruthy();
+  });
+
+  test("a review with nothing in it is not accepted", async ({ page }) => {
+    await openFirstListing(page);
+    await page.locator('a[href^="/leave-review/"]').first().click();
+    await page.waitForURL(/\/leave-review\/[0-9a-f-]{36}$/);
+
+    const form = page.locator('[data-testid="review-form"]');
+    await form.locator("#rev-name").fill("Playwright Smoke");
+    await form.locator("#rev-email").fill("someone@example.com");
+    await form.locator('button[type="submit"]').click();
+
+    // Either the browser blocks it on `required` or the action rejects it.
+    // What must never happen is a confirmation.
+    await expect(page.locator('[data-testid="review-sent"]')).toHaveCount(0);
+  });
+
+  test("an unissued token confirms nothing", async ({ page }) => {
+    await page.goto(`/review/verify/${randomBytes(24).toString("base64url")}`);
+    await expect(page.locator('[data-testid="review-verify-unknown"]')).toBeVisible();
+    await expect(page.locator('[data-testid="review-confirm"]')).toHaveCount(0);
+  });
+
+  test("a GET on the confirm URL publishes nothing", async ({ page }) => {
+    // The method is the guard. Anything that follows the URL without
+    // submitting the form — a scanner, a prefetcher — gets a 405.
+    const token = randomBytes(24).toString("base64url");
+    const response = await page.goto(`/review/verify/${token}/confirm`);
+    expect(response?.status()).toBe(405);
+  });
+});
+
+test.describe("reviews, flag off", () => {
+  test.skip(!FLAGS_OFF, "this build has the reviews module on");
+
+  test("every review route is a 404 and nothing links to one", async ({ page }) => {
+    await openFirstListing(page);
+    const listingUrl = new URL(page.url()).pathname;
+
+    await expect(page.locator('[data-testid="reviews-summary"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="reviews-empty"]')).toHaveCount(0);
+    await expect(page.locator('a[href^="/leave-review/"]')).toHaveCount(0);
+
+    expect((await page.goto(`${listingUrl}/reviews`))?.status()).toBe(404);
+    expect((await page.goto("/leave-review/00000000-0000-4000-8000-000000000000"))?.status())
+      .toBe(404);
+    expect((await page.goto("/review/verify/anything"))?.status()).toBe(404);
+    // POST, because the confirm route has no GET to answer with a 405 first.
+    expect((await page.request.post("/review/verify/anything/confirm")).status()).toBe(404);
+  });
+});

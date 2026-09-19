@@ -7,7 +7,13 @@ import { listings } from "@/lib/db/schema";
  *
  * Order of precedence:
  *   1. Paid tier. Money buys position; that is the product.
- *   2. rank_boost. Manual admin lever, plus the backlink reward.
+ *   2. rank_boost + backlink_boost. Two columns, deliberately: rank_boost is
+ *      the admin's, unbounded in both directions, and backlink_boost is the
+ *      badge programme's, written only by the backlink checker. They were one
+ *      column once, which meant clamping the sum to 0..5 to stop a weekly job
+ *      stacking the reward — and that clamp silently ate a hand-set +40 and
+ *      floored an admin's -10 the first time a badge verified. Summed here so
+ *      the ordering is still one expression.
  *   3. Claim status. Verified > claimed > unclaimed, and deliberately BELOW
  *      tier so a paid listing is never outranked by an unpaid verified one.
  *   4. A daily shuffle, stable within the day.
@@ -24,7 +30,7 @@ export function listingRankOrder(timezone: string): SQL[] {
           when 'essential' then 20
           else 10
         end desc`,
-    sql`${listings.rankBoost} desc`,
+    sql`(${listings.rankBoost} + ${listings.backlinkBoost}) desc`,
     sql`case ${listings.claimStatus}
           when 'verified' then 25
           when 'claimed' then 10

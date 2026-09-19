@@ -1,12 +1,17 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { auditLog, categories, cities, listings } from "@/lib/db/schema";
+import { categories, cities, listings } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/import/guardrails";
-import { allocateSlug } from "@/lib/routing/slugs";
+import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
+import { writeAuditAs } from "@/lib/db/queries/audit";
+import { ROOT_SCOPE, SlugError, allocateSlug } from "@/lib/routing/slugs";
+import { geocodeCity } from "@/lib/geo/geocode";
+import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";
 import type { TierName } from "@/config/types";
-import type { Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import type { listingStatus } from "@/lib/db/schema/enums";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Public submissions from /add-listing.
@@ -33,7 +38,8 @@ export interface SubmissionInput {
   submitterEmail: string;
   /** What they asked for, NOT what they get. See createSubmission. */
   requestedTier: TierName;
-  ip: string;
+  /** Null when no proxy header identified the submitter. Never a placeholder. */
+  ip: string | null;
 }
 
 export interface SubmissionOptions {
@@ -41,13 +47,25 @@ export interface SubmissionOptions {
   regions: string[];
 }
 
-export interface DuplicateMatch {
-  listingId: string;
-  name: string;
-  /** Listing slug, for the /claim/{slug} link we offer instead of a second row. */
-  slug: string;
-  reason: string;
-}
+/**
+ * What the submitter is allowed to know about a match.
+ *
+ * 'match' names the listing and points at its live page. 'pending' says only
+ * that we already hold something: an unpublished row's name and slug are not
+ * public, and a form that returned them would be a lookup tool — type a phone
+ * number, read back a listing nobody is meant to see yet.
+ */
+export type DuplicateMatch =
+  | {
+      kind: "match";
+      listingId: string;
+      name: string;
+      /** Listing slug. Per city, so it is only a URL alongside citySlug. */
+      slug: string;
+      citySlug: string;
+      reason: string;
+    }
+  | { kind: "pending" };
 
 export type SubmissionResult =
   | { outcome: "created"; listingId: string; slug: string }
@@ -55,16 +73,19 @@ export type SubmissionResult =
   | { outcome: "unknown-category" };
 
 /**
- * Written to audit_log when the submitted town is not one we hold.
+ * Written to audit_log when the submitted town cannot be resolved to ONE city.
  *
- * There is no submissions table and `listings.city_id` is NOT NULL, so a
- * submission for an unknown town cannot become a listing row without creating
- * the city first — and creating cities from unauthenticated input is exactly
- * how a directory ends up with "Lodnon" and a thin, unindexable page for it.
- * Parking the payload keeps the submission durable and puts city creation
- * where it belongs: behind admin approval.
+ * A name we have never seen is now created (see `createAutoCity`). What is
+ * still parked is the case creating a city cannot answer: a name we already
+ * hold in a region other than the one typed — "Newport" with no county, or
+ * "Leeds, Kent". Guessing there files the listing under the wrong pillar page
+ * or mints a near-twin of a city we already have, and only an admin looking at
+ * the address can tell which. Parking keeps the submission durable meanwhile.
  */
 export const PARKED_SUBMISSION_ACTION = "listing_submission.pending_city";
+
+/** Written to audit_log when a submission brings a town we did not hold. */
+export const AUTO_CITY_ACTION = "city.auto_created";
 
 /** The selects on the form. Public taxonomy, so nothing is viewer-gated. */
 export async function submissionOptions(
@@ -90,35 +111,146 @@ export async function submissionOptions(
 }
 
 /**
- * Resolves the typed town to a city we already hold. Returns null — never a
- * new city — when there is no confident match.
+ * What the typed town is: one city we hold, a name we have never seen, or a
+ * question only an admin can answer.
  *
- * Two cities can share a name (Newport, Richmond), which is the entire reason
- * the form asks for a region. Ambiguity without a region resolves to null and
- * goes to admin rather than guessing a county and filing the listing under the
- * wrong pillar page.
+ * `new` is the permission to create. It is given ONLY when nothing we hold
+ * shares the name, because that is the one case where creating a city cannot
+ * collide with an existing pillar page. Everything else is `ambiguous`:
+ * two Newports and no county, or a Leeds in a county we do not have it in.
+ * The second of those looks like a new town and is far more often a mistyped
+ * county, so it goes to a human rather than minting a near-twin city that then
+ * splits a town's listings across two pages.
+ *
+ * The exception is a namesake that holds NO region — which is what an
+ * auto-created city is (see `createAutoCity`). The region a submitter sends for
+ * such a town is picked from a `<select>` of the regions we already hold, so it
+ * cannot be right and must not be read as a mismatch: doing so would park every
+ * submission after the first one for the same new town, for ever.
  */
+export type CityResolution =
+  | { kind: "found"; cityId: string }
+  | { kind: "ambiguous" }
+  | { kind: "new" };
+
 export async function resolveSubmittedCity(
   tx: TestDb,
   city: string,
   region: string | null,
-): Promise<string | null> {
+): Promise<CityResolution> {
   const wanted = city.trim().toLowerCase();
-  if (wanted === "") return null;
+  // An empty name is not a new city, it is no city at all.
+  if (wanted === "") return { kind: "ambiguous" };
 
   const rows = await tx
     .select({ id: cities.id, region: cities.region })
     .from(cities)
     .where(sql`lower(${cities.name}) = ${wanted}`);
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return { kind: "new" };
 
-  if (region !== null && region.trim() !== "") {
-    const wantedRegion = region.trim().toLowerCase();
+  const wantedRegion = region?.trim().toLowerCase() ?? "";
+  if (wantedRegion !== "") {
     const exact = rows.find((r) => r.region?.toLowerCase() === wantedRegion);
-    return exact?.id ?? null;
+    if (exact) return { kind: "found", cityId: exact.id };
   }
-  return rows.length === 1 ? (rows[0]?.id ?? null) : null;
+
+  // An earlier auto-created city, which holds no region by design. One is an
+  // answer; two would be a genuine question, and go to an admin like any other.
+  const regionless = rows.filter((r) => r.region === null);
+  if (regionless.length === 1) return { kind: "found", cityId: regionless[0]!.id };
+  if (regionless.length > 1) return { kind: "ambiguous" };
+
+  if (wantedRegion !== "") return { kind: "ambiguous" };
+  const only = rows.length === 1 ? rows[0] : undefined;
+  return only ? { kind: "found", cityId: only.id } : { kind: "ambiguous" };
+}
+
+/**
+ * Creates the city a submission brought with it, or returns null when the name
+ * cannot be a root slug.
+ *
+ * Published so the page renders — a submitter who is told their listing is
+ * filed in Otley should be able to see Otley — and `is_indexable = false` with
+ * no intro copy so it earns nothing: it is out of the sitemap, out of the
+ * footer, out of every internal-linking block, and carries `noindex` until it
+ * clears the gate on its own terms. Global constraint 9 is not bypassed here;
+ * it is simply not met yet, and `recomputeCityIndexability` is what will
+ * notice when it is.
+ *
+ * `lat`/`lng` are null rather than guessed, and so is `region`. The form's
+ * region `<select>` is built from the regions we already hold, so a submitter
+ * naming a town in a region we do not cover can only pick a wrong one —
+ * persisting it would feed that wrong value straight back into the select for
+ * everybody after them, and into the city's own page. What they picked is kept
+ * on the audit row as `submittedRegion` so an admin can set the real one.
+ *
+ * The cost is that the slug has no disambiguator left: a second auto city whose
+ * name slugifies the same takes `name-2`. That is the accepted trade — a
+ * numbered slug is visible and fixable, a wrong region is neither.
+ *
+ * Returns null for a name `allocateSlug` refuses — a reserved root slug
+ * ("Search"), or a name with nothing slug-able in it. Those submissions park.
+ * A SlugError thrown out of here would 500 the form for a typo.
+ */
+async function createAutoCity(
+  tx: TestDb,
+  input: { name: string; region: string | null; ip: string | null },
+): Promise<string | null> {
+  const id = randomUUID();
+  const name = input.name.trim();
+  const submittedRegion = input.region?.trim() || null;
+
+  let slug: string;
+  try {
+    slug = await allocateSlug(tx, {
+      parentScope: ROOT_SCOPE,
+      desired: name,
+      kind: "city",
+      entityId: id,
+      // No disambiguator: the submitted region is not this city's region (see
+      // above), so using it here would bake a value we do not trust into the
+      // URL. A collision takes `name-2`.
+    });
+  } catch (error) {
+    if (error instanceof SlugError) return null;
+    throw error;
+  }
+
+  // Asked with the region the submitter gave, because a geocoder wants every
+  // hint it can get — but its answer is the only thing we keep from it.
+  const located = await geocodeCity({
+    name,
+    region: submittedRegion,
+    country: siteConfig.country,
+  });
+
+  await tx.insert(cities).values({
+    id,
+    name,
+    slug,
+    region: null,
+    country: siteConfig.country,
+    lat: located.point?.lat ?? null,
+    lng: located.point?.lng ?? null,
+    isPublished: true,
+    isIndexable: false,
+    introHtml: null,
+    createdBy: "auto",
+  });
+
+  // Nobody signed in: a submission is public, so the row has no actor.
+  await writeAuditAs(tx, null, {
+    action: AUTO_CITY_ACTION,
+    entityType: "city",
+    entityId: id,
+    // `region: null` is the city's; `submittedRegion` is what the form sent and
+    // is the only record of it — an admin setting the real region works from it.
+    meta: { name, region: null, submittedRegion, slug, geocode: located.reason },
+    ip: input.ip,
+  });
+
+  return id;
 }
 
 /**
@@ -126,12 +258,17 @@ export async function resolveSubmittedCity(
  * business submitted by hand is judged a duplicate on exactly the same terms
  * as one arriving in a feed: matching name and postcode, or a phone number
  * that normalises to the same digits.
+ *
+ * The match itself runs over every listing — a second row for a business that
+ * is merely pending is still a duplicate — but only an admin is told which
+ * one. Anyone else learns that a published listing exists, or nothing.
  */
 export async function findSubmissionDuplicate(
   tx: TestDb,
+  viewer: Viewer,
   input: Pick<SubmissionInput, "name" | "city" | "postcode" | "phone">,
 ): Promise<DuplicateMatch | null> {
-  const hit = await findDuplicate(tx, {
+  const hit = await findDuplicate(tx, viewer, {
     name: input.name.trim(),
     city: input.city.trim(),
     // findDuplicate reads only name, postcode and phone; category is part of
@@ -143,13 +280,28 @@ export async function findSubmissionDuplicate(
   if (!hit) return null;
 
   const [row] = await tx
-    .select({ name: listings.name, slug: listings.slug })
+    .select({
+      name: listings.name,
+      slug: listings.slug,
+      status: listings.status,
+      citySlug: cities.slug,
+    })
     .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(eq(listings.id, hit.listingId))
     .limit(1);
   if (!row) return null;
 
-  return { listingId: hit.listingId, name: row.name, slug: row.slug, reason: hit.reason };
+  if (row.status !== "published" && !isAdmin(viewer)) return { kind: "pending" };
+
+  return {
+    kind: "match",
+    listingId: hit.listingId,
+    name: row.name,
+    slug: row.slug,
+    citySlug: row.citySlug,
+    reason: hit.reason,
+  };
 }
 
 /**
@@ -162,6 +314,7 @@ export async function findSubmissionDuplicate(
  */
 export async function createSubmission(
   tx: TestDb,
+  viewer: Viewer,
   input: SubmissionInput,
 ): Promise<SubmissionResult> {
   const [category] = await tx
@@ -181,20 +334,27 @@ export async function createSubmission(
     ip: input.ip,
   };
 
-  const cityId = await resolveSubmittedCity(tx, input.city, input.region);
+  // An unknown town is created rather than parked: a submission that names a
+  // place we do not cover is the cheapest signal there is that we should, and
+  // the new city earns nothing by existing (see createAutoCity).
+  const resolved = await resolveSubmittedCity(tx, input.city, input.region);
+  const cityId =
+    resolved.kind === "found"
+      ? resolved.cityId
+      : resolved.kind === "new"
+        ? await createAutoCity(tx, { name: input.city, region: input.region, ip: input.ip })
+        : null;
+
   if (cityId === null) {
     // ip is recorded once, on the audit row's own column.
     const { ip: _ip, ...payload } = input;
-    const [parked] = await tx
-      .insert(auditLog)
-      .values({
-        action: PARKED_SUBMISSION_ACTION,
-        entityType: "listing_submission",
-        meta: { ...submission, listing: payload },
-        ip: input.ip,
-      })
-      .returning({ id: auditLog.id });
-    return { outcome: "parked", parkedId: parked!.id };
+    const parkedId = await writeAuditAs(tx, null, {
+      action: PARKED_SUBMISSION_ACTION,
+      entityType: "listing_submission",
+      meta: { ...submission, listing: payload },
+      ip: input.ip,
+    });
+    return { outcome: "parked", parkedId };
   }
 
   const id = randomUUID();
@@ -230,5 +390,74 @@ export async function createSubmission(
     customFields: { submission },
   });
 
+  // Global constraint 9: the gate is recomputed by whatever changes a listing's
+  // status or city, in the SAME transaction as the change. A submission files a
+  // `pending` row, so today this cannot move the count — and that is exactly
+  // why it is here. The rule is "every write path recomputes", not "the write
+  // paths we think can matter recompute": the day a submission lands published,
+  // or a city's threshold changes underneath it, this is already correct.
+  await recomputeCityIndexability(tx, viewer, cityId);
+
   return { outcome: "created", listingId: id, slug };
+}
+
+export type ListingStatus = (typeof listingStatus.enumValues)[number];
+
+export type StatusChange =
+  | { outcome: "changed"; listingId: string; from: ListingStatus; to: ListingStatus }
+  | { outcome: "unknown-listing" }
+  | { outcome: "forbidden" };
+
+/**
+ * THE status change. Approval, rejection, publication and takedown are all this
+ * one function, because all four are the same event to the indexing gate.
+ *
+ * The status write and `recomputeCityIndexability` run on the same handle, so a
+ * caller that wraps them in a transaction gets both or neither. A city cannot
+ * end up advertising a listing count it does not have, which is what a status
+ * change that forgot to recompute used to leave behind: the third listing in a
+ * city would publish, the city would stay `is_indexable = false`, and the
+ * pillar page would carry `noindex` for ever with nothing to trigger a retry.
+ *
+ * Admin only. Status is the difference between a moderation queue and the open
+ * web, so it is not something a viewer can change on their own behalf.
+ */
+export async function setListingStatus(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+  status: ListingStatus,
+): Promise<StatusChange> {
+  if (!isAdmin(viewer)) return { outcome: "forbidden" };
+
+  const [before] = await tx
+    .select({
+      id: listings.id,
+      status: listings.status,
+      cityId: listings.cityId,
+      publishedAt: listings.publishedAt,
+    })
+    .from(listings)
+    .where(eq(listings.id, listingId))
+    .limit(1);
+  if (!before) return { outcome: "unknown-listing" };
+
+  await tx
+    .update(listings)
+    .set({
+      status,
+      updatedAt: now(),
+      // Stamped once, the first time it goes live, and keyed on the column
+      // rather than on the previous status. A republish after a takedown is
+      // not a new publication date, and rewriting it would reorder the site's
+      // own "recently added" every time a moderator toggled something.
+      ...(status === "published" && before.publishedAt === null
+        ? { publishedAt: now() }
+        : {}),
+    })
+    .where(eq(listings.id, listingId));
+
+  await recomputeCityIndexability(tx, viewer, before.cityId);
+
+  return { outcome: "changed", listingId, from: before.status, to: status };
 }

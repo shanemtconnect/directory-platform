@@ -1,21 +1,34 @@
 import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
+import { prerenderingWithoutDatabase } from "@/lib/db/build-phase";
 import { siteConfig } from "@/config/site.config";
 import { listCities } from "@/lib/db/queries/indexes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { countryProfile } from "@/lib/geo/countries";
 import { JsonLd } from "@/components/seo/JsonLd";
-import { breadcrumbSchema, pillarSchema } from "@/lib/schema/builders";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { pillarSchema } from "@/lib/schema/builders";
 
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: `${siteConfig.entity.Plural} by location`,
   description: `Browse ${siteConfig.entity.plural} by town and city.`,
+  alternates: { canonical: "/cities" },
 };
 
+/**
+ * ISR, not force-dynamic and not force-static: `revalidate = 3600` above stays
+ * exactly as it was. `prerenderingWithoutDatabase()` covers the one case that
+ * used to make `next build` require a live database — the production build of
+ * a container image, where no DATABASE_URL is available — by prerendering the
+ * empty-state shell and letting ISR fill in the real page on the first request.
+ * See lib/db/build-phase.ts.
+ */
 export default async function CitiesIndex() {
-  const cities = await listCities(db as never, PUBLIC_VIEWER);
+  const cities = prerenderingWithoutDatabase()
+    ? []
+    : await listCities(db as never, PUBLIC_VIEWER);
   const e = siteConfig.entity;
   const profile = countryProfile(siteConfig.country);
 
@@ -30,7 +43,6 @@ export default async function CitiesIndex() {
 
   return (
     <>
-      <JsonLd data={breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Locations", path: "/cities" }])} />
       <JsonLd
         data={pillarSchema({
           title: `${e.Plural} by location`,
@@ -39,6 +51,7 @@ export default async function CitiesIndex() {
         })}
       />
       <main>
+        <Breadcrumbs trail={[{ name: "Home", path: "/" }, { name: "Locations", path: "/cities" }]} />
         <h1>{e.Plural} by location</h1>
         {cities.length === 0 ? (
           <p>No locations are listed yet.</p>
@@ -46,7 +59,7 @@ export default async function CitiesIndex() {
           regions.map(([region, list]) => (
             <section key={region}>
               <h2>{region === "Other" ? profile.name : region}</h2>
-              <ul>
+              <ul className="link-grid">
                 {list.map((c) => (
                   <li key={c.id}>
                     <a href={`/${c.slug}`}>{c.name}</a>{" "}

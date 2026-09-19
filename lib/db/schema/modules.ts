@@ -185,7 +185,15 @@ export const campaignMessages = pgTable("campaign_messages", {
   clickedAt: timestamp("clicked_at", { withTimezone: true }),
   bouncedAt: timestamp("bounced_at", { withTimezone: true }),
   unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
-}, (t) => [index("campaign_messages_campaign_idx").on(t.campaignId)]);
+}, (t) => [
+  index("campaign_messages_campaign_idx").on(t.campaignId),
+  // The magic token is a BEARER CREDENTIAL — whoever holds it can open a claim
+  // on the listing it names. A collision would hand one recipient another
+  // business's listing, and 32 bytes of CSPRNG is a reason to expect that
+  // never to happen, not a guarantee that it cannot. Nullable, so a channel
+  // with no magic link is unaffected: Postgres does not compare NULLs.
+  uniqueIndex("campaign_messages_magic_token_key").on(t.magicToken),
+]);
 
 /** One unsubscribe means one unsubscribe forever, across every campaign. */
 export const unsubscribes = pgTable("unsubscribes", {

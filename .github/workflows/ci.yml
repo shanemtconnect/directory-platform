@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A manual run: every job below runs, and it is also the only way to run
+  # the `audit` job (which has `if: github.event_name == 'workflow_dispatch'`).
+  workflow_dispatch:
 
 jobs:
   test:
@@ -28,13 +31,24 @@ jobs:
       DATABASE_URL: postgres://directory:directory@localhost:5433/directory_test
       TEST_DATABASE_URL: postgres://directory:directory@localhost:5433/directory_test
       REDIS_URL: redis://localhost:6380
+      NEXT_PUBLIC_DEMO_MODE: "true"
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
       - run: corepack enable
+
+      - name: pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -56,12 +70,38 @@ jobs:
       - name: Build with all optional flags ON
         run: pnpm build:flags-on
 
+      # No Sentry source-map upload here, on purpose. Coolify builds the
+      # production image itself from the Dockerfile (see deploy.yml), so a
+      # `.next` uploaded from this runner — a different build, with
+      # SITE_FLAGS_OVERRIDE and NEXT_PUBLIC_SITE_URL=https://ci.example — has
+      # different chunks and debug IDs from the bundle that actually serves,
+      # and no production event would ever resolve against it. Source maps
+      # stay off until the Dockerfile `builder` stage does the upload with a
+      # build secret; README → Monitoring says so.
+
   # End-to-end smoke tests against a real production build and a seeded
   # database. Separate job, not a step on `test`: it needs seed data, a
   # browser, and a running server, none of which the unit job wants.
+  #
+  # Run twice, flags off and flags on. The `test` job proves both builds
+  # COMPILE; only Playwright proves both of them SERVE — that a route behind a
+  # disabled flag is gone from the nav rather than merely 404ing, and that the
+  # enabled build's extra routes actually resolve.
   e2e:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quoted: YAML reads a bare off/on as a boolean, and
+        # SITE_FLAGS_OVERRIDE=false is not a value the build understands.
+        flags: ["off", "on"]
+    name: e2e (flags ${{ matrix.flags }})
     services:
+      # Its own database, never the dev one: this suite writes, because
+      # e2e/location.spec.ts submits a listing through the real form and creates
+      # a city with it. Locally the same database is built by
+      # `corepack pnpm test:e2e:db` (scripts/e2e-db.sh) and is what
+      # playwright.config.ts defaults to; keep the name in step with both.
       postgres:
         image: postgres:16-alpine
         env:
@@ -81,31 +121,197 @@ jobs:
       REDIS_URL: redis://localhost:6380
       # Pinned to the test origin so sitemap <loc> assertions have a real base.
       NEXT_PUBLIC_SITE_URL: http://localhost:3200
+      # Flags are build-time constants, so this has to be set for the build the
+      # Playwright webServer runs, not just for the test process.
+      SITE_FLAGS_OVERRIDE: ${{ matrix.flags }}
+      # The demo blog posts are opt-in; the suite uses them as fixtures.
+      NEXT_PUBLIC_DEMO_MODE: "true"
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
       - run: corepack enable
+
+      - name: pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - run: pnpm install --frozen-lockfile
 
+      # Keyed on the lockfile: the browser build has to match the client that
+      # drives it, and @playwright/test only changes version when that changes.
+      # No restore-keys — a near-miss restore would hand us the wrong browser.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Migrate
-        run: pnpm db:migrate
+      # The cached browser skips the download but not the shared libraries.
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
 
-      - name: Seed
-        run: pnpm seed
+      # scripts/e2e-db.sh (added in Task 19) creates directory_e2e if it is not
+      # already there, migrates it and seeds it — the same script a developer
+      # runs locally via `pnpm test:e2e:db`, so CI and a laptop build the
+      # database the same way. `job.services.postgres.id` is the running
+      # postgres service container's id: the script drives it with `docker
+      # exec` (the same approach as scripts/reseed-dev.sh) rather than a local
+      # psql client, which this runner does not have.
+      - name: Create and seed directory_e2e
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: pnpm test:e2e:db
 
-      # playwright.config.ts starts the server itself (build + start -p 3200).
+      # playwright.config.ts starts the server itself: build, assemble the
+      # standalone bundle, then run node .next/standalone/server.js.
       - name: E2E
         run: pnpm test:e2e
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
-          name: playwright-report
+          name: playwright-report-flags-${{ matrix.flags }}
           path: playwright-report/
           retention-days: 7
+
+  # Lighthouse + axe on every page type, against the same production build
+  # and seeded database the e2e job uses. On demand only: forty-odd
+  # Lighthouse runs are minutes of CI a push does not need to wait for. Run
+  # it from the Actions tab before a release, or after touching a layout.
+  audit:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: directory
+          POSTGRES_PASSWORD: directory
+          POSTGRES_DB: directory_e2e
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U directory"
+          --health-interval 2s --health-timeout 5s --health-retries 15
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+
+    env:
+      DATABASE_URL: postgres://directory:directory@localhost:5433/directory_e2e
+      REDIS_URL: redis://localhost:6380
+      NEXT_PUBLIC_SITE_URL: http://localhost:3200
+      NEXT_PUBLIC_DEMO_MODE: "true"
+      # The audit reads the sitemap to find its pages, and a staging build
+      # serves an empty one (see playwright.config.ts on SITE_ENV).
+      SITE_ENV: production
+      BETTER_AUTH_SECRET: ci-not-a-real-secret
+      BETTER_AUTH_URL: http://localhost:3200
+      BETTER_AUTH_RATE_LIMIT: "off"
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      AUDIT_BASE_URL: http://localhost:3200
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - run: corepack enable
+
+      - name: pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Create and seed directory_e2e
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: pnpm test:e2e:db
+
+      # The same server the e2e suite runs, assembled the same way. Started
+      # in the background of THIS step and killed before it ends, so a
+      # failing audit cannot leave the job hanging on a live server.
+      - name: Build, serve and audit
+        env:
+          PORT: "3200"
+          HOSTNAME: 127.0.0.1
+        run: |
+          pnpm build
+          rm -rf .next/standalone/.next/static .next/standalone/public
+          cp -R .next/static .next/standalone/.next/static
+          if [ -d public ]; then cp -R public .next/standalone/public; fi
+          node .next/standalone/server.js &
+          SERVER=$!
+          trap 'kill $SERVER' EXIT
+          for i in $(seq 1 60); do
+            curl -fsS -o /dev/null http://localhost:3200/api/health && break
+            sleep 2
+          done
+          pnpm audit:pages
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: audit-report
+          path: audit-report.json
+          retention-days: 30
+
+  # The image IS the deliverable, and nothing else in CI builds it, so a
+  # Dockerfile that no longer builds is only discovered at deploy time.
+  #
+  # It builds with no database on purpose: nothing here passes a DATABASE_URL
+  # build arg, and the Dockerfile no longer declares one. That is the check —
+  # if a page starts querying Postgres at build time again, this job goes red.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build the runner image
+        run: |
+          docker build --target runner \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://ci.example \
+            -t directory-platform:ci .
+
+      # Same Dockerfile, different stage (worker/index.ts under tsx). It is a
+      # separate Coolify application in production (see README → Deploy) and
+      # nothing else in CI builds it, so a break here — a missing COPY, an
+      # import only the worker's dev-inclusive tree can resolve — is only
+      # otherwise discovered when a deploy fails.
+      - name: Build the worker image
+        run: |
+          docker build --target worker \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://ci.example \
+            -t directory-platform:ci-worker .
