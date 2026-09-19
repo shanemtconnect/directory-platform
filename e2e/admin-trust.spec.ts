@@ -177,7 +177,10 @@ async function expectOnTownPage(page: Page, name: string, present: boolean): Pro
     .poll(
       async () => {
         await page.goto(`/${TOWN.slug}`, { waitUntil: "domcontentloaded" });
-        return await page.locator('[data-testid="listing-grid"]').getByText(name).count();
+        // Exact: every card's Save button also carries the name in a hidden
+        // suffix ("Save, <name>, to your shortlist"), which a substring match
+        // would count as a second card.
+        return await page.locator('[data-testid="listing-grid"]').getByText(name, { exact: true }).count();
       },
       {
         timeout: 60_000,

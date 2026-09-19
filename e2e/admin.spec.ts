@@ -206,7 +206,8 @@ test.describe("admin console", () => {
       .poll(
         async () => {
           await page.goto(`/${TOWN.slug}`, { waitUntil: "domcontentloaded" });
-          return page.locator('[data-testid="listing-grid"]').getByText(listingName).count();
+          // Exact: the card's Save button repeats the name in a hidden suffix.
+          return page.locator('[data-testid="listing-grid"]').getByText(listingName, { exact: true }).count();
         },
         { timeout: 60_000, message: "the approved listing must appear on its town page" },
       )
