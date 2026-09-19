@@ -55,6 +55,25 @@ describe("GET /api/health", () => {
     expect(body).toHaveProperty("uptimeSeconds");
   });
 
+  const HANDLE_STATES: RedisState[] = [
+    { status: "unconfigured", downUntil: null },
+    { status: "connecting", downUntil: null },
+    { status: "ready", downUntil: null },
+    { status: "disconnected", downUntil: null },
+    { status: "down", downUntil: 1_700_000_000_000 },
+  ];
+
+  it.each(HANDLE_STATES)("never lets the handle state ($status) gate ok or the status code", async (state) => {
+    redisState.mockReturnValue(state);
+    const { GET } = await import("./route");
+
+    const res = await GET();
+    const body: unknown = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, redisClient: state });
+  });
+
   it("reports the shared Redis handle's state beside the probe result", async () => {
     // The probe opens a fresh connection and measures the server; the handle
     // is what the rate limiter and counters actually get, and it can be in a

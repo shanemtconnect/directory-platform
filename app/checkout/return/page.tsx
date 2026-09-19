@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { siteConfig } from "@/config/site.config";
@@ -87,7 +88,13 @@ export default async function CheckoutReturnPage({
         // read inside the transaction by `applyEffect`: the same pages the
         // webhook and the sync job bust, paginated city pages and the
         // category pillar included.
-        revalidateListingPaths(out.paths);
+        //
+        // In `after()`, never inline: this is a page, and Next refuses
+        // `revalidatePath` during a render ("used revalidatePath during
+        // render which is unsupported") — the transaction had committed and
+        // the congratulations page 500'd. After the response is the right
+        // moment anyway; the buyer is looking at this page, not the listing.
+        after(() => revalidateListingPaths(out.paths));
       }
     }
   }

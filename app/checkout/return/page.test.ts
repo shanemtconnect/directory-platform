@@ -16,6 +16,11 @@ const currentViewer = vi.fn<() => Promise<Viewer>>();
 const reconcileSubscription = vi.fn<() => Promise<ReconcileOutcome>>();
 const subscriptionForOwnerByProviderId = vi.fn<() => Promise<OwnerSubscription | null>>();
 const revalidateListingPaths = vi.fn<(paths: readonly string[]) => void>();
+// `after` runs its callback once the response has been sent; here it runs it
+// at once so the assertions below see the call. What matters is that the
+// page never calls the helper outside `after` — see the test at the foot.
+const after = vi.fn<(fn: () => void) => void>((fn) => fn());
+vi.mock("next/server", () => ({ after: (fn: () => void) => after(fn) }));
 
 const HANDLE = { marker: "the transaction" };
 const transaction = vi.fn(
@@ -63,6 +68,7 @@ beforeEach(() => {
   subscriptionForOwnerByProviderId.mockReset().mockResolvedValue(OWNED);
   reconcileSubscription.mockReset();
   revalidateListingPaths.mockReset();
+  after.mockClear();
 });
 
 describe("/checkout/return", () => {
@@ -76,6 +82,8 @@ describe("/checkout/return", () => {
     // is busted here exactly as it is for the webhook.
     expect(revalidateListingPaths).toHaveBeenCalledTimes(1);
     expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
+    // Revalidation is deferred past the render: inline it would throw in Next.
+    expect(after).toHaveBeenCalledTimes(1);
   });
 
   it.each(["cancel", "expire", "suspend", "reactivate"])(
