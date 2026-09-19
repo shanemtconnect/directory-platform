@@ -1,8 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL } from "./database";
+import { paginatingCity } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The same database the server under test writes to. Asserting on the

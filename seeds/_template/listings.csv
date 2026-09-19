@@ -1,4 +1,4 @@
-name,city,category,address_line1,postcode,phone,website
-Example {{Singular}} One,Example City One,Featured {{Plural}},1 High Street,{{postcode}},{{phone}},https://example.com/one
-Example {{Singular}} Two,Example City Two,Independent {{Plural}},2 High Street,{{postcode}},{{phone}},https://example.com/two
-Example {{Singular}} Three,Example City Three,Budget {{Plural}},3 High Street,{{postcode}},{{phone}},https://example.com/three
+name,city,region,category,address_line1,postcode,phone,website
+Example {{Singular}} One,Example City One,Example {{RegionLabel}} A,Featured {{Plural}},1 High Street,{{postcode}},{{phone}},https://example.com/one
+Example {{Singular}} Two,Example City Two,Example {{RegionLabel}} B,Independent {{Plural}},2 High Street,{{postcode}},{{phone}},https://example.com/two
+Example {{Singular}} Three,Example City Three,Example {{RegionLabel}} C,Budget {{Plural}},3 High Street,{{postcode}},{{phone}},https://example.com/three

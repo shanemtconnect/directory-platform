@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL } from "./database";
+import { quietCity, uniquePhone, validPostcode } from "./fixtures";
 
 /**
  * The moderation round trip: a stranger submits, an admin approves, the public
@@ -25,28 +26,25 @@ import { E2E_DATABASE_URL } from "./database";
 const DATABASE_URL = E2E_DATABASE_URL;
 
 /**
- * Richmond in Greater London, not the North Yorkshire one: it holds a single
- * seeded listing, so an approved submission is on the first page of the town
- * without depending on where the daily shuffle puts it among twenty-six.
+ * A town with a region and as few listings as possible, so an approved
+ * submission is on the first page of it without depending on where the daily
+ * shuffle puts it among however many the seed holds. Filled in `beforeAll`
+ * from `quietCity()`, which reads the live counts rather than naming a town.
  */
-const TOWN = { region: "Greater London", city: "Richmond", slug: "richmond" };
+let TOWN: { region: string; city: string; slug: string };
+
+test.beforeAll(async () => {
+  const c = await quietCity();
+  if (c.region === null) {
+    throw new Error(`quietCity() returned ${c.slug} with no region — admin.spec.ts needs one.`);
+  }
+  TOWN = { region: c.region, city: c.name, slug: c.slug };
+});
 
 const PASSWORD = "not-a-real-password";
 
 function unique(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-}
-
-/**
- * A phone number no earlier run used.
- *
- * `findSubmissionDuplicate` matches on normalised phone digits across EVERY
- * listing, pending ones included, so a fixed number makes the second run of
- * this suite a duplicate of the first. 020 7946 0xxx is Ofcom's reserved
- * drama range, so it can never reach a real line.
- */
-function uniquePhone(): string {
-  return `020 7946 ${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`;
 }
 
 async function signUp(page: Page, email: string): Promise<void> {
@@ -116,7 +114,7 @@ async function seedPendingListing(name: string): Promise<string> {
       ) values (
         ${seed.id}, ${name}, ${slug}, ${seed.city_id}, ${seed.vertical_id}, ${seed.category_id},
         'pending', 'free', 'unclaimed', 'public',
-        '1 Test Lane', 'TW9 1AA', ${uniquePhone()},
+        '1 Test Lane', ${validPostcode()}, ${uniquePhone()},
         'Seeded by the admin end-to-end test to exercise the rejection path.',
         ${`${unique("submitter")}@example.com`},
         ${sql.json({ submission: { submitterName: "Playwright Submitter", requestedTier: "free" } })}
@@ -150,7 +148,7 @@ async function submitListing(page: Page, name: string): Promise<void> {
   await form.locator("#sl-address").fill("1 Test Lane");
   await form.locator("#sl-region").selectOption(TOWN.region);
   await form.locator("#sl-city").fill(TOWN.city);
-  await form.locator("#sl-postcode").fill("TW9 1AA");
+  await form.locator("#sl-postcode").fill(validPostcode());
   await form.locator("#sl-phone").fill(uniquePhone());
   await form.locator("#sl-your-name").fill("Playwright Submitter");
   await form.locator("#sl-your-email").fill(`${unique("submitter")}@example.com`);
@@ -168,7 +166,7 @@ async function submitListing(page: Page, name: string): Promise<void> {
 test.describe("admin console", () => {
   test("an admin approves a submission and it appears on the town page", async ({ page }) => {
     const email = `${unique("admin")}@example.com`;
-    const listingName = `E2E ${unique("Hall")}`;
+    const listingName = `E2E ${unique("Listing")}`;
 
     await signUp(page, email);
     await promoteToAdmin(email);
@@ -231,7 +229,7 @@ test.describe("admin console", () => {
 
   test("a rejection needs a reason before it will go through", async ({ page }) => {
     const email = `${unique("admin")}@example.com`;
-    const listingName = `E2E ${unique("Barn")}`;
+    const listingName = `E2E ${unique("Listing")}`;
 
     await signUp(page, email);
     await promoteToAdmin(email);

@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { siteConfig } from "@/config/site.config";
+import { paginatingCity } from "./fixtures";
+
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The right @type on the right page.
@@ -38,14 +44,14 @@ async function typesOn(page: Page, path: string): Promise<Set<string>> {
 
 test.describe("JSON-LD @type per page type", () => {
   test("a city pillar is a CollectionPage with an ItemList and breadcrumbs", async ({ page }) => {
-    const types = await typesOn(page, "/richmond-north-yorkshire");
+    const types = await typesOn(page, CITY);
     for (const required of ["CollectionPage", "ItemList", "BreadcrumbList"]) {
       expect([...types], `pillar page is missing ${required}`).toContain(required);
     }
   });
 
   test("a city-category page is a CollectionPage with an ItemList and breadcrumbs", async ({ page }) => {
-    await page.goto("/richmond-north-yorkshire");
+    await page.goto(CITY);
     const href = await page
       .locator('[data-testid="category-links"] li a')
       .first()
@@ -59,7 +65,7 @@ test.describe("JSON-LD @type per page type", () => {
   });
 
   test("a listing carries the schema type the config names", async ({ page }) => {
-    await page.goto("/richmond-north-yorkshire");
+    await page.goto(CITY);
     const href = await page
       .locator('[data-testid="listing-grid"] > li a')
       .first()
@@ -76,10 +82,20 @@ test.describe("JSON-LD @type per page type", () => {
 
   test("a blog post is a BlogPosting", async ({ page }) => {
     await page.goto("/blog");
-    const href = await page.locator("main a[href^='/blog/']").first().getAttribute("href");
-    expect(href, "no blog post to sample — is NEXT_PUBLIC_DEMO_MODE set?").toBeTruthy();
+    // `count()` first: `.first().getAttribute()` waits for an element and times
+    // out on a site that ships no posts, which is every clone.
+    const posts = page.locator("main a[href^='/blog/']");
+    if ((await posts.count()) === 0) {
+      // A clone ships without posts; the demo does not. On the demo leg an
+      // empty /blog is a regression, not a reason to skip.
+      expect(process.env.NEXT_PUBLIC_DEMO_MODE, "the demo site has lost its blog posts")
+        .not.toBe("true");
+      test.skip(true, "no blog post to sample: this site ships without posts");
+      return;
+    }
+    const href = (await posts.first().getAttribute("href"))!;
 
-    const types = await typesOn(page, href!);
+    const types = await typesOn(page, href);
     expect([...types], `${href} is not typed as a BlogPosting`).toContain("BlogPosting");
   });
 });

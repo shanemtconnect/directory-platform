@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+let CITY_NAME: string;
+test.beforeAll(async () => {
+  const city = await paginatingCity();
+  CITY = city.path;
+  CITY_NAME = city.name;
+});
 
 test.describe("listing detail", () => {
   test("clicking the first listing lands on its page with contact details and an enquiry form", async ({
@@ -24,7 +31,7 @@ test.describe("listing detail", () => {
     const contact = page.locator('section:has(h2#contact)');
     await expect(contact, "contact section must be visible").toBeVisible();
     await expect(contact.locator("address")).toBeVisible();
-    await expect(contact.locator("address")).toContainText(/Richmond/i);
+    await expect(contact.locator("address")).toContainText(new RegExp(CITY_NAME, "i"));
 
     // Enquiry form present, with the fields a person actually needs.
     const form = page.locator('[data-testid="enquiry-form"]');

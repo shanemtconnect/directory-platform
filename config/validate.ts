@@ -354,6 +354,18 @@ function isUnreachableOrigin(siteUrl: string | undefined): boolean {
   return RESERVED_SUFFIXES.some((s) => host.endsWith(s));
 }
 
+/**
+ * The placeholder a fresh checkout ships for `legalEntity` and
+ * `dataController`. Compared here, on a widened string, and nowhere else:
+ * `siteConfig` is `as const`, so `siteConfig.legalEntity === "TBC"` narrows to
+ * a literal comparison that TypeScript rejects as never-overlapping the moment
+ * a clone writes a real name — a clone that will not type-check.
+ */
+export function isPlaceholderLegalEntity(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "" || trimmed.toUpperCase() === "TBC";
+}
+
 export function validateProductionConfig(
   config: { legalEntity: string; supportEmail: string; dataController: string },
   env: Record<string, string | undefined>,
@@ -362,16 +374,13 @@ export function validateProductionConfig(
   if (isUnreachableOrigin(env.NEXT_PUBLIC_SITE_URL)) return;
 
   const problems: string[] = [];
-  if (config.legalEntity.trim() === "" || config.legalEntity.trim().toUpperCase() === "TBC") {
+  if (isPlaceholderLegalEntity(config.legalEntity)) {
     problems.push(`legalEntity is still "${config.legalEntity}"`);
   }
   // Defaults to legalEntity in config/site.config.ts (`legal.dataController`)
   // and reaches the privacy policy as who is responsible for visitor data —
   // same placeholder, same failure.
-  if (
-    config.dataController.trim() === "" ||
-    config.dataController.trim().toUpperCase() === "TBC"
-  ) {
+  if (isPlaceholderLegalEntity(config.dataController)) {
     problems.push(`dataController is still "${config.dataController}"`);
   }
   const email = config.supportEmail.trim().toLowerCase();

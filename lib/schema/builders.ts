@@ -1,6 +1,7 @@
 import type { cities, categories } from "@/lib/db/schema";
 import type { PublicListing } from "@/lib/db/queries/listings";
 import { siteConfig } from "@/config/site.config";
+import { isPlaceholderLegalEntity } from "@/config/validate";
 import { countryProfile } from "@/lib/geo/countries";
 import { siteOrigin } from "@/lib/site-env";
 import type { JsonLd } from "./types";
@@ -24,7 +25,7 @@ export function organisationSchema(): JsonLd {
     "@id": siteUrl("#organization"),
     name: siteConfig.name,
     url: siteUrl(),
-    legalName: siteConfig.legalEntity === "TBC" ? undefined : siteConfig.legalEntity,
+    legalName: isPlaceholderLegalEntity(siteConfig.legalEntity) ? undefined : siteConfig.legalEntity,
     email: siteConfig.supportEmail,
   });
 }

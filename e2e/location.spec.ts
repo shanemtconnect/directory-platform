@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { withE2eDb } from "./database";
+import { uniquePhone, validPostcode } from "./fixtures";
 
 /**
  * Auto city creation and the location switcher, end to end.
@@ -82,15 +83,16 @@ test.describe("a submission for a town we do not cover", () => {
     // and this one has no namesake.
     await form.locator("#sl-region").selectOption({ index: 1 });
     await form.locator("#sl-city").fill(NEW_TOWN);
-    await form.locator("#sl-postcode").fill(`LS1 ${String(stamp).slice(-1)}DY`);
+    await form.locator("#sl-postcode").fill(validPostcode());
     /*
      * A unique phone number per run, because the submission form reuses the
      * import duplicate guard: a second submission on the same number is a
-     * duplicate whatever it is called or wherever it is, so a fixed number here
-     * makes the test pass once and then report "already listed" for ever.
-     * 01632 96xxxx is Ofcom's reserved drama range — never a real subscriber.
+     * duplicate whatever it is called or wherever it is, so a fixed number
+     * here makes the test pass once and then report "already listed" for
+     * ever. `uniquePhone()` draws from the country's reserved-for-fiction
+     * range, so it can never reach a real subscriber.
      */
-    await form.locator("#sl-phone").fill(`01632 96${String(stamp).slice(-4)}`);
+    await form.locator("#sl-phone").fill(uniquePhone());
     await form.locator("#sl-your-name").fill("Playwright Smoke");
     await form.locator("#sl-your-email").fill(`e2e+${stamp}@example.com`);
 

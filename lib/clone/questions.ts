@@ -83,15 +83,15 @@ export const DEFAULT_TIMEZONE: Record<SupportedCountry, string> = {
 export const FEATURE_FLAG_DESCRIPTIONS: Record<FeatureFlag, string> = {
   reviews: "Public ratings and written reviews, with owner replies.",
   shortlist: "Visitors save entries to a shortlist and compare them side by side.",
-  quoteBroadcast: "One enquiry form sends the same brief to every shortlisted owner. Needs shortlist.",
+  quoteBroadcast: "One enquiry form sends the same brief to every shortlisted owner. Needs shortlist. NOT BUILT YET: the flag is reserved and changes nothing today.",
   contentHub: "Editorial blog and guide pages served from content/blog.",
   footerLinkMatrix: "City x category link grid in the footer, capped by seo.footerCitiesPerCategory.",
   claimOutreach: "Email campaign inviting owners of unclaimed entries to claim them.",
-  costGuides: "Price guide pages built from the currency and price-from fields.",
-  jobBoard: "A jobs section owners can post vacancies to.",
-  awards: "Annual awards computed from review volume and score. Needs reviews.",
-  affiliates: "Tracked outbound partner links and an affiliate disclosure block.",
-  utilityTool: "A niche calculator or planner tool on its own route.",
+  costGuides: "Price guide pages built from the currency and price-from fields. NOT BUILT YET: the flag is reserved and changes nothing today.",
+  jobBoard: "A jobs section owners can post vacancies to. NOT BUILT YET: the flag is reserved and changes nothing today.",
+  awards: "Annual awards computed from review volume and score. Needs reviews. NOT BUILT YET: the flag is reserved and changes nothing today.",
+  affiliates: "Tracked outbound partner links and an affiliate disclosure block. NOT BUILT YET: the flag is reserved and changes nothing today.",
+  utilityTool: "A niche calculator or planner tool on its own route. NOT BUILT YET: the flag is reserved and changes nothing today.",
   storefrontExtras: "Rich profile blocks: packages, FAQ, team and gallery albums.",
   events: "Dated events attached to an entry, with event markup.",
   bookings: "Availability calendar and booking requests handled on site.",
@@ -513,7 +513,8 @@ export const QUESTIONS: readonly Question[] = [
     prompt: "Site shape",
     help:
       "niche-national: one kind of thing, many towns — /[city] is the pillar. " +
-      "local-multi-vertical: one town, many kinds of business — /[vertical] is the pillar.",
+      "local-multi-vertical: one town, many kinds of business — /[vertical] is the pillar. " +
+      "NOT BUILT YET: only niche-national has pages today.",
     choices: ["niche-national", "local-multi-vertical"],
     default: "niche-national",
   },

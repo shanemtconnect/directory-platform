@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { paginatingCity, uniquePhone } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The enquiry form is the only revenue-relevant action on the site: if it
@@ -28,7 +32,7 @@ test.describe("enquiry submission", () => {
     const stamp = Date.now();
     await form.locator("#enq-name").fill("Playwright Smoke");
     await form.locator("#enq-email").fill(`e2e+${stamp}@example.com`);
-    await form.locator("#enq-phone").fill("01748 000000");
+    await form.locator("#enq-phone").fill(uniquePhone());
     await form
       .locator("#enq-message")
       .fill(`Automated end-to-end smoke test enquiry (${stamp}). Please ignore.`);

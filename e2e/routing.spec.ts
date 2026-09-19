@@ -1,4 +1,5 @@
 import { expect, test, type APIResponse } from "@playwright/test";
+import { anyCategorySlug, anyListingPath, paginatingCity, quietCity } from "./fixtures";
 
 /**
  * Every URL below returned 200 before this suite existed.
@@ -11,8 +12,11 @@ import { expect, test, type APIResponse } from "@playwright/test";
  * maxRedirects: 0 throughout — following a redirect would only show the
  * destination's 200 and prove nothing about the status served here.
  *
- * Leeds is one page deep; Richmond (North Yorkshire) holds 26 and is the
- * seeded city that genuinely paginates.
+ * CITY is `quietCity()` — any city that is one page deep works here, and
+ * quietCity is guaranteed to be (it is the fewest-listings city). CATEGORY,
+ * LISTING and PAGINATING_CITY come from the matching fixtures, filled in
+ * `beforeAll` below rather than named, so this suite runs against whatever
+ * niche the repo has been cloned into.
  *
  * The permanent redirects are asserted as 308 rather than 301: next/navigation
  * has no way to emit a 301 from a server component, and 308 is the same
@@ -25,11 +29,11 @@ import { expect, test, type APIResponse } from "@playwright/test";
  * from the render, plus the same header replayed from the fresh cache entry.
  * That is fixed in lib/boot/location-header.ts, and this assertion is what
  * keeps it fixed — a recipient may fold repeated field lines into one
- * comma-joined value, which turns `/leeds` into `/leeds, /leeds`.
+ * comma-joined value, which turns e.g. `/a-city` into `/a-city, /a-city`.
  *
  * Verified cold by hand as well as here: flush the ISR namespace, start the
- * standalone server, and `curl -sI http://localhost:PORT/Leeds` — one
- * `location: /leeds` beside `x-nextjs-cache: MISS`. The first test below
+ * standalone server, and `curl -sI http://localhost:PORT/<Mixed-Case-City>` —
+ * one `location: /<city>` beside `x-nextjs-cache: MISS`. The first test below
  * forces a cold key of its own so a warm server cannot hide a regression.
  */
 
@@ -65,9 +69,31 @@ function randomCasing(slug: string): string {
     .join("");
 }
 
-const CITY = "/leeds";
-const PAGINATING_CITY = "/richmond-north-yorkshire";
-const LISTING = "/wolverhampton/the-grange-estate";
+/** "barn-venues" -> "Barn-Venues", "leeds" -> "Leeds": upper-cases each hyphen-separated segment. */
+function mixedCase(slug: string): string {
+  return slug
+    .split("-")
+    .map((segment) => (segment.length === 0 ? segment : segment[0]!.toUpperCase() + segment.slice(1)))
+    .join("-");
+}
+
+let CITY: string;
+let CITY_SLUG: string;
+let PAGINATING_CITY: string;
+let LISTING: string;
+let CATEGORY: string;
+let CATEGORY_SLUG: string;
+
+test.beforeAll(async () => {
+  const city = await quietCity();
+  CITY = city.path;
+  CITY_SLUG = city.slug;
+  PAGINATING_CITY = (await paginatingCity()).path;
+  LISTING = await anyListingPath();
+  CATEGORY_SLUG = await anyCategorySlug();
+  CATEGORY = `/categories/${CATEGORY_SLUG}`;
+});
+
 const PERMANENT = 308;
 
 test.describe("routing canonicalisation", () => {
@@ -77,7 +103,7 @@ test.describe("routing canonicalisation", () => {
   });
 
   test("a mixed-case path permanently redirects to its lowercase form", async ({ request }) => {
-    const res = await request.get("/Leeds", { maxRedirects: 0 });
+    const res = await request.get(`/${mixedCase(CITY_SLUG)}`, { maxRedirects: 0 });
     expect(res.status()).toBe(PERMANENT);
     expect(locationOf(res)).toBe(CITY);
   });
@@ -90,7 +116,7 @@ test.describe("routing canonicalisation", () => {
     // rather than assumed; without it this test could quietly start
     // exercising a HIT (the one state the bug never occurred in) and still
     // pass.
-    const spelling = randomCasing("leeds");
+    const spelling = randomCasing(CITY_SLUG);
     const res = await request.get(`/${spelling}`, { maxRedirects: 0 });
     expect(res.status(), `/${spelling}`).toBe(PERMANENT);
     expect(res.headers()["x-nextjs-cache"], `/${spelling}`).toBe("MISS");
@@ -143,14 +169,12 @@ test.describe("routing canonicalisation", () => {
  * come from the same helper as the city route above.
  */
 test.describe("category routing canonicalisation", () => {
-  const CATEGORY = "/categories/barn-venues";
-
   test("the category page itself is a 200", async ({ request }) => {
     expect((await request.get(CATEGORY)).status()).toBe(200);
   });
 
   test("a mixed-case category path permanently redirects to its lowercase form", async ({ request }) => {
-    const res = await request.get("/categories/Barn-Venues", { maxRedirects: 0 });
+    const res = await request.get(`/categories/${mixedCase(CATEGORY_SLUG)}`, { maxRedirects: 0 });
     expect(res.status()).toBe(PERMANENT);
     expect(locationOf(res)).toBe(CATEGORY);
   });

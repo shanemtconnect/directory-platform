@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FEATURE_FLAGS, type FeatureMap } from "@/config/types";
 import { ConfigError, validateCountry, validateFeatureDependencies } from "@/config/validate";
@@ -10,6 +10,20 @@ export const SITE_CONFIG_PATH = "config/site.config.ts";
 
 /** The value a fresh checkout carries, and the one a production build must never see. */
 export const PLACEHOLDER_LEGAL_ENTITY = "TBC";
+
+/**
+ * Marks the config the repository ships with — the demo niche's. A fresh
+ * checkout always has one, so the wizard's first run would otherwise refuse
+ * to write over it and the operator's only way forward would be --overwrite,
+ * which is the flag meant for replacing THEIR OWN work. A file carrying this
+ * line is the template's and is replaced without asking; the wizard never
+ * writes it, so a clone's config stays protected.
+ */
+export const TEMPLATE_CONFIG_MARKER = "@template-config: replaced by `pnpm new-site`";
+
+function isShippedTemplate(path: string): boolean {
+  return readFileSync(path, "utf8").includes(TEMPLATE_CONFIG_MARKER);
+}
 
 export interface WriteConfigOptions {
   readonly targetDir: string;
@@ -192,7 +206,7 @@ export function renderSiteConfig(a: Answers): string {
       ? "  customFields: [],"
       : `  customFields: [\n${a.customFields.map(renderCustomField).join("\n")}\n  ],`;
 
-  return `import type { SiteConfig } from "./types";
+  return `import type { CustomField, SiteConfig } from "./types";
 
 /**
  * THE ONLY FILE A CLONE EDITS.
@@ -295,8 +309,36 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     dataController: ${str(a.legalEntity)},
   },
 } as const satisfies SiteConfig;
-`;
+
+${ACCESSORS}`;
 }
+
+/**
+ * Exported beside `siteConfig` in the shipped config and read by components
+ * (`components/shortlist/fields.ts` imports `cardFields`). A config without
+ * them is a clone that does not type-check, which is exactly how this was
+ * found. Kept as one block so the shipped file and the rendered one cannot
+ * drift apart — write-config.test.ts checks the export lists agree.
+ */
+const ACCESSORS = `/**
+ * Widened accessors.
+ *
+ * \`as const satisfies SiteConfig\` is load-bearing — it keeps the literal types
+ * the feature-flag tree-shaking depends on. The cost is that it narrows
+ * \`customFields\` to a union of exact object shapes, so an optional key like
+ * \`searchable\` or \`showInCard\` does not exist on members that omit it, and
+ * \`.filter(f => f.showInCard)\` is a compile error rather than a false.
+ *
+ * Read fields through here instead of reaching into the const.
+ */
+export const customFields: readonly CustomField[] = siteConfig.customFields;
+
+export const searchableFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.searchable === true);
+
+export const cardFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.showInCard === true);
+`;
 
 /** Today, as a plain ISO date. Read through lib/clock so a test can pin it. */
 function isoDate(): string {
@@ -325,7 +367,7 @@ export function writeSiteConfig(a: Answers, opts: WriteConfigOptions): WriteConf
 
   if (opts.dryRun === true) return { path, source, written: false };
 
-  if (existsSync(path) && opts.overwrite !== true) {
+  if (existsSync(path) && opts.overwrite !== true && !isShippedTemplate(path)) {
     throw new ConfigError(
       `${path} already exists. Re-run with --overwrite to replace it, after checking there is ` +
         `nothing in it you meant to keep.`,

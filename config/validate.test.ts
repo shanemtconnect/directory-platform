@@ -13,6 +13,7 @@ import {
   BILLING_ENV_SWITCH,
   missingBillingEnv,
   PLAN_ENV_VARS,
+  isPlaceholderLegalEntity,
 } from "./validate";
 import { siteConfig } from "./site.config";
 import { FEATURE_FLAGS, type FeatureFlag, type FeatureMap } from "./types";
@@ -369,5 +370,16 @@ describe("validateStatsRetention", () => {
 
   it("accepts exactly the longest tier window", () => {
     expect(() => validateStatsRetention({ stats: { retentionDays: 365 }, tiers })).not.toThrow();
+  });
+});
+
+describe("isPlaceholderLegalEntity", () => {
+  it("treats TBC in any case or padding, and an empty name, as the placeholder", () => {
+    for (const v of ["TBC", "tbc", " Tbc ", "", "   "]) expect(isPlaceholderLegalEntity(v)).toBe(true);
+  });
+
+  it("accepts a registered name", () => {
+    expect(isPlaceholderLegalEntity("Find a Dog Groomer LLC")).toBe(false);
+    expect(isPlaceholderLegalEntity("TBC Holdings Ltd")).toBe(false);
   });
 });

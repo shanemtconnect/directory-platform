@@ -11,7 +11,9 @@ export const SEED_FILES: readonly SeedFile[] = ["cities", "categories", "listing
 export const SEED_HEADERS: Record<SeedFile, readonly string[]> = {
   cities: ["name", "region", "country", "lat", "lng", "population"],
   categories: ["name", "singular", "plural", "sort_order"],
-  listings: ["name", "city", "category", "address_line1", "postcode", "phone", "website"],
+  // `region` is how the loader tells two cities of the same name apart — a
+  // listing is keyed on city name AND region, exactly as cities.csv is.
+  listings: ["name", "city", "region", "category", "address_line1", "postcode", "phone", "website"],
 };
 
 /** Without these the loader cannot place a row at all, so a file missing one is refused. */
