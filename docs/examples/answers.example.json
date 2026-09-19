@@ -35,7 +35,7 @@
     { "key": "mobile_service", "label": "Comes to you", "type": "boolean", "searchable": true, "showInCard": true },
     { "key": "cats_welcome", "label": "Grooms cats too", "type": "boolean", "searchable": true },
     { "key": "max_dog_size", "label": "Largest dog accepted", "type": "select", "options": ["small", "medium", "large", "giant"], "searchable": true, "showInCard": true },
-    { "key": "price_from", "label": "Full groom from", "type": "currency", "tier": "essential" }
+    { "key": "price_from", "label": "Full grooming from", "type": "currency", "tier": "essential" }
   ],
   "reviewCriteria": [
     { "key": "value", "label": "Value for money" },
