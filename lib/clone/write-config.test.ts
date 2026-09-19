@@ -38,9 +38,25 @@ afterEach(() => {
 describe("renderSiteConfig", () => {
   it("renders a config that closes with the satisfies assertion the build relies on", () => {
     const source = renderSiteConfig(answers());
-    expect(source).toContain('import type { SiteConfig } from "./types";');
+    expect(source).toContain('import type { CustomField, SiteConfig } from "./types";');
     expect(source).toContain("export const siteConfig = {");
-    expect(source.trimEnd().endsWith("} as const satisfies SiteConfig;")).toBe(true);
+    expect(source).toContain("} as const satisfies SiteConfig;");
+  });
+
+  it("exports everything the shipped config exports, so components that import them compile", () => {
+    // components/shortlist/fields.ts imports `cardFields`; a rendered config
+    // without the widened accessors is a clone that fails `pnpm typecheck`.
+    const exportsOf = (source: string): string[] =>
+      [...source.matchAll(/^export (?:const|function|type|interface) (\w+)/gm)]
+        .map((m) => m[1]!)
+        .sort();
+    const shipped = readFileSync(join(__dirname, "..", "..", SITE_CONFIG_PATH), "utf8");
+    expect(exportsOf(renderSiteConfig(answers()))).toEqual(exportsOf(shipped));
+    expect(exportsOf(shipped)).toContain("cardFields");
+  });
+
+  it("imports the CustomField type the accessors are declared with", () => {
+    expect(renderSiteConfig(answers())).toContain('import type { CustomField, SiteConfig } from "./types";');
   });
 
   it("writes the entity nouns the operator gave, not the ones the template shipped with", () => {

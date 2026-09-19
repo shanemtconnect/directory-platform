@@ -206,7 +206,7 @@ export function renderSiteConfig(a: Answers): string {
       ? "  customFields: [],"
       : `  customFields: [\n${a.customFields.map(renderCustomField).join("\n")}\n  ],`;
 
-  return `import type { SiteConfig } from "./types";
+  return `import type { CustomField, SiteConfig } from "./types";
 
 /**
  * THE ONLY FILE A CLONE EDITS.
@@ -309,8 +309,36 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     dataController: ${str(a.legalEntity)},
   },
 } as const satisfies SiteConfig;
-`;
+
+${ACCESSORS}`;
 }
+
+/**
+ * Exported beside `siteConfig` in the shipped config and read by components
+ * (`components/shortlist/fields.ts` imports `cardFields`). A config without
+ * them is a clone that does not type-check, which is exactly how this was
+ * found. Kept as one block so the shipped file and the rendered one cannot
+ * drift apart — write-config.test.ts checks the export lists agree.
+ */
+const ACCESSORS = `/**
+ * Widened accessors.
+ *
+ * \`as const satisfies SiteConfig\` is load-bearing — it keeps the literal types
+ * the feature-flag tree-shaking depends on. The cost is that it narrows
+ * \`customFields\` to a union of exact object shapes, so an optional key like
+ * \`searchable\` or \`showInCard\` does not exist on members that omit it, and
+ * \`.filter(f => f.showInCard)\` is a compile error rather than a false.
+ *
+ * Read fields through here instead of reaching into the const.
+ */
+export const customFields: readonly CustomField[] = siteConfig.customFields;
+
+export const searchableFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.searchable === true);
+
+export const cardFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.showInCard === true);
+`;
 
 /** Today, as a plain ISO date. Read through lib/clock so a test can pin it. */
 function isoDate(): string {
