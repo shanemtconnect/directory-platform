@@ -123,6 +123,10 @@ DB_CREATED=""
 cleanup() {
   local code=$?
   if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; fi
+  # The server's ISR cache lives in this Redis index; leave it as it was found.
+  # (The keep case keeps the directory and the database, not the cache — a
+  # kept clone booted again starts cold, which is what a redeploy does.)
+  docker exec "$REDIS_CONTAINER" redis-cli -n "$RDB" flushdb >/dev/null 2>&1 || true
   if [ "$KEEP" = "1" ]; then
     echo
     echo "kept: $CLONE_DIR and database $DB_NAME"
