@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { requestClaimLink, type DomainClaimState } from "@/lib/actions/claim";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: DomainClaimState = { status: "idle" };
 
@@ -16,13 +18,17 @@ export function DomainClaimForm({ listingId, domain }: DomainClaimFormProps) {
 
   if (state.status === "sent") {
     return (
-      <div data-testid="claim-link-sent" role="status" className="card bg-raised">
-        <h2 className="mt-0">Check that inbox</h2>
+      <Notice variant="success" testId="claim-link-sent" title="Check that inbox">
         <p>
           We&rsquo;ve emailed a confirmation link to{" "}
           <strong>{state.sentTo}</strong>. Open it within 30 minutes and the listing is yours.
         </p>
-      </div>
+        <p className="mb-0">
+          <strong>What happens next:</strong> the link opens a page with one Confirm button.
+          Press it and the listing moves to <a href="/account">your account</a>, where you can
+          edit the details and read every enquiry. Nothing changes until you press it.
+        </p>
+      </Notice>
     );
   }
 
@@ -40,9 +46,12 @@ export function DomainClaimForm({ listingId, domain }: DomainClaimFormProps) {
         <input
           id="claim-email" name="businessEmail" type="email" required maxLength={254}
           autoComplete="email" aria-invalid={Boolean(state.fieldErrors?.businessEmail)}
+          aria-describedby={state.fieldErrors?.businessEmail ? "claim-email-error" : undefined}
         />
         {state.fieldErrors?.businessEmail && (
-          <span role="alert" data-testid="claim-email-error">{state.fieldErrors.businessEmail}</span>
+          <span role="alert" id="claim-email-error" data-testid="claim-email-error">
+            {state.fieldErrors.businessEmail}
+          </span>
         )}
       </p>
 
@@ -56,11 +65,15 @@ export function DomainClaimForm({ listingId, domain }: DomainClaimFormProps) {
         <input id="claim-role" name="roleAtBusiness" maxLength={120} />
       </p>
 
-      {state.message && <p role="alert" data-testid="claim-error">{state.message}</p>}
+      {state.message && (
+        <Notice variant="error" testId="claim-error">
+          {state.message}
+        </Notice>
+      )}
 
-      <button type="submit" disabled={pending} className="btn btn-primary w-full">
-        {pending ? "Sending…" : "Email me the link"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Sending…" block>
+        Email me the link
+      </SubmitButton>
     </form>
   );
 }

@@ -6,6 +6,9 @@ import { guardFeature } from "@/lib/features/guard";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { reviewTarget } from "@/lib/db/queries/reviews";
 import { ReviewForm } from "@/components/reviews/ReviewForm";
+import { REVIEW_STEPS } from "@/components/reviews/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
 
 /**
  * Where a review is written.
@@ -50,11 +53,17 @@ export default async function LeaveReviewPage({ params }: Props) {
 
   return (
     <main>
-      <h1>Review {target.name}</h1>
-
-      <p>
-        You&rsquo;re writing about <a href={target.path}>{target.name}</a>.
-      </p>
+      <PageHeader
+        title={`Review ${target.name}`}
+        back={{ href: target.path, label: target.name }}
+        lede={
+          <>
+            You&rsquo;re writing about <a href={target.path}>{target.name}</a>. We email you a
+            link to confirm it is yours before anything is published.
+          </>
+        }
+      />
+      <Steps steps={REVIEW_STEPS} current={0} />
 
       <h2>Before you write</h2>
       <ul>
