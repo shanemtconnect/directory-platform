@@ -47,11 +47,13 @@ import {
   cityCategoryPathFromHtml,
   classifySitemapPaths,
   busiestCity,
+  declaresNoindex,
   failingViolations,
   filterPages,
   formatTable,
   listingIdFromHtml,
   selectPages,
+  seoScoreIgnoringCrawlability,
   summarise,
   thresholdsFromEnv,
 } from "./audit-pages-lib.mjs";
@@ -83,7 +85,12 @@ function parseFormFactors(raw) {
 /** @param {string} path */
 async function fetchText(path) {
   const res = await fetch(`${BASE_URL}${path}`, { redirect: "manual" });
-  return { status: res.status, text: await res.text(), location: res.headers.get("location") };
+  return {
+    status: res.status,
+    text: await res.text(),
+    location: res.headers.get("location"),
+    robotsHeader: res.headers.get("x-robots-tag"),
+  };
 }
 
 /** @param {string} xml */
@@ -171,15 +178,51 @@ function failingAudits(lhr, category) {
   return refs
     .map((ref) => lhr.audits[ref.id])
     .filter((a) => a !== undefined && a.score !== null && a.score < 1 && a.scoreDisplayMode !== "informative")
-    .map((a) => ({ id: a.id, title: a.title, score: a.score, displayValue: a.displayValue ?? null }));
+    .map((a) => ({
+      id: a.id,
+      title: a.title,
+      score: a.score,
+      displayValue: a.displayValue ?? null,
+      // The first few offending nodes, so the report says WHICH heading or
+      // link, not just that one exists.
+      items: itemsOf(a).slice(0, 5),
+    }));
+}
+
+/**
+ * @param {import("lighthouse").Result.AuditResult} audit
+ * @returns {unknown[]}
+ */
+function itemsOf(audit) {
+  const details = audit.details;
+  if (details === undefined || !("items" in details) || !Array.isArray(details.items)) return [];
+  return details.items.map((item) => {
+    if (typeof item !== "object" || item === null) return item;
+    const record = /** @type {Record<string, unknown>} */ (item);
+    const node = record.node;
+    if (typeof node === "object" && node !== null && "snippet" in node) {
+      return { snippet: /** @type {{ snippet?: unknown }} */ (node).snippet, ...omit(record, "node") };
+    }
+    return record;
+  });
+}
+
+/**
+ * @param {Record<string, unknown>} record
+ * @param {string} key
+ */
+function omit(record, key) {
+  const { [key]: _dropped, ...rest } = record;
+  return rest;
 }
 
 /**
  * @param {string} url
  * @param {FormFactor} formFactor
  * @param {number} port
+ * @param {boolean} noindex  The document declares noindex; see seoScoreIgnoringCrawlability.
  */
-async function lighthouseDetail(url, formFactor, port) {
+async function lighthouseDetail(url, formFactor, port, noindex) {
   const result = await lighthouse(
     url,
     { port, output: "json", logLevel: "error", onlyCategories: [...CATEGORIES] },
@@ -193,7 +236,10 @@ async function lighthouseDetail(url, formFactor, port) {
   for (const category of CATEGORIES) {
     const score = lhr.categories[category]?.score;
     scores[category] = typeof score === "number" ? Math.round(score * 100) : null;
-    const misses = failingAudits(lhr, category);
+    if (category === "seo" && noindex) {
+      scores.seo = seoScoreIgnoringCrawlability(lhr.categories.seo, lhr.audits);
+    }
+    const misses = failingAudits(lhr, category).filter((a) => !(noindex && a.id === "is-crawlable"));
     if (misses.length > 0) failing[category] = misses;
   }
   const runtimeError = lhr.runtimeError ? `${lhr.runtimeError.code}: ${lhr.runtimeError.message}` : null;
@@ -208,7 +254,9 @@ async function runAxe(browser, url) {
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    const response = await page.goto(url, { waitUntil: "networkidle" });
+    // "load", not "networkidle": the Turnstile widget on every form page polls
+    // its origin for as long as the page is open, so the network never idles.
+    const response = await page.goto(url, { waitUntil: "load" });
     const status = response?.status() ?? null;
     const results = await new AxeBuilder({ page }).analyze();
     return {
@@ -273,8 +321,13 @@ async function main() {
         if (target.expectStatus >= 400) {
           result.notes.push("Lighthouse skipped: it does not score an error document");
         } else {
+          // What the browser ended up on, not what was asked for: a redirect
+          // to /login is scored as the login page, noindex and all.
+          const doc = await fetchText(axe.finalUrl.replace(BASE_URL, ""));
+          const noindex = declaresNoindex({ html: doc.text, robotsHeader: doc.robotsHeader });
+          if (noindex) result.notes.push("declares noindex; SEO scored without is-crawlable");
           for (const factor of formFactors) {
-            const lh = await lighthouseDetail(url, factor, chrome.port);
+            const lh = await lighthouseDetail(url, factor, chrome.port, noindex);
             result.lighthouse[factor] = lh.scores;
             if (lh.error !== null) result.errors.push(`${factor} Lighthouse: ${lh.error}`);
             detail[`lighthouse-${factor}`] = { scores: lh.scores, failingAudits: lh.failing };

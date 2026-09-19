@@ -352,3 +352,54 @@ export function filterPages(pages, filter) {
   const wanted = new Set(filter.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
   return pages.filter((p) => wanted.has(p.name.toLowerCase()));
 }
+
+/**
+ * A page that says `noindex` on purpose — login, signup, search results, the
+ * claim flow — can never pass Lighthouse's `is-crawlable` audit, and that
+ * audit alone takes the SEO category from 100 to the low 60s. Failing the
+ * gate on it would either force those pages into the index or teach everyone
+ * to ignore the SEO column, so on a page whose own document declares noindex
+ * the category is re-scored from its remaining audits: the same weighted mean
+ * Lighthouse uses, minus that one ref. Every other SEO audit still counts.
+ *
+ * Whether the page declares noindex is decided from the HTML and headers the
+ * script fetched itself (`declaresNoindex`), never from the audit's verdict,
+ * so a page that is blocked by accident — a stray header, a robots.txt rule —
+ * still fails.
+ *
+ * @param {{ auditRefs: { id: string; weight: number }[] } | undefined} category
+ * @param {Record<string, { score: number | null } | undefined>} audits
+ * @returns {number | null}  0–100, or null when nothing is left to score.
+ */
+export function seoScoreIgnoringCrawlability(category, audits) {
+  if (category === undefined) return null;
+  let weight = 0;
+  let total = 0;
+  for (const ref of category.auditRefs) {
+    if (ref.id === "is-crawlable" || ref.weight <= 0) continue;
+    const score = audits[ref.id]?.score;
+    if (typeof score !== "number") continue;
+    weight += ref.weight;
+    total += ref.weight * score;
+  }
+  return weight === 0 ? null : Math.round((total / weight) * 100);
+}
+
+/**
+ * Whether the DOCUMENT itself asks not to be indexed: a robots meta tag or an
+ * X-Robots-Tag header carrying `noindex` or `none`. Only what the page
+ * declares counts; the audit script decides nothing from Lighthouse here.
+ *
+ * @param {{ html: string; robotsHeader: string | null }} doc
+ * @returns {boolean}
+ */
+export function declaresNoindex(doc) {
+  const header = doc.robotsHeader?.toLowerCase() ?? "";
+  if (/\b(noindex|none)\b/.test(header)) return true;
+  const meta = /<meta\s+[^>]*name=["'](?:robots|googlebot)["'][^>]*>/gi;
+  for (const tag of doc.html.matchAll(meta)) {
+    const content = /content=["']([^"']*)["']/i.exec(tag[0])?.[1]?.toLowerCase() ?? "";
+    if (/\b(noindex|none)\b/.test(content)) return true;
+  }
+  return false;
+}

@@ -3,12 +3,14 @@ import {
   busiestCity,
   cityCategoryPathFromHtml,
   classifySitemapPaths,
+  declaresNoindex,
   failingViolations,
   filterPages,
   formatTable,
   listingIdFromHtml,
   pageMisses,
   selectPages,
+  seoScoreIgnoringCrawlability,
   summarise,
   thresholdsFromEnv,
   type PageResult,
@@ -175,5 +177,37 @@ describe("sitemap-derived page selection", () => {
     const pages = [{ name: "home" }, { name: "Login" }, { name: "terms" }];
     expect(filterPages(pages, "home, login").map((p) => p.name)).toEqual(["home", "Login"]);
     expect(filterPages(pages, undefined)).toBe(pages);
+  });
+});
+
+describe("noindex pages", () => {
+  it("recognises a robots meta tag or an X-Robots-Tag header, and nothing else", () => {
+    expect(declaresNoindex({ html: '<meta name="robots" content="noindex, nofollow"/>', robotsHeader: null })).toBe(true);
+    expect(declaresNoindex({ html: '<meta content="none" name="googlebot">', robotsHeader: null })).toBe(true);
+    expect(declaresNoindex({ html: "<p>hi</p>", robotsHeader: "noindex" })).toBe(true);
+    expect(declaresNoindex({ html: '<meta name="robots" content="index, follow">', robotsHeader: "max-image-preview:large" })).toBe(false);
+    expect(declaresNoindex({ html: '<meta name="description" content="noindex is a word">', robotsHeader: null })).toBe(false);
+  });
+
+  it("re-scores SEO as the weighted mean of every audit except is-crawlable", () => {
+    const category = {
+      auditRefs: [
+        { id: "is-crawlable", weight: 1 },
+        { id: "document-title", weight: 1 },
+        { id: "meta-description", weight: 1 },
+        { id: "structured-data", weight: 0 },
+        { id: "hreflang", weight: 1 },
+      ],
+    };
+    const audits = {
+      "is-crawlable": { score: 0 },
+      "document-title": { score: 1 },
+      "meta-description": { score: 0 },
+      "structured-data": { score: null },
+      hreflang: { score: 1 },
+    };
+    expect(seoScoreIgnoringCrawlability(category, audits)).toBe(67);
+    expect(seoScoreIgnoringCrawlability(undefined, audits)).toBeNull();
+    expect(seoScoreIgnoringCrawlability({ auditRefs: [{ id: "is-crawlable", weight: 1 }] }, audits)).toBeNull();
   });
 });
