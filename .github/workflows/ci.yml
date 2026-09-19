@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Only the `audit` job keys off this; everything else runs as before.
+  # A manual run: every job below runs, and it is also the only way to run
+  # the `audit` job (which has `if: github.event_name == 'workflow_dispatch'`).
   workflow_dispatch:
 
 jobs:
