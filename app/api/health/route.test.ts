@@ -1,19 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { RedisProbe } from "@/lib/observability/redis";
+import type { RedisState } from "@/lib/redis/client";
 
 const pingDatabase = vi.fn<(db: unknown) => Promise<void>>();
 const probeRedis = vi.fn<() => Promise<RedisProbe>>();
+const redisState = vi.fn<() => RedisState>();
 const POOL = { marker: "the pool" };
 const getDb = vi.fn(() => POOL);
 
 vi.mock("@/lib/db/queries/health", () => ({ pingDatabase: (db: unknown) => pingDatabase(db) }));
 vi.mock("@/lib/observability/redis", () => ({ probeRedis: () => probeRedis() }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => getDb() }));
+vi.mock("@/lib/redis/client", () => ({ redisState: () => redisState() }));
 
 describe("GET /api/health", () => {
   beforeEach(() => {
     pingDatabase.mockReset().mockResolvedValue(undefined);
     probeRedis.mockReset().mockResolvedValue("ok");
+    redisState.mockReset().mockReturnValue({ status: "ready", downUntil: null });
     getDb.mockClear();
     // `./route` now probes through `memoizedHealthReport`, which keeps a
     // module-scoped memo — one report per process, keyed on nothing. Without
@@ -49,6 +53,25 @@ describe("GET /api/health", () => {
     expect(body).toMatchObject({ ok: true, db: "ok", redis: "ok" });
     expect(body).toHaveProperty("build");
     expect(body).toHaveProperty("uptimeSeconds");
+  });
+
+  it("reports the shared Redis handle's state beside the probe result", async () => {
+    // The probe opens a fresh connection and measures the server; the handle
+    // is what the rate limiter and counters actually get, and it can be in a
+    // cooldown while the server is fine. Both go in the body, under
+    // different keys, so a monitor can tell "Redis is down" from "this
+    // process gave up on Redis for thirty seconds".
+    redisState.mockReturnValue({ status: "down", downUntil: 1_700_000_000_000 });
+    const { GET } = await import("./route");
+
+    const res = await GET();
+    const body: unknown = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({
+      redis: "ok",
+      redisClient: { status: "down", downUntil: 1_700_000_000_000 },
+    });
   });
 
   it("answers 503 when the database is unreachable", async () => {

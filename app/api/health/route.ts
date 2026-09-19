@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { pingDatabase } from "@/lib/db/queries/health";
 import { probeRedis } from "@/lib/observability/redis";
+import { redisState } from "@/lib/redis/client";
 import { memoizedHealthReport } from "@/lib/observability/health";
 import { currentBuildId } from "@/lib/observability/build-id";
 
@@ -22,10 +23,12 @@ export const revalidate = 0;
 
 /**
  * No authentication, deliberately. A health check that needs a credential is
- * one an orchestrator cannot make, and the body is four pieces of information
- * an attacker gains nothing from: two up/down booleans, the build id — already
- * visible in every `/_next/static/` URL the site serves — and a process uptime.
- * No version numbers, no hostnames, no configuration.
+ * one an orchestrator cannot make, and the body is five pieces of information
+ * an attacker gains nothing from: two up/down booleans, the state of this
+ * process's Redis handle (a word and, in cooldown, the epoch millisecond it
+ * ends), the build id — already visible in every `/_next/static/` URL the
+ * site serves — and a process uptime. No version numbers, no hostnames, no
+ * configuration.
  *
  * Being unauthenticated is also why `memoizedHealthReport` (see
  * `lib/observability/health.ts`) sits in front of the probes: this is the one
@@ -41,6 +44,9 @@ export async function GET(): Promise<Response> {
     // there would put a database back in the build's requirements.
     db: () => pingDatabase(getDb()),
     redis: () => probeRedis(),
+    // The handle's own view, beside the probe's: `redisState` reads module
+    // state and never connects, so it is free to ask on every check.
+    redisClient: redisState,
     buildId: currentBuildId,
     uptimeSeconds: () => Math.floor(process.uptime()),
   });

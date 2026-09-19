@@ -5,6 +5,7 @@ function probes(over: Partial<HealthProbes> = {}): HealthProbes {
   return {
     db: async () => undefined,
     redis: async () => "ok",
+    redisClient: () => ({ status: "ready", downUntil: null }),
     buildId: () => "8dhlIRUNLtpabNXf4Ajbu",
     uptimeSeconds: () => 42,
     ...over,
@@ -17,9 +18,23 @@ describe("healthReport", () => {
       ok: true,
       db: "ok",
       redis: "ok",
+      redisClient: { status: "ready", downUntil: null },
       build: "8dhlIRUNLtpabNXf4Ajbu",
       uptimeSeconds: 42,
     });
+  });
+
+  it("reports the shared Redis handle's state beside the probe, without letting it gate ok", async () => {
+    // The probe measures the server; the handle can be in its 30 s cooldown
+    // while the server is perfectly reachable. Both are worth seeing, and
+    // neither decides the HTTP status.
+    const report = await healthReport(
+      probes({ redisClient: () => ({ status: "down", downUntil: 1_700_000_000_000 }) }),
+    );
+
+    expect(report.ok).toBe(true);
+    expect(report.redis).toBe("ok");
+    expect(report.redisClient).toEqual({ status: "down", downUntil: 1_700_000_000_000 });
   });
 
   it("is not ok when the database probe rejects", async () => {

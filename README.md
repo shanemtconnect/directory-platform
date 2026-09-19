@@ -475,13 +475,13 @@ yet.
 ### `GET /api/health`
 
 ```json
-{"ok":true,"db":"ok","redis":"ok","build":"SioK72al0l6Phr302EJBd","uptimeSeconds":12}
+{"ok":true,"db":"ok","redis":"ok","redisClient":{"status":"ready","downUntil":null},"build":"SioK72al0l6Phr302EJBd","uptimeSeconds":12}
 ```
 
 `200` when `db` is `ok`, `503` (with `Retry-After: 5`) when it is not. No
 authentication — an orchestrator cannot present a credential, and the body is
-two up/down flags, a build id already visible in every `/_next/static/` URL, and
-a process uptime.
+two up/down flags, the state of this process's Redis handle, a build id already
+visible in every `/_next/static/` URL, and a process uptime.
 
 **Redis is reported but does not gate the status.** `cache-handler.mjs` falls
 back to a per-process LRU when Redis is unreachable, so the site is slower, not
@@ -489,6 +489,19 @@ broken; failing the health check on it would drain every replica at once and
 turn a degradation into an outage. Alert on `redis` separately if you care.
 `absent` means `REDIS_URL` was never set, which cannot happen in a deployed
 container (it is in `RUNTIME_ENV`) but does happen in `next dev`.
+
+**`redis` and `redisClient` answer different questions.** `redis` opens a fresh
+connection and asks whether the server is reachable from this container.
+`redisClient` is `redisState()` from `lib/redis/client.ts`: the one shared handle
+the rate limiter, view counters and badge counters actually go through. Its
+`status` is one of `unconfigured` (no `REDIS_URL`, or `next build`),
+`disconnected` (nothing open yet; the next call connects), `connecting`, `ready`,
+or `down` — the last connect was refused and the handle answers null until the
+epoch millisecond in `downUntil` (30 s from the refusal). `redis: "ok"` with
+`redisClient.status: "down"` is a real state: the server came back but this
+process is still in its cooldown, rate-limiting in memory and buffering counts
+until the cooldown ends. Reading the handle's state never connects, so the field
+costs nothing; it does not gate `ok` either.
 
 `force-dynamic` and `revalidate = 0` keep the route out of the ISR cache
 handler. Without them a health check could be served from Redis — answering

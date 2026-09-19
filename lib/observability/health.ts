@@ -7,6 +7,8 @@
  * a database that hangs and a Redis that throws.
  */
 
+import type { RedisState } from "@/lib/redis/client";
+
 export type Probe = "ok" | "fail";
 export type RedisProbeResult = Probe | "absent";
 
@@ -17,7 +19,18 @@ export interface HealthReport {
    */
   ok: boolean;
   db: Probe;
+  /** A fresh connection to the Redis SERVER — is it reachable from here? */
   redis: RedisProbeResult;
+  /**
+   * The shared handle this process actually serves rate limits and counters
+   * through (`lib/redis/client.ts`). Different question from `redis` above:
+   * the server can be up while this handle sits in its thirty-second
+   * cooldown after one refused connect, and a monitor that only saw the
+   * probe would call that process healthy while it rate-limits in memory
+   * and buffers every view count. Never gates `ok`, for the same reason
+   * the probe does not.
+   */
+  redisClient: RedisState;
   /** The build id, same one the ISR cache namespaces its keys with. */
   build: string;
   uptimeSeconds: number;
@@ -27,6 +40,8 @@ export interface HealthProbes {
   /** Rejects when the database is unreachable. Its resolved value is ignored. */
   db: () => Promise<unknown>;
   redis: () => Promise<RedisProbeResult>;
+  /** Synchronous and side-effect free: reads the handle's state, never connects. */
+  redisClient: () => RedisState;
   buildId: () => string;
   uptimeSeconds: () => number;
 }
@@ -95,6 +110,7 @@ export async function healthReport(
     ok: db === "ok",
     db,
     redis,
+    redisClient: probes.redisClient(),
     build: probes.buildId(),
     uptimeSeconds: probes.uptimeSeconds(),
   };
