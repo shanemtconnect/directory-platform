@@ -1,4 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
+
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The header and footer are on every page, including the ones nobody meant to
@@ -30,7 +36,7 @@ async function chromeOn(page: Page, path: string, expectedStatus = 200): Promise
 
 test.describe("site chrome", () => {
   test("every page type renders the header and the footer", async ({ page }) => {
-    await page.goto("/richmond-north-yorkshire");
+    await page.goto(CITY);
     const listing = await page
       .locator('[data-testid="listing-grid"] > li a')
       .first()
@@ -49,8 +55,8 @@ test.describe("site chrome", () => {
       "/search",
       "/pricing",
       "/blog",
-      "/richmond-north-yorkshire",
-      "/richmond-north-yorkshire/page/2",
+      CITY,
+      `${CITY}/page/2`,
       category!,
       listing!,
     ]) {

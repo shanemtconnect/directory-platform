@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { siteConfig } from "@/config/site.config";
 import { normaliseName } from "@/lib/import/guardrails";
 import { withE2eDb } from "./database";
+import { quietCity, uniquePhone, validPostcode } from "./fixtures";
 
 /**
  * The trust round trip: a visitor reports a listing and asks for it to come
@@ -30,23 +32,22 @@ import { withE2eDb } from "./database";
  */
 
 /**
- * Richmond in Greater London, not the North Yorkshire one — the same town
- * e2e/admin.spec.ts uses, and for the same reason: it holds a single seeded
- * listing, so an approved submission is on the first page of it rather than
- * somewhere among twenty-six. Both specs only ever assert on their own
- * listing's name, so they can run beside each other.
+ * The town with a region and as few listings as possible — the same fixture
+ * e2e/admin.spec.ts uses, and for the same reason: an approved submission is
+ * on the first page of it rather than somewhere among however many the seed
+ * holds. Both specs only ever assert on their own listing's name, so they can
+ * run beside each other.
  */
-const TOWN = { slug: "richmond" };
+let TOWN: { slug: string };
+
+test.beforeAll(async () => {
+  TOWN = { slug: (await quietCity()).slug };
+});
 
 const PASSWORD = "not-a-real-password";
 
 function unique(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-}
-
-/** Ofcom's reserved drama range, so it can never reach a real line. */
-function uniquePhone(): string {
-  return `020 7946 ${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`;
 }
 
 function slugify(name: string): string {
@@ -118,7 +119,7 @@ async function seedPendingListing(name: string): Promise<{ id: string; slug: str
       ) values (
         ${seed.id}, ${name}, ${slug}, ${seed.city_id}, ${seed.vertical_id}, ${seed.category_id},
         'pending', 'free', 'unclaimed', 'public',
-        '1 Test Lane', 'TW9 1AA', ${uniquePhone()}, ${`${unique("listing")}@example.com`},
+        '1 Test Lane', ${validPostcode()}, ${uniquePhone()}, ${`${unique("listing")}@example.com`},
         'Seeded by the trust end-to-end test to exercise the report and removal queues.',
         ${`${unique("submitter")}@example.com`},
         ${sql.json({ submission: { submitterName: "Playwright Submitter", requestedTier: "free" } })}
@@ -150,10 +151,12 @@ async function cleanUp(name: string): Promise<void> {
     `;
     const cityId = rows[0]?.city_id;
     if (cityId === undefined) return;
+    // The threshold mirrors seo.minListingsToIndex — kept in step with it so
+    // this cleanup recomputes indexability the same way the app does.
     await sql`
       update cities c
       set listing_count = counted.n,
-          is_indexable = counted.n >= 3 and coalesce(btrim(c.intro_html), '') <> ''
+          is_indexable = counted.n >= ${siteConfig.seo.minListingsToIndex} and coalesce(btrim(c.intro_html), '') <> ''
       from (
         select count(*)::int as n from listings
         where city_id = ${cityId} and status = 'published'
@@ -191,7 +194,7 @@ test.describe("the trust queues", () => {
     page,
   }) => {
     const email = `${unique("admin")}@example.com`;
-    const listingName = `E2E ${unique("Retreat")}`;
+    const listingName = `E2E ${unique("Listing")}`;
     const reporterEmail = `e2e+report${Date.now()}@example.com`;
     const requesterEmail = `e2e+removal${Date.now()}@example.com`;
 

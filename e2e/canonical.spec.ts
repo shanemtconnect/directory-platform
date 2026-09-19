@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
 
 /**
  * Canonicals must be absolute and point at this origin.
@@ -6,8 +7,13 @@ import { expect, test, type Page } from "@playwright/test";
  * A relative `href="/pricing"` is what a missing `metadataBase` produces, and
  * Google treats a relative canonical as a hint it may quietly ignore. Pages
  * with no canonical at all leave the choice of URL to a crawler that has also
- * seen `/leeds/page/1`, `/Leeds` and `?utm_source=...`.
+ * seen `/<city>/page/1`, a differently-cased city name and `?utm_source=...`.
  */
+
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * From the running config, not a literal: `baseURL` is what the suite was
@@ -31,7 +37,7 @@ async function canonicalOf(page: Page, path: string): Promise<string> {
 
 /** One representative URL of each page type that has its own canonical. */
 async function samplePaths(page: Page): Promise<Record<string, string>> {
-  await page.goto("/richmond-north-yorkshire");
+  await page.goto(CITY);
   const listing = await page
     .locator('[data-testid="listing-grid"] > li a')
     .first()
@@ -53,7 +59,7 @@ async function samplePaths(page: Page): Promise<Record<string, string>> {
 
   return {
     home: "/",
-    pillar: "/richmond-north-yorkshire",
+    pillar: CITY,
     cityCategory: category!,
     listing: listing!,
     pricing: "/pricing",
@@ -87,7 +93,7 @@ test.describe("canonical URLs", () => {
   test("page 2 of a pillar canonicalises to page 2, not to page 1", async ({ page }) => {
     // Self-canonicalising a paginated page to page 1 hides pages 2..N from the
     // index while still spending the crawl on them.
-    const href = await canonicalOf(page, "/richmond-north-yorkshire/page/2");
-    expect(new URL(href).pathname).toBe("/richmond-north-yorkshire/page/2");
+    const href = await canonicalOf(page, `${CITY}/page/2`);
+    expect(new URL(href).pathname).toBe(`${CITY}/page/2`);
   });
 });

@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The highest-value assertion in the suite.

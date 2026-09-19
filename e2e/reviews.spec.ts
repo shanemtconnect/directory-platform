@@ -2,8 +2,12 @@ import { expect, test } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 import { E2E_DATABASE_URL } from "./database";
+import { paginatingCity } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The whole review pipeline, end to end, against a production build and a real

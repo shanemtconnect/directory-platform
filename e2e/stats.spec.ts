@@ -1,7 +1,11 @@
 import { createClient } from "@redis/client";
 import { expect, test } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The stats pipeline, end to end against a production build.
