@@ -171,8 +171,9 @@ if grep -qi "ignores the column" "$PROOF_DIR/new-site.log"; then
 fi
 # The demo config and its seed set must not survive into the clone's output —
 # the wizard replaced one and the other is simply not this site's.
-if grep -qiE "$DEMO_WORDS" config/site.config.ts; then
-  fail "config/site.config.ts still names the demo niche: $(grep -inE "$DEMO_WORDS" config/site.config.ts | head -3)"
+# Whole words (-w): "groomer" contains "groom" and must pass; "groom" must not.
+if grep -qiwE "$DEMO_WORDS" config/site.config.ts; then
+  fail "config/site.config.ts still names the demo niche: $(grep -inwE "$DEMO_WORDS" config/site.config.ts | head -3)"
 fi
 if [ -d content/blog/demo ]; then fail "the wizard left the demo blog posts in place"; fi
 finish
@@ -268,9 +269,9 @@ check_page() { # path, then a grep pattern the body must contain
   if grep -qi "x-robots-tag: noindex" "$PROOF_DIR/headers.txt"; then
     fail "$path carries X-Robots-Tag: noindex on a SITE_ENV=production build"
   fi
-  # Words, not substrings: "groom" is fine, "bride" is not. Case-insensitive.
-  if grep -oiE "\\b($DEMO_WORDS)\\b" <<<"$body" | head -1 | grep -q .; then
-    fail "$path mentions the demo niche: $(grep -oiE "\\b($DEMO_WORDS)\\b" <<<"$body" | sort | uniq -c | head -3)"
+  # Whole words, case-insensitive: "groomer" is fine, "groom" is not.
+  if grep -qiwE "$DEMO_WORDS" <<<"$body"; then
+    fail "$path mentions the demo niche: $(grep -oiwE "$DEMO_WORDS" <<<"$body" | sort | uniq -c | head -3)"
   fi
   echo "    200 $path"
 }
