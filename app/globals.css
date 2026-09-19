@@ -329,3 +329,242 @@
     box-shadow: 0 4px 16px -4px rgb(0 0 0 / 0.3);
   }
 }
+
+/* ==========================================================================
+   Wave E — shared primitives for the signed-in and staff screens.
+   Additive: nothing above changes. Every colour is a token from the theme
+   block at the top of this file; every pair still clears 4.5:1.
+   ========================================================================== */
+@layer components {
+  /* ---- Notice ------------------------------------------------------------
+     One component, three variants. The left rule and the icon carry the
+     meaning; the tint is a hint, never the only signal. */
+  .notice {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 0.875rem 1rem;
+    margin-block: 0 1.25rem;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-left-width: 4px;
+    border-radius: var(--radius-token);
+    color: var(--color-ink);
+  }
+  .notice-icon { flex: none; margin-top: 0.15rem; }
+  .notice-body { min-width: 0; flex: 1; }
+  .notice-body > :last-child { margin-block-end: 0; }
+  .notice-title { display: block; margin-block-end: 0.25rem; }
+  .notice-status { border-left-color: var(--color-primary); }
+  .notice-status .notice-icon { color: var(--color-primary); }
+  .notice-success { border-left-color: #1f7a3f; background-color: #f2faf4; }
+  .notice-success .notice-icon { color: #1f7a3f; }
+  .notice-error { border-left-color: var(--color-danger); background-color: #fdf3f2; }
+  .notice-error .notice-icon { color: var(--color-danger); }
+  /* A notice under a field is an inline message, not a banner: the global
+     [role=alert] rule already colours and sizes it. */
+  main .notice[role="alert"] {
+    /* `display: flex` again: the global `main [role="alert"]` rule sets block
+       and outranks `.notice`, which stacked the icon above the message. */
+    display: flex;
+    font-size: 1rem; font-weight: 400; color: var(--color-ink);
+  }
+
+  /* ---- Page header -------------------------------------------------------- */
+  .page-header { margin-block-end: 1.5rem; }
+  .page-header-back { margin-block-end: 0.75rem; font-size: 0.875rem; }
+  .page-header-back a { color: var(--color-muted); text-decoration: none; }
+  .page-header-back a:hover { color: var(--color-primary); text-decoration: underline; }
+  .page-header h1 { margin-block-end: 0.375rem; }
+  .page-header-lede { margin-block: 0 0.5rem; max-width: 72ch; }
+  .page-header-meta { font-size: 0.875rem; color: var(--color-muted); }
+  .page-header-meta > p { margin-block: 0; }
+
+  /* ---- Empty state --------------------------------------------------------- */
+  .empty-state {
+    padding: 1.5rem 1.25rem;
+    border: 1px dashed var(--color-line);
+    border-radius: var(--radius-token);
+    background-color: var(--color-surface);
+    margin-block-end: 1.25rem;
+  }
+  .empty-state-icon { color: var(--color-muted); margin-block-end: 0.5rem; }
+  .empty-state-title { font-weight: 600; margin-block: 0 0.25rem; }
+  .empty-state-body { color: var(--color-muted); }
+  .empty-state-body > :last-child { margin-block-end: 0; }
+  .empty-state-action { margin-block: 1rem 0; }
+
+  /* ---- Steps ---------------------------------------------------------------- */
+  .steps {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    font-size: 0.875rem;
+  }
+  .steps li { display: inline-flex; align-items: center; gap: 0.5rem; margin: 0; color: var(--color-muted); }
+  .steps-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    border: 1.5px solid var(--color-line);
+    font-size: 0.75rem;
+    font-weight: 600;
+    flex: none;
+  }
+  .steps li[data-state="current"] { color: var(--color-ink); font-weight: 600; }
+  .steps li[data-state="current"] .steps-index {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+  .steps li[data-state="done"] .steps-index {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+  @media (max-width: 639.98px) {
+    .steps { gap: 0.5rem 0.75rem; }
+    .steps li:not([data-state="current"]) .steps-label { display: none; }
+  }
+
+  /* ---- Pills ----------------------------------------------------------------- */
+  .pill {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-line);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+  .pill-on { border-color: var(--color-primary); color: var(--color-ink); }
+  .pill-primary { background-color: var(--color-primary); border-color: var(--color-primary); color: var(--color-on-primary); }
+  .pill-danger { border-color: var(--color-danger); color: var(--color-danger); }
+
+  /* ---- Nav counts ------------------------------------------------------------- */
+  .nav-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.375rem;
+    height: 1.375rem;
+    padding-inline: 0.375rem;
+    margin-inline-start: 0.375rem;
+    border-radius: 999px;
+    background-color: var(--color-primary);
+    color: var(--color-on-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The staff sub-nav: one scrolling row on a phone, a wrapped row above. */
+  .admin-nav ul { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+  .admin-nav a { white-space: nowrap; }
+  @media (min-width: 640px) { .admin-nav ul { flex-wrap: wrap; overflow: visible; } }
+
+  /* ---- Action bar ----------------------------------------------------------------
+     The buttons at the foot of a queue card. On a phone they stick to the bottom
+     of the viewport while the card is in view, so a long report does not put
+     its "Mark actioned" three screens away. */
+  .action-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-block-start: 1rem;
+  }
+  @media (max-width: 639.98px) {
+    .card > .action-bar, .card > form > .action-bar {
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      margin-inline: -1.25rem;
+      margin-block-end: -1.25rem;
+      padding: 0.75rem 1.25rem;
+      background-color: var(--color-surface);
+      border-top: 1px solid var(--color-line);
+      border-radius: 0 0 var(--radius-token) var(--radius-token);
+    }
+    .action-bar .btn, .action-bar button { flex: 1 1 auto; }
+  }
+
+  /* ---- Form actions ----------------------------------------------------------------
+     One primary button, secondaries beside it, links after. A submit that is
+     explicitly secondary must not inherit the primary fill from the
+     `main button[type=submit]` rule above. */
+  .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-block-start: 0.5rem; }
+  main button[type="submit"].btn-secondary,
+  main button.btn-secondary {
+    background-color: var(--color-surface);
+    border-color: var(--color-line);
+    color: var(--color-ink);
+  }
+  main button[type="submit"].btn-secondary:hover,
+  main button.btn-secondary:hover { border-color: var(--color-primary); }
+  main button[aria-busy="true"] { cursor: progress; }
+
+  /* ---- Tables that become cards ------------------------------------------------
+     Add `table-cards` to a <table> and `data-label` to each cell. Below 640px
+     the header row is hidden (still read by assistive technology) and every
+     row is a card whose cells print their own column name. The DOM is the
+     same table at every width, so tests and screen readers see one thing. */
+  @media (max-width: 639.98px) {
+    .table-scroll:has(> .table-cards) { border: 0; border-radius: 0; overflow: visible; }
+    main .table-cards, main .table-cards tbody, main .table-cards tr,
+    main .table-cards th, main .table-cards td { display: block; }
+    main .table-cards { background: transparent; }
+    main .table-cards thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    main .table-cards caption { display: block; }
+    main .table-cards tbody tr {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-line);
+      border-radius: var(--radius-token);
+      padding: 0.75rem 1rem;
+      margin-block-end: 0.75rem;
+    }
+    main .table-cards :is(th, td) { border: 0; padding: 0.25rem 0; }
+    main .table-cards [data-label]::before {
+      content: attr(data-label);
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+    main .table-cards td.max-w-sm { max-width: none; }
+  }
+
+  /* ---- Dashboard cards ---------------------------------------------------------- */
+  .dash-grid { list-style: none; padding: 0; margin: 0 0 1.25rem; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); }
+  .dash-grid > li { margin: 0; display: flex; flex-direction: column; }
+  .dash-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block-end: 0.5rem; }
+  .dash-card-head h3 { margin: 0; font-size: var(--text-h3); }
+  .dash-card-next { margin-block: 0.75rem 0; padding-block-start: 0.75rem; border-top: 1px solid var(--color-line); }
+  .dash-spark { display: block; width: 100%; height: 2.25rem; margin-block: 0.25rem 0; }
+
+  /* ---- Definition lists as key/value rows ------------------------------------------ */
+  .kv { display: grid; gap: 0.25rem 1.5rem; margin-block-end: 1rem; }
+  .kv dt { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-muted); }
+  .kv dd { margin: 0 0 0.75rem; }
+  @media (min-width: 640px) {
+    .kv { grid-template-columns: max-content 1fr; align-items: baseline; }
+    .kv dt { padding-block-start: 0.2rem; }
+    .kv dd { margin-block-end: 0.375rem; }
+  }
+}

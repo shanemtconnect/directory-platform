@@ -4,6 +4,8 @@ import { useActionState } from "react";
 import { useSession } from "@/lib/auth/client";
 import { replyToReview, type ReplyState } from "@/lib/actions/review";
 import { siteConfig } from "@/config/site.config";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: ReplyState = { ok: false };
 
@@ -26,9 +28,9 @@ export function OwnerReplyForm({ reviewId }: { reviewId: string }) {
 
   if (state.ok) {
     return (
-      <p data-testid="reply-sent" role="status" className="text-sm text-muted">
+      <Notice variant="success" testId="reply-sent">
         Your reply is published.
-      </p>
+      </Notice>
     );
   }
 
@@ -39,10 +41,14 @@ export function OwnerReplyForm({ reviewId }: { reviewId: string }) {
         Reply as the {siteConfig.entity.ownerNoun} (once per review)
       </label>
       <textarea id={`reply-${reviewId}`} name="body" rows={3} required minLength={10} maxLength={1000} />
-      {state.message && <p role="alert" data-testid="reply-error">{state.message}</p>}
-      <button type="submit" disabled={pending} className="btn">
-        {pending ? "Posting…" : "Post reply"}
-      </button>
+      {state.message && (
+        <Notice variant="error" testId="reply-error">
+          {state.message}
+        </Notice>
+      )}
+      <SubmitButton pending={pending} pendingLabel="Posting…" variant="secondary">
+        Post reply
+      </SubmitButton>
     </form>
   );
 }

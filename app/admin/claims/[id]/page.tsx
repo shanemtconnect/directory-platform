@@ -7,6 +7,9 @@ import { getClaimForAdmin, DOCUMENT_RETENTION_DAYS } from "@/lib/db/queries/clai
 import { claimDocsConfigured } from "@/lib/media/claim-docs";
 import { ClaimDecision } from "@/components/claim/ClaimDecision";
 import { AdminNav } from "@/components/admin/AdminNav";
+import { adminNavCounts } from "@/components/admin/nav-counts";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Notice } from "@/components/ui/Notice";
 
 export const metadata: Metadata = {
   title: "Claim",
@@ -20,7 +23,10 @@ interface Props {
 export default async function AdminClaimPage({ params }: Props) {
   const { id } = await params;
   const viewer = await currentViewer();
-  const claim = await getClaimForAdmin(db, viewer, id);
+  const [claim, counts] = await Promise.all([
+    getClaimForAdmin(db, viewer, id),
+    adminNavCounts(db, viewer),
+  ]);
   if (!claim) notFound();
 
   const e = siteConfig.entity;
@@ -28,11 +34,14 @@ export default async function AdminClaimPage({ params }: Props) {
 
   return (
     <main>
-      <AdminNav current="/admin/claims" />
-      <p className="text-sm text-muted"><a href="/admin/claims">← Claims</a></p>
-      <h1>{claim.listingName}</h1>
+      <AdminNav current="/admin/claims" counts={counts} />
+      <PageHeader
+        title={claim.listingName}
+        back={{ href: "/admin/claims", label: "Claims" }}
+        lede={`Who is asking to manage this ${e.singular}, what they sent as proof, and the decision.`}
+      />
 
-      <dl data-testid="claim-detail">
+      <dl data-testid="claim-detail" className="kv">
         <dt>{e.Singular}</dt>
         <dd><a href={claim.listingPath}>{claim.listingPath}</a></dd>
 
@@ -114,11 +123,16 @@ export default async function AdminClaimPage({ params }: Props) {
         </p>
       </section>
 
-      {claim.status === "pending" ? (
-        <ClaimDecision claimId={claim.id} />
-      ) : (
-        <p data-testid="claim-already-decided">This claim has already been decided.</p>
-      )}
+      <section aria-labelledby="decision">
+        <h2 id="decision">Decision</h2>
+        {claim.status === "pending" ? (
+          <ClaimDecision claimId={claim.id} />
+        ) : (
+          <Notice variant="status" testId="claim-already-decided">
+            This claim has already been decided.
+          </Notice>
+        )}
+      </section>
     </main>
   );
 }

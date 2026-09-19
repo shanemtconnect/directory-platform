@@ -1,5 +1,6 @@
 import { siteConfig } from "@/config/site.config";
 import type { AuditEntry } from "@/lib/db/queries/admin/audit";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
  * The trail. Read-only by design — an audit log that can be edited from the
@@ -33,7 +34,7 @@ export function AuditFilter({ types, current }: { types: string[]; current: stri
       <a
         href="/admin/audit"
         aria-current={current === null ? "page" : undefined}
-        className={current === null ? "font-semibold" : ""}
+        className={`pill min-h-11 inline-flex items-center no-underline ${current === null ? "pill-primary" : ""}`}
       >
         Everything
       </a>
@@ -42,7 +43,7 @@ export function AuditFilter({ types, current }: { types: string[]; current: stri
           key={type}
           href={`/admin/audit/${type}`}
           aria-current={current === type ? "page" : undefined}
-          className={current === type ? "font-semibold" : ""}
+          className={`pill min-h-11 inline-flex items-center no-underline ${current === type ? "pill-primary" : ""}`}
         >
           {type}
         </a>
@@ -53,12 +54,16 @@ export function AuditFilter({ types, current }: { types: string[]; current: stri
 
 export function AuditTable({ rows }: { rows: AuditEntry[] }) {
   if (rows.length === 0) {
-    return <p data-testid="audit-empty">Nothing has been recorded under this filter yet.</p>;
+    return (
+      <EmptyState title="Nothing has been recorded under this filter yet." testId="audit-empty">
+        <p>Every approval, rejection, edit and takedown writes a row here as it happens.</p>
+      </EmptyState>
+    );
   }
 
   return (
     <div className="table-scroll">
-      <table data-testid="audit-table">
+      <table data-testid="audit-table" className="table-cards">
         <caption>The {rows.length} most recent entries, newest first.</caption>
         <thead>
           <tr>
@@ -73,12 +78,12 @@ export function AuditTable({ rows }: { rows: AuditEntry[] }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
-              <td>
+              <td data-label="When">
                 <time dateTime={row.createdAt.toISOString()}>{when(row.createdAt)}</time>
               </td>
-              <td>{row.actor ?? <span className="text-muted">not signed in</span>}</td>
-              <td>{row.action}</td>
-              <td>
+              <td data-label="Who">{row.actor ?? <span className="text-muted">not signed in</span>}</td>
+              <td data-label="Action">{row.action}</td>
+              <td data-label="Entity">
                 {row.entityType ?? "—"}
                 {row.entityId !== null && (
                   <>
@@ -87,8 +92,8 @@ export function AuditTable({ rows }: { rows: AuditEntry[] }) {
                   </>
                 )}
               </td>
-              <td className="max-w-sm break-words text-sm">{meta(row.meta)}</td>
-              <td className="text-sm">{row.ip ?? "—"}</td>
+              <td data-label="Detail" className="max-w-sm break-words text-sm">{meta(row.meta)}</td>
+              <td data-label="IP" className="text-sm">{row.ip ?? "—"}</td>
             </tr>
           ))}
         </tbody>

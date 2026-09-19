@@ -9,6 +9,9 @@ import {
   type QueueState,
 } from "@/lib/actions/admin-trust";
 import type { OpenReport } from "@/lib/db/queries/trust";
+import { Notice } from "@/components/ui/Notice";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 /**
  * Everything somebody has told us is wrong, newest first.
@@ -56,10 +59,12 @@ function ReportCard({ report, now }: { report: OpenReport; now: Date }) {
     (dismissed.status === "error" ? dismissed.message : null) ??
     (actioned.status === "error" ? actioned.message : null) ??
     null;
+  const done = dismissed.status === "done" || actioned.status === "done";
+  const titleId = `report-${report.id}-title`;
 
   return (
     <li className="card mb-3" data-testid={`report-${report.id}`}>
-      <h2 className="mt-0 text-lg">
+      <h2 className="mt-0 text-lg" id={titleId}>
         <a href={report.listingPath}>{report.listingName}</a>
       </h2>
       <p className="text-sm text-muted">
@@ -92,26 +97,31 @@ function ReportCard({ report, now }: { report: OpenReport; now: Date }) {
         <a href={report.listingPath}>See the live page</a>
       </p>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {failure !== null && (
+        <Notice variant="error" testId="report-error">
+          {failure}
+        </Notice>
+      )}
+      {done && failure === null && (
+        <Notice variant="success" testId="report-done">
+          Done — this report is closed and leaves the queue on the next load.
+        </Notice>
+      )}
+
+      <div className="action-bar" role="group" aria-labelledby={titleId}>
         <form action={markActioned}>
           <input type="hidden" name="reportId" value={report.id} />
-          <button type="submit" disabled={marking} data-testid="report-actioned">
-            {marking ? "Saving…" : "Mark actioned"}
-          </button>
+          <SubmitButton pending={marking} pendingLabel="Saving…" testId="report-actioned">
+            Mark actioned
+          </SubmitButton>
         </form>
         <form action={dismiss}>
           <input type="hidden" name="reportId" value={report.id} />
-          <button type="submit" disabled={dismissing} data-testid="report-dismiss">
-            {dismissing ? "Saving…" : "Dismiss"}
-          </button>
+          <SubmitButton pending={dismissing} pendingLabel="Saving…" variant="secondary" testId="report-dismiss">
+            Dismiss
+          </SubmitButton>
         </form>
       </div>
-
-      {failure !== null && (
-        <p role="alert" className="mt-2 text-sm" data-testid="report-error">
-          {failure}
-        </p>
-      )}
     </li>
   );
 }
@@ -119,10 +129,9 @@ function ReportCard({ report, now }: { report: OpenReport; now: Date }) {
 export function ReportQueue({ reports, now }: { reports: OpenReport[]; now: Date }) {
   if (reports.length === 0) {
     return (
-      <p data-testid="report-queue-empty">
-        Nothing has been reported. Corrections sent from a {siteConfig.entity.singular} page land
-        here.
-      </p>
+      <EmptyState title="Nothing has been reported." testId="report-queue-empty">
+        <p>Corrections sent from a {siteConfig.entity.singular} page land here.</p>
+      </EmptyState>
     );
   }
 

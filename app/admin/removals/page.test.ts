@@ -19,6 +19,18 @@ vi.mock("next/navigation", () => ({
   },
 }));
 vi.mock("@/lib/db/client", () => ({ db: { marker: "the pool" } }));
+// The nav counts ride along with every console page; they are not what these tests pin.
+vi.mock("@/lib/db/queries/admin/dashboard", () => ({
+  adminQueueCounts: () =>
+    Promise.resolve({
+      pendingSubmissions: 0,
+      citiesAwaitingIntro: 0,
+      pendingClaims: 0,
+      openReports: 0,
+      openRemovals: 0,
+      reviewsAwaitingModeration: 0,
+    }),
+}));
 vi.mock("@/lib/auth/viewer", () => ({ currentViewer: () => currentViewer() }));
 vi.mock("@/lib/db/queries/trust", () => ({
   listOpenRemovalRequests: () => listOpenRemovalRequests(),

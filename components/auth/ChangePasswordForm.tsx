@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth/client";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const MIN_PASSWORD = 10;
 
@@ -86,16 +88,16 @@ export function ChangePasswordForm() {
         <input id="cp-confirm" name="confirm" type="password" required autoComplete="new-password" />
       </p>
       {message && (
-        <p
-          role={message.kind === "error" ? "alert" : "status"}
-          data-testid="change-password-message"
+        <Notice
+          variant={message.kind === "error" ? "error" : "success"}
+          testId="change-password-message"
         >
           {message.text}
-        </p>
+        </Notice>
       )}
-      <button type="submit" disabled={pending} className="btn btn-primary">
-        {pending ? "Changing…" : "Change password"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Changing…">
+        Change password
+      </SubmitButton>
       <p className="mt-3 text-sm">
         Forgotten it? <a href="/forgot-password">Reset it by email</a> instead.
       </p>

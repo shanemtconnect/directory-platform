@@ -5,6 +5,8 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { adminQueueCounts } from "@/lib/db/queries/admin/dashboard";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { QueueCounts } from "@/components/admin/QueueCounts";
+import { navCountsFrom } from "@/components/admin/nav-counts";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Admin",
@@ -21,9 +23,8 @@ export default async function AdminPage() {
 
   return (
     <main>
-      <AdminNav current="/admin" />
-      <h1>Admin</h1>
-      <p className="text-muted">Everything below is waiting on somebody here.</p>
+      <AdminNav current="/admin" counts={navCountsFrom(counts)} />
+      <PageHeader title="Admin" lede="Everything below is waiting on somebody here." />
       <QueueCounts counts={counts} />
     </main>
   );

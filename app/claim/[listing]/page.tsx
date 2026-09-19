@@ -8,6 +8,10 @@ import { claimableDomain } from "@/lib/claims/domain";
 import { claimDocsConfigured } from "@/lib/media/claim-docs";
 import { DomainClaimForm } from "@/components/claim/DomainClaimForm";
 import { DocumentClaimForm } from "@/components/claim/DocumentClaimForm";
+import { CLAIM_STEPS } from "@/components/claim/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
+import { Notice } from "@/components/ui/Notice";
 
 /**
  * `/claim/<listingId>` — the evidence ladder.
@@ -49,11 +53,11 @@ export default async function ClaimPage({ params }: Props) {
     return (
       <main>
         <div className="mx-auto max-w-2xl">
-          <h1>{listing.name} is already claimed</h1>
-          <p>
-            Someone has already proved they manage this {e.singular}. If that is wrong, tell us and
-            we will look into it.
-          </p>
+          <PageHeader
+            title={`${listing.name} is already claimed`}
+            back={{ href: listing.path, label: listing.name }}
+            lede={`Someone has already proved they manage this ${e.singular}. If that is wrong, tell us and we will look into it.`}
+          />
           <p data-testid="claim-taken-links">
             <a href={`/report/${listing.id}`}>Report a problem with this listing</a>
             {" · "}
@@ -67,19 +71,20 @@ export default async function ClaimPage({ params }: Props) {
   return (
     <main>
       <div className="mx-auto max-w-2xl">
-        <h1>Claim {listing.name}</h1>
-        <p className="text-muted">
-          Claiming is free. Once it is yours you can edit the details and see every enquiry the
-          listing receives.
-        </p>
+        <PageHeader
+          title={`Claim ${listing.name}`}
+          back={{ href: listing.path, label: `Back to ${listing.name}` }}
+          lede="Claiming is free. Once it is yours you can edit the details and see every enquiry the listing receives."
+        />
+        <Steps steps={CLAIM_STEPS} current={1} />
 
         {domain === null ? (
-          <p data-testid="claim-no-domain">
+          <Notice variant="status" testId="claim-no-domain">
             We cannot confirm you by email for this listing.
             {claimDocsConfigured()
               ? " Send a document instead and someone will check it."
               : ` Email ${siteConfig.supportEmail} and we will sort it out with you.`}
-          </p>
+          </Notice>
         ) : (
           <DomainClaimForm listingId={listing.id} domain={domain} />
         )}

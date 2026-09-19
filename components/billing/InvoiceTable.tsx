@@ -1,5 +1,6 @@
 import { siteConfig } from "@/config/site.config";
 import type { Invoice } from "@/lib/db/queries/billing";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
  * Payments taken, read back out of the completed-sale events PayPal sent us.
@@ -11,9 +12,9 @@ import type { Invoice } from "@/lib/db/queries/billing";
 export function InvoiceTable({ invoices }: { invoices: readonly Invoice[] }) {
   if (invoices.length === 0) {
     return (
-      <p data-testid="invoices-empty">
-        No payments yet. They appear here as soon as PayPal takes the first one.
-      </p>
+      <EmptyState title="No payments yet." testId="invoices-empty">
+        <p>They appear here as soon as PayPal takes the first one.</p>
+      </EmptyState>
     );
   }
 
@@ -26,7 +27,7 @@ export function InvoiceTable({ invoices }: { invoices: readonly Invoice[] }) {
 
   return (
     <div className="table-scroll">
-      <table data-testid="invoices">
+      <table data-testid="invoices" className="table-cards">
         <caption>Payments taken by PayPal</caption>
         <thead>
           <tr>
@@ -38,11 +39,11 @@ export function InvoiceTable({ invoices }: { invoices: readonly Invoice[] }) {
         <tbody>
           {invoices.map((invoice) => (
             <tr key={invoice.id} data-testid="invoice">
-              <td>{date.format(invoice.paidAt)}</td>
-              <td>
+              <td data-label="Date">{date.format(invoice.paidAt)}</td>
+              <td data-label="Amount">
                 {invoice.amount} {invoice.currency}
               </td>
-              <td>
+              <td data-label="PayPal reference">
                 <code>{invoice.id}</code>
               </td>
             </tr>

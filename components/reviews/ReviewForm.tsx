@@ -5,6 +5,8 @@ import { submitReview, type ReviewState } from "@/lib/actions/review";
 import { siteConfig } from "@/config/site.config";
 import { TurnstileWidget } from "@/components/submit/TurnstileWidget";
 import { REVIEW_MAX, subRatingField } from "@/lib/reviews/validate";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: ReviewState = { status: "idle" };
 
@@ -33,13 +35,17 @@ export function ReviewForm({ listingId, listingName, turnstileSiteKey }: ReviewF
 
   if (state.status === "sent") {
     return (
-      <div data-testid="review-sent" role="status" className="card bg-raised">
-        <h2 className="mt-0">Check your email</h2>
+      <Notice variant="success" testId="review-sent" title="Check your email">
         <p>
           We&rsquo;ve sent a link to confirm your email address. Your review of {listingName} goes
           live when you click it — that&rsquo;s how every review here is kept to real people.
         </p>
-      </div>
+        <p className="mb-0">
+          <strong>What happens next:</strong> the link opens a page with one Confirm button. Once
+          you press it the review is published straight away, unless it contains a link, contact
+          details or strong language — then a person reads it first and we email you either way.
+        </p>
+      </Notice>
     );
   }
 
@@ -112,12 +118,14 @@ export function ReviewForm({ listingId, listingName, turnstileSiteKey }: ReviewF
       <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />
 
       {state.status === "error" && state.message && (
-        <p role="alert" data-testid="review-error">{state.message}</p>
+        <Notice variant="error" testId="review-error">
+          {state.message}
+        </Notice>
       )}
 
-      <button type="submit" disabled={pending} className="btn btn-primary w-full">
-        {pending ? "Sending…" : "Submit review"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Sending…" block>
+        Submit review
+      </SubmitButton>
     </form>
   );
 }

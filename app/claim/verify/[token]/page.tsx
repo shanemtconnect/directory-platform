@@ -5,6 +5,10 @@ import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { previewClaimToken } from "@/lib/db/queries/claims";
 import { CLAIM_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
+import { CLAIM_STEPS } from "@/components/claim/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
+import { Notice } from "@/components/ui/Notice";
 
 /**
  * `/claim/verify/<token>` — the magic link's landing page.
@@ -49,10 +53,10 @@ export default async function VerifyClaimPage({ params }: Props) {
     return (
       <main>
         <div className="mx-auto max-w-2xl">
-          <h1>Too many attempts</h1>
-          <p data-testid="claim-verify-limited">
+          <PageHeader title="Too many attempts" />
+          <Notice variant="error" testId="claim-verify-limited">
             Too many attempts from this connection. Please try again in a minute.
-          </p>
+          </Notice>
         </div>
       </main>
     );
@@ -73,10 +77,10 @@ export default async function VerifyClaimPage({ params }: Props) {
     return (
       <main>
         <div className="mx-auto max-w-2xl">
-          <h1>This link cannot be used</h1>
-          <p data-testid="claim-verify-dead">{message}</p>
+          <PageHeader title="This link cannot be used" />
+          <Notice variant="error" testId="claim-verify-dead">{message}</Notice>
           <p>
-            <a href="/account">Go to your account</a>
+            <a href="/account" className="btn btn-primary">Go to your account</a>
           </p>
         </div>
       </main>
@@ -86,11 +90,11 @@ export default async function VerifyClaimPage({ params }: Props) {
   return (
     <main>
       <div className="mx-auto max-w-2xl" data-testid="claim-confirm">
-        <h1>Confirm you are claiming {preview.listingName}</h1>
-        <p>
-          Confirming hands this {e.singular} listing to the account that asked for the link. You
-          will be able to edit the details and see every enquiry it receives.
-        </p>
+        <PageHeader
+          title={`Confirm you are claiming ${preview.listingName}`}
+          lede={`Confirming hands this ${e.singular} listing to the account that asked for the link. You will be able to edit the details and see every enquiry it receives.`}
+        />
+        <Steps steps={CLAIM_STEPS} current={2} />
         <p className="text-muted text-sm">
           If you did not ask for this, close this page. Nothing changes unless you press Confirm.
         </p>

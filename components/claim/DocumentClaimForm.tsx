@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import { confirmClaimDocument, prepareClaimDocument } from "@/lib/actions/claim";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 /**
  * The manual rung.
@@ -71,10 +73,14 @@ export function DocumentClaimForm({ listingId }: DocumentClaimFormProps) {
 
   if (done) {
     return (
-      <div data-testid="claim-document-sent" role="status" className="card bg-raised">
-        <h2 className="mt-0">We have your document</h2>
+      <Notice variant="success" testId="claim-document-sent" title="We have your document">
         <p>Someone will look at it and email you either way, usually within two working days.</p>
-      </div>
+        <p className="mb-0">
+          <strong>What happens next:</strong> the claim shows as in progress on{" "}
+          <a href="/account">your account</a>. If it is approved the listing appears there; if
+          not, the email says why and you can try again with different evidence.
+        </p>
+      </Notice>
     );
   }
 
@@ -107,11 +113,15 @@ export function DocumentClaimForm({ listingId }: DocumentClaimFormProps) {
         <textarea id="doc-notes" name="evidenceNotes" rows={3} maxLength={1000} />
       </p>
 
-      {error && <p role="alert" data-testid="claim-document-error">{error}</p>}
+      {error && (
+        <Notice variant="error" testId="claim-document-error">
+          {error}
+        </Notice>
+      )}
 
-      <button type="submit" disabled={pending} className="btn w-full">
-        {pending ? "Uploading…" : "Send for review"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Uploading…" variant="secondary" block>
+        Send for review
+      </SubmitButton>
     </form>
   );
 }

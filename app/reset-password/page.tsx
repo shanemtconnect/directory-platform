@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { ResetPasswordForm } from "@/components/auth/ResetPasswordForm";
+import { RESET_STEPS } from "@/components/auth/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
+import { Notice } from "@/components/ui/Notice";
 
 export const metadata: Metadata = {
   title: "Set a new password",
@@ -30,11 +34,12 @@ export default async function ResetPasswordPage({
     return (
       <main>
         <div className="mx-auto max-w-md">
-          <h1>That link has expired</h1>
-          <p className="text-muted" data-testid="reset-password-expired">
+          <PageHeader title="That link has expired" />
+          <Steps steps={RESET_STEPS} current={1} />
+          <Notice variant="status" testId="reset-password-expired">
             Reset links work once, and for an hour. Ask for a new one and it will be
             waiting in your inbox.
-          </p>
+          </Notice>
           <p>
             <a href="/forgot-password" className="btn btn-primary">
               Send me a new link
@@ -48,11 +53,16 @@ export default async function ResetPasswordPage({
   return (
     <main>
       <div className="mx-auto max-w-md">
-        <h1>Set a new password</h1>
-        <p className="text-muted">
-          Choose something you don&rsquo;t use anywhere else. Your other devices are signed
-          out within a minute and will need the new one.
-        </p>
+        <PageHeader
+          title="Set a new password"
+          lede={
+            <>
+              Choose something you don&rsquo;t use anywhere else. Your other devices are signed
+              out within a minute and will need the new one.
+            </>
+          }
+        />
+        <Steps steps={RESET_STEPS} current={2} />
         <ResetPasswordForm token={token} />
       </div>
     </main>

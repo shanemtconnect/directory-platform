@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { rejectSubmissionAction, type RejectState } from "@/lib/actions/admin";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 /**
  * The only client component in the console.
@@ -35,9 +36,11 @@ export function RejectSubmissionForm({ listingId }: { listingId: string }) {
           </span>
         )}
       </p>
-      <button type="submit" disabled={pending} data-testid="reject-submit">
-        {pending ? "Rejecting…" : "Reject submission"}
-      </button>
+      <div className="form-actions">
+        <SubmitButton pending={pending} pendingLabel="Rejecting…" variant="secondary" testId="reject-submit">
+          Reject submission
+        </SubmitButton>
+      </div>
     </form>
   );
 }

@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { saveProfile, type ProfileFormState } from "@/lib/actions/profile";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: ProfileFormState = { status: "idle" };
 
@@ -49,6 +51,7 @@ export function ProfileSettingsForm({
           defaultValue={name}
           required
           autoComplete="name"
+          aria-invalid={err.name ? true : undefined}
           aria-describedby={err.name ? "pf-name-error" : undefined}
         />
         {err.name && (
@@ -65,9 +68,10 @@ export function ProfileSettingsForm({
           type="tel"
           defaultValue={phone}
           autoComplete="tel"
-          aria-describedby={err.phone ? "pf-phone-error" : undefined}
+          aria-invalid={err.phone ? true : undefined}
+          aria-describedby={err.phone ? "pf-phone-error" : "pf-phone-help"}
         />
-        <small>Only used if we need to reach you about a claim. Never published.</small>
+        <small id="pf-phone-help">Only used if we need to reach you about a claim. Never published.</small>
         {err.phone && (
           <span role="alert" id="pf-phone-error">
             {err.phone}
@@ -87,13 +91,13 @@ export function ProfileSettingsForm({
         <small>Unticked by default, and you can untick it again at any time.</small>
       </p>
       {state.message && (
-        <p role={state.status === "error" ? "alert" : "status"} data-testid="profile-message">
+        <Notice variant={state.status === "error" ? "error" : "success"} testId="profile-message">
           {state.message}
-        </p>
+        </Notice>
       )}
-      <button type="submit" disabled={pending} className="btn btn-primary">
-        {pending ? "Saving…" : "Save changes"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Saving…">
+        Save changes
+      </SubmitButton>
     </form>
   );
 }

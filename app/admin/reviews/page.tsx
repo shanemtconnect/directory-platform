@@ -7,6 +7,8 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { listReviewsAwaitingModeration } from "@/lib/db/queries/reviews";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { ReviewQueue } from "@/components/admin/ReviewQueue";
+import { adminNavCounts } from "@/components/admin/nav-counts";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Reviews",
@@ -19,7 +21,10 @@ export default async function AdminReviewsPage() {
   // a viewer it will refuse: the page and the layout render concurrently, and
   // a thrown FORBIDDEN puts a stack trace in the log for every 404.
   if (viewer.role !== "admin") notFound();
-  const reviews = await listReviewsAwaitingModeration(db, viewer);
+  const [reviews, counts] = await Promise.all([
+    listReviewsAwaitingModeration(db, viewer),
+    adminNavCounts(db, viewer),
+  ]);
 
   // One clock reading for the whole page, taken on the server. Ages worked out
   // per row in the browser would disagree with the HTML the server sent.
@@ -27,13 +32,15 @@ export default async function AdminReviewsPage() {
 
   return (
     <main>
-      <AdminNav current="/admin/reviews" />
-      <h1>Reviews</h1>
-      <p className="text-muted">
-        {reviews.length === 0
-          ? `Reviews the checks held after the author confirmed them land here. Publishing one puts it on the ${siteConfig.entity.singular} page and into its rating.`
-          : `${reviews.length} held, newest first. Publishing puts the review on the page and into the rating; rejecting keeps it off.`}
-      </p>
+      <AdminNav current="/admin/reviews" counts={counts} />
+      <PageHeader
+        title="Reviews"
+        lede={
+          reviews.length === 0
+            ? `Reviews the checks held after the author confirmed them land here. Publishing one puts it on the ${siteConfig.entity.singular} page and into its rating.`
+            : `${reviews.length} held, newest first. Publishing puts the review on the page and into the rating; rejecting keeps it off.`
+        }
+      />
       <ReviewQueue reviews={reviews} now={asOf} />
     </main>
   );

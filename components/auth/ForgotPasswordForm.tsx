@@ -5,6 +5,8 @@ import {
   requestPasswordResetAction,
   type ForgotPasswordState,
 } from "@/app/forgot-password/actions";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: ForgotPasswordState = { status: "idle" };
 
@@ -19,13 +21,14 @@ export function ForgotPasswordForm() {
 
   if (state.status === "sent") {
     return (
-      <div className="card max-w-md" data-testid="forgot-password-sent">
-        <p role="status">{state.message}</p>
-        <p className="text-sm">
-          Nothing in your inbox after a few minutes? Check the spam folder, then{" "}
-          <a href="/forgot-password">try again</a>.
+      <Notice variant="success" testId="forgot-password-sent" title="What happens next">
+        <p>{state.message}</p>
+        <p className="mb-0">
+          The link in the email works once and for an hour, and opens a page where you type the
+          new password twice. Nothing in your inbox after a few minutes? Check the spam folder,
+          then <a href="/forgot-password">try again</a>.
         </p>
-      </div>
+      </Notice>
     );
   }
 
@@ -36,13 +39,13 @@ export function ForgotPasswordForm() {
         <input id="email" name="email" type="email" required autoComplete="email" />
       </p>
       {state.status === "error" && (
-        <p role="alert" data-testid="forgot-password-error">
+        <Notice variant="error" testId="forgot-password-error">
           {state.message}
-        </p>
+        </Notice>
       )}
-      <button type="submit" disabled={pending} className="btn btn-primary w-full">
-        {pending ? "Sending…" : "Send me a link"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Sending…" block>
+        Send me a link
+      </SubmitButton>
       <p className="mt-3 text-sm">
         <a href="/login">Back to sign in</a>
       </p>

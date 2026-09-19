@@ -7,6 +7,9 @@ import { invoiceHistory, ownerSubscriptions } from "@/lib/db/queries/billing";
 import { billingConfigured, paypalManageAccountUrl } from "@/lib/billing/paypal";
 import { SubscriptionCard } from "@/components/billing/SubscriptionCard";
 import { InvoiceTable } from "@/components/billing/InvoiceTable";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Notice } from "@/components/ui/Notice";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
  * `/account/billing`.
@@ -51,48 +54,64 @@ export default async function BillingPage() {
 
   return (
     <main data-testid="billing-page">
-      <h1>Billing</h1>
+      <PageHeader
+        title="Billing"
+        back={{ href: "/account", label: "Your account" }}
+        lede="Your plan, the payments PayPal has taken, and how to change or cancel."
+      />
 
       {!billingConfigured() && (
-        <p data-testid="billing-unavailable">
+        <Notice variant="status" testId="billing-unavailable">
           Subscriptions are not set up on this site yet. Nothing here can be changed — email{" "}
           <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a> if you need
           anything.
-        </p>
+        </Notice>
       )}
 
-      {subscriptions.length === 0 ? (
-        <p data-testid="no-subscriptions">
-          You have no paid plan. Every {e.singular} keeps its name, address, phone number, map pin
-          and enquiry form for free — a plan buys reach and richness on top.{" "}
-          <a href="/pricing">See what the plans do</a>.
+      <section aria-labelledby="billing-plan">
+        <h2 id="billing-plan">Your plan</h2>
+        {subscriptions.length === 0 ? (
+          <EmptyState
+            title="You have no paid plan."
+            testId="no-subscriptions"
+            action={{ href: "/pricing", label: "See what the plans do" }}
+          >
+            <p>
+              Every {e.singular} keeps its name, address, phone number, map pin and enquiry form
+              for free — a plan buys reach and richness on top.{" "}
+              <a href="/pricing">See what the plans do</a>.
+            </p>
+          </EmptyState>
+        ) : (
+          <ul data-testid="subscriptions" className="grid list-none gap-4 p-0">
+            {subscriptions.map((subscription) => (
+              <SubscriptionCard
+                key={subscription.id}
+                subscription={subscription}
+                manageUrl={manageUrl}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="billing-history">
+        <h2 id="billing-history">Payment history</h2>
+        <InvoiceTable invoices={invoices} />
+      </section>
+
+      <section aria-labelledby="billing-verification">
+        <h2 id="billing-verification">Verification</h2>
+        <p>
+          Verification is included with every paid plan, but paying is not what earns the badge: the{" "}
+          {e.ownerNoun} still has to pass the check that proves they control the business. If a plan
+          lapses, the badge goes with it. <a href="/trust">What our badges mean</a>.
         </p>
-      ) : (
-        <ul data-testid="subscriptions" className="grid list-none gap-4 p-0">
-          {subscriptions.map((subscription) => (
-            <SubscriptionCard
-              key={subscription.id}
-              subscription={subscription}
-              manageUrl={manageUrl}
-            />
-          ))}
-        </ul>
-      )}
-
-      <h2>Payment history</h2>
-      <InvoiceTable invoices={invoices} />
-
-      <h2>Verification</h2>
-      <p>
-        Verification is included with every paid plan, but paying is not what earns the badge: the{" "}
-        {e.ownerNoun} still has to pass the check that proves they control the business. If a plan
-        lapses, the badge goes with it. <a href="/trust">What our badges mean</a>.
-      </p>
-
-      <p className="text-sm text-muted">
-        Questions about a payment? Email{" "}
-        <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a>.
-      </p>
+        <p className="text-sm text-muted">
+          Questions about a payment? Email{" "}
+          <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a>.
+        </p>
+      </section>
     </main>
   );
 }

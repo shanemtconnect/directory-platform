@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { decideClaimAction, type DecisionState } from "@/lib/actions/claim";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: DecisionState = { status: "idle" };
 
@@ -15,9 +17,11 @@ export function ClaimDecision({ claimId }: { claimId: string }) {
 
   if (state.status === "done") {
     return (
-      <p role="status" data-testid="claim-decided">
-        Decision recorded. <a href="/admin/claims">Back to the queue</a>.
-      </p>
+      <Notice variant="success" testId="claim-decided" title="Decision recorded.">
+        <p>
+          The claimant is being emailed the outcome. <a href="/admin/claims">Back to the queue</a>.
+        </p>
+      </Notice>
     );
   }
 
@@ -30,18 +34,25 @@ export function ClaimDecision({ claimId }: { claimId: string }) {
         <textarea id="claim-reason" name="reason" rows={3} maxLength={500} />
       </p>
 
-      {state.message && <p role="alert" data-testid="claim-decision-error">{state.message}</p>}
+      {state.message && (
+        <Notice variant="error" testId="claim-decision-error">
+          {state.message}
+        </Notice>
+      )}
 
-      <div className="flex gap-3">
-        <button
-          type="submit" name="decision" value="approved" disabled={pending}
-          className="btn btn-primary"
+      <div className="form-actions">
+        <SubmitButton pending={pending} pendingLabel="Saving…" name="decision" value="approved">
+          Approve
+        </SubmitButton>
+        <SubmitButton
+          pending={pending}
+          pendingLabel="Saving…"
+          variant="secondary"
+          name="decision"
+          value="rejected"
         >
-          {pending ? "Saving…" : "Approve"}
-        </button>
-        <button type="submit" name="decision" value="rejected" disabled={pending} className="btn">
           Reject
-        </button>
+        </SubmitButton>
       </div>
     </form>
   );

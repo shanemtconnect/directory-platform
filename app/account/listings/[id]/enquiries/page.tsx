@@ -5,6 +5,7 @@ import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { ownerEnquiries, ownerListing } from "@/lib/db/queries/owner";
 import { EnquiryInbox } from "@/components/account/EnquiryInbox";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Enquiries",
@@ -26,10 +27,11 @@ export default async function OwnerEnquiriesPage({ params }: Props) {
 
   return (
     <main>
-      <p className="text-sm text-muted">
-        <a href={`/account/listings/${listing.id}`}>← {listing.name}</a>
-      </p>
-      <h1>Enquiries</h1>
+      <PageHeader
+        title="Enquiries"
+        back={{ href: `/account/listings/${listing.id}`, label: listing.name }}
+        lede={`Messages sent to ${listing.name} through its page. Newest first.`}
+      />
 
       <EnquiryInbox
         locale={siteConfig.locale}

@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { resendReviewVerification, type ResendState } from "@/lib/actions/review";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: ResendState = { status: "idle" };
 
@@ -23,22 +25,24 @@ export function ResendVerificationForm({ token }: { token: string }) {
 
   if (state.status === "sent") {
     return (
-      <p role="status" data-testid="review-resent">
+      <Notice variant="success" testId="review-resent">
         If that review is still waiting to be confirmed, a new link is on its way to the address
         you used. It lasts seven days.
-      </p>
+      </Notice>
     );
   }
 
   return (
     <form action={action}>
       <input type="hidden" name="token" value={token} />
-      <button type="submit" className="btn btn-primary" disabled={pending}>
-        {pending ? "Sending…" : "Send me a new link"}
-      </button>
       {state.status === "error" && state.message ? (
-        <p role="alert" data-testid="review-resend-error">{state.message}</p>
+        <Notice variant="error" testId="review-resend-error">
+          {state.message}
+        </Notice>
       ) : null}
+      <SubmitButton pending={pending} pendingLabel="Sending…">
+        Send me a new link
+      </SubmitButton>
     </form>
   );
 }

@@ -10,6 +10,9 @@ import {
 } from "@/lib/actions/admin-trust";
 import { REJECTION_REASON_MIN_LENGTH } from "@/lib/trust/rejection";
 import type { OpenRemovalRequest, RemovalRelationship } from "@/lib/db/queries/trust";
+import { Notice } from "@/components/ui/Notice";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 /**
  * People who have asked to come off the site, nearest deadline first.
@@ -70,19 +73,18 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
     (rejected.status === "error" ? rejected.message : null) ??
     null;
   const due = dueState(request.dueAt, now);
+  const done = taken.status === "done" || rejected.status === "done";
+  const titleId = `removal-${request.id}-title`;
 
   return (
     <li className="card mb-3" data-testid={`removal-${request.id}`}>
-      <h2 className="mt-0 text-lg">
+      <h2 className="mt-0 text-lg" id={titleId}>
         <a href={request.listingPath}>{request.listingName}</a>
       </h2>
 
       <p className="text-sm">
         {due.overdue ? (
-          <strong
-            className="inline-block rounded-full border border-primary px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink"
-            data-testid="removal-overdue"
-          >
+          <strong className="pill pill-danger uppercase tracking-wide" data-testid="removal-overdue">
             {due.label}
           </strong>
         ) : (
@@ -91,9 +93,9 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
         <span className="text-muted"> · asked on {when(request.createdAt)}</span>
       </p>
 
-      <dl className="grid gap-x-8 sm:grid-cols-2">
-        <dt className="text-sm font-semibold uppercase tracking-wide text-muted">Who is asking</dt>
-        <dd className="mb-3">
+      <dl className="kv">
+        <dt>Who is asking</dt>
+        <dd>
           {request.requesterName ?? <span className="text-muted">name not given</span>}
           {request.requesterEmail !== null && (
             <>
@@ -103,10 +105,8 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
           )}
         </dd>
 
-        <dt className="text-sm font-semibold uppercase tracking-wide text-muted">
-          How they are connected
-        </dt>
-        <dd className="mb-3">{relationshipLabel(request.relationship)}</dd>
+        <dt>How they are connected</dt>
+        <dd>{relationshipLabel(request.relationship)}</dd>
       </dl>
 
       <p className="whitespace-pre-line" data-testid="removal-reason">
@@ -118,20 +118,21 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
         <a href={request.listingPath}>See the live page</a>
       </p>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <form action={action}>
-          <input type="hidden" name="removalRequestId" value={request.id} />
-          <input type="hidden" name="listingId" value={request.listingId} />
-          <button type="submit" disabled={actioning} data-testid="removal-action">
-            {actioning ? "Removing…" : "Action the removal"}
-          </button>
-        </form>
-      </div>
+      {failure !== null && (
+        <Notice variant="error" testId="removal-error">
+          {failure}
+        </Notice>
+      )}
+      {done && failure === null && (
+        <Notice variant="success" testId="removal-done">
+          Done — this request is settled and leaves the queue on the next load.
+        </Notice>
+      )}
+
       <p className="mt-2 text-sm text-muted">
         Actioning takes the page down, writes a suppression so the next import cannot put it back,
         and emails {request.requesterEmail ?? "the requester"}.
       </p>
-
       <details className="mt-2">
         <summary className="cursor-pointer text-sm">Turn this request down instead</summary>
         <p className="text-sm text-muted">
@@ -156,17 +157,21 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
             className="mb-2 block w-full"
             data-testid="removal-reject-reason"
           />
-          <button type="submit" disabled={rejecting} data-testid="removal-reject">
-            {rejecting ? "Saving…" : "Reject the request"}
-          </button>
+          <SubmitButton pending={rejecting} pendingLabel="Saving…" variant="secondary" testId="removal-reject">
+            Reject the request
+          </SubmitButton>
         </form>
       </details>
 
-      {failure !== null && (
-        <p role="alert" className="mt-2 text-sm" data-testid="removal-error">
-          {failure}
-        </p>
-      )}
+      <div className="action-bar" role="group" aria-labelledby={titleId}>
+        <form action={action}>
+          <input type="hidden" name="removalRequestId" value={request.id} />
+          <input type="hidden" name="listingId" value={request.listingId} />
+          <SubmitButton pending={actioning} pendingLabel="Removing…" testId="removal-action">
+            Action the removal
+          </SubmitButton>
+        </form>
+      </div>
     </li>
   );
 }
@@ -180,10 +185,9 @@ export function RemovalQueue({
 }) {
   if (requests.length === 0) {
     return (
-      <p data-testid="removal-queue-empty">
-        Nothing is waiting to come down. Requests sent from a {siteConfig.entity.singular} page
-        land here.
-      </p>
+      <EmptyState title="Nothing is waiting to come down." testId="removal-queue-empty">
+        <p>Requests sent from a {siteConfig.entity.singular} page land here.</p>
+      </EmptyState>
     );
   }
 

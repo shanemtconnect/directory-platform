@@ -7,6 +7,8 @@ import { submissionDetail } from "@/lib/db/queries/admin/submissions";
 import { approveSubmissionAction } from "@/lib/actions/admin";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { RejectSubmissionForm } from "@/components/admin/RejectSubmissionForm";
+import { adminNavCounts } from "@/components/admin/nav-counts";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Submission",
@@ -27,8 +29,8 @@ function when(value: Date): string {
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
     <>
-      <dt className="text-sm font-semibold uppercase tracking-wide text-muted">{label}</dt>
-      <dd className="mb-4">{value ?? <span className="text-muted">not given</span>}</dd>
+      <dt>{label}</dt>
+      <dd>{value ?? <span className="text-muted">not given</span>}</dd>
     </>
   );
 }
@@ -46,25 +48,31 @@ export default async function SubmissionDetailPage({
   // a viewer it will refuse: the page and the layout render concurrently, and
   // a thrown FORBIDDEN puts a stack trace in the log for every 404.
   if (viewer.role !== "admin") notFound();
-  const detail = await submissionDetail(db, viewer, id);
+  const [detail, counts] = await Promise.all([
+    submissionDetail(db, viewer, id),
+    adminNavCounts(db, viewer),
+  ]);
   if (!detail) notFound();
 
   const decided = detail.status !== "pending";
 
   return (
     <main>
-      <AdminNav current="/admin/submissions" />
-      <p className="text-sm">
-        <a href="/admin/submissions">← Back to the queue</a>
-      </p>
-      <h1>{detail.name}</h1>
-      <p className="text-muted">
-        Submitted {when(detail.createdAt)} · currently <strong>{detail.status}</strong>
-      </p>
+      <AdminNav current="/admin/submissions" counts={counts} />
+      <PageHeader
+        title={detail.name}
+        back={{ href: "/admin/submissions", label: "Back to the queue" }}
+        lede={
+          <>
+            Submitted {when(detail.createdAt)} · currently{" "}
+            <span className={detail.status === "pending" ? "pill pill-on" : "pill"}>{detail.status}</span>
+          </>
+        }
+      />
 
       <section>
         <h2>What was submitted</h2>
-        <dl className="grid gap-x-8 sm:grid-cols-2">
+        <dl className="kv">
           <Field label={`${siteConfig.entity.Singular} name`} value={detail.name} />
           <Field label="Category" value={detail.categoryName} />
           <Field label="Town as typed" value={detail.submittedCity} />
@@ -116,9 +124,11 @@ export default async function SubmissionDetailPage({
             </p>
             <form action={approveSubmissionAction} data-testid="approve-form">
               <input type="hidden" name="listingId" value={detail.id} />
-              <button type="submit" data-testid="approve-submit">
-                Approve and publish
-              </button>
+              <div className="form-actions">
+                <button type="submit" className="btn btn-primary" data-testid="approve-submit">
+                  Approve and publish
+                </button>
+              </div>
             </form>
           </div>
 

@@ -7,6 +7,10 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { previewReviewToken, REVIEW_TOKEN_TTL_DAYS } from "@/lib/db/queries/reviews";
 import { REVIEW_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import { ResendVerificationForm } from "@/components/reviews/ResendVerificationForm";
+import { REVIEW_STEPS } from "@/components/reviews/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
+import { Notice } from "@/components/ui/Notice";
 
 /**
  * `/review/verify/<token>` — where the link in the email lands.
@@ -59,10 +63,10 @@ export default async function VerifyReviewPage({ params }: Props) {
   if (!limit.allowed) {
     return (
       <Shell>
-        <h1>Too many attempts</h1>
-        <p data-testid="review-verify-limited">
+        <PageHeader title="Too many attempts" />
+        <Notice variant="error" testId="review-verify-limited">
           Too many attempts from this connection. Please try again in a minute.
-        </p>
+        </Notice>
       </Shell>
     );
   }
@@ -74,13 +78,13 @@ export default async function VerifyReviewPage({ params }: Props) {
   if (preview.outcome === "unknown") {
     return (
       <Shell>
-        <h1>This link cannot be used</h1>
-        <p data-testid="review-verify-unknown">
+        <PageHeader title="This link cannot be used" />
+        <Notice variant="error" testId="review-verify-unknown">
           That is not a link we recognise. It may have been replaced by a newer one — check for a
           more recent email from us before writing anything again.
-        </p>
+        </Notice>
         <p>
-          <a href="/">Back to {siteConfig.name}</a>
+          <a href="/" className="btn btn-primary">Back to {siteConfig.name}</a>
         </p>
       </Shell>
     );
@@ -89,12 +93,13 @@ export default async function VerifyReviewPage({ params }: Props) {
   if (preview.outcome === "expired") {
     return (
       <Shell>
-        <h1>That link has expired</h1>
-        <p data-testid="review-verify-expired">
+        <PageHeader title="That link has expired" />
+        <Steps steps={REVIEW_STEPS} current={1} />
+        <Notice variant="status" testId="review-verify-expired">
           Confirmation links last {REVIEW_TOKEN_TTL_DAYS} days, and this one is older than that.
           Your review of {preview.listingName} is still here and has not been published — we can
           send you a fresh link to the same address.
-        </p>
+        </Notice>
         <ResendVerificationForm token={raw} />
         <p className="text-sm text-muted">
           <a href={preview.listingPath}>View {preview.listingName}</a>
@@ -107,12 +112,15 @@ export default async function VerifyReviewPage({ params }: Props) {
     const published = preview.status === "published";
     return (
       <Shell>
-        <h1>{published ? "Already confirmed" : "Already confirmed — a person is reading it"}</h1>
-        <p data-testid="review-verify-confirmed">
+        <PageHeader
+          title={published ? "Already confirmed" : "Already confirmed — a person is reading it"}
+        />
+        <Steps steps={REVIEW_STEPS} current={2} />
+        <Notice variant="success" testId="review-verify-confirmed">
           {published
             ? `You have already confirmed this one, and your review of ${preview.listingName} is on the site.`
             : `You have already confirmed this one. Your review of ${preview.listingName} needs a quick check by hand before it goes up — that happens with anything containing a link, contact details or strong language, whatever the rating is.`}
-        </p>
+        </Notice>
         <p>
           <a href={`${preview.listingPath}/reviews`}>
             {published ? "See it on the site" : `Reviews of ${preview.listingName}`}
@@ -124,11 +132,11 @@ export default async function VerifyReviewPage({ params }: Props) {
 
   return (
     <Shell>
-      <h1>Confirm your review of {preview.listingName}</h1>
-      <p>
-        Confirming proves the email address is yours, which is the only thing standing between a
-        review on {siteConfig.name} and anybody who fancies writing one.
-      </p>
+      <PageHeader
+        title={`Confirm your review of ${preview.listingName}`}
+        lede={`Confirming proves the email address is yours, which is the only thing standing between a review on ${siteConfig.name} and anybody who fancies writing one.`}
+      />
+      <Steps steps={REVIEW_STEPS} current={1} />
       <p className="text-muted text-sm">
         If you did not write this, close this page. Nothing is published unless you press Confirm.
       </p>

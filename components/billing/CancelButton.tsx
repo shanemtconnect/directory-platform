@@ -2,6 +2,8 @@
 
 import { useActionState, useState } from "react";
 import { cancelSubscriptionAction, type CancelState } from "@/lib/actions/billing";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: CancelState = { status: "idle" };
 
@@ -25,16 +27,21 @@ export function CancelButton({
 
   if (state.status === "cancelled") {
     return (
-      <p role="status" data-testid="cancel-done">
+      <Notice variant="success" testId="cancel-done">
         {state.message}
-      </p>
+      </Notice>
     );
   }
 
   if (!confirming) {
     return (
       <p>
-        <button type="button" onClick={() => setConfirming(true)} data-testid="cancel-start">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => setConfirming(true)}
+          data-testid="cancel-start"
+        >
           Cancel this subscription
         </button>
       </p>
@@ -50,18 +57,18 @@ export function CancelButton({
           : `You keep this plan until ${periodEndLabel}, and it will not renew after that.`}
       </p>
       {state.message && (
-        <p role="alert" data-testid="cancel-error">
+        <Notice variant="error" testId="cancel-error">
           {state.message}
-        </p>
+        </Notice>
       )}
-      <p>
-        <button type="submit" disabled={pending} data-testid="cancel-confirm">
-          {pending ? "Cancelling…" : "Yes, cancel it"}
-        </button>{" "}
-        <button type="button" onClick={() => setConfirming(false)}>
+      <div className="form-actions">
+        <SubmitButton pending={pending} pendingLabel="Cancelling…" testId="cancel-confirm">
+          Yes, cancel it
+        </SubmitButton>
+        <button type="button" className="btn btn-secondary" onClick={() => setConfirming(false)}>
           Keep it
         </button>
-      </p>
+      </div>
     </form>
   );
 }
