@@ -66,10 +66,23 @@ test.afterAll(async () => {
   try {
     const keys: string[] = [];
     for (const listingId of touchedListingIds) {
+      // The counters, and the day's one-view-per-address mark: it is keyed by a
+      // salted digest of the address, so it survives the counter cleanup and
+      // would silently drop the next run's view (or an audit's) on this listing.
       let cursor = "0";
       do {
-        const page = await client.scan(cursor, { MATCH: `stats:${listingId}:*`, COUNT: 500 });
+        const page = await client.scan(cursor, {
+          MATCH: `stats:${listingId}:*`, COUNT: 500,
+        });
         cursor = String(page.cursor);
+        keys.push(...page.keys);
+      } while (cursor !== "0");
+      cursor = "0";
+      do {
+        const page = await client.scan(cursor, {
+          MATCH: `stats:seen:*:*:${listingId}`, COUNT: 500,
+        });
+        cursor = page.cursor;
         keys.push(...page.keys);
       } while (cursor !== "0");
     }
@@ -79,10 +92,34 @@ test.afterAll(async () => {
   }
 });
 
+/**
+ * Deletes the day's seen-mark for one listing so this run's view is counted
+ * whatever visited the page earlier today from this address — a previous run
+ * of this spec, or the Lighthouse audit, both of which leave the mark behind.
+ */
+async function forgetSeen(listingId: string): Promise<void> {
+  const client = await redis();
+  try {
+    let cursor = "0";
+    const keys: string[] = [];
+    do {
+      const page = await client.scan(cursor, { MATCH: `stats:seen:*:*:${listingId}`, COUNT: 500 });
+      cursor = page.cursor;
+      keys.push(...page.keys);
+    } while (cursor !== "0");
+    if (keys.length > 0) await client.del(keys);
+  } finally {
+    await client.quit();
+  }
+}
+
 test.describe("the view beacon", () => {
   test("a listing page posts one beacon and the count lands in Redis", async ({ page }) => {
     await page.goto(CITY);
-    await page.locator('[data-testid="listing-grid"] > li a').first().click();
+    const firstCard = page.locator('[data-testid="listing-grid"] > li').first();
+    const cardId = await firstCard.locator("[data-dp-listing]").first().getAttribute("data-dp-listing");
+    if (cardId) await forgetSeen(cardId);
+    await firstCard.locator("a").first().click();
     await page.waitForURL(new RegExp(`${CITY}/[a-z0-9-]+$`));
 
     const marker = page.locator('[data-dp-stat="view"]');

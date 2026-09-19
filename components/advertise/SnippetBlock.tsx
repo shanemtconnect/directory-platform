@@ -20,7 +20,8 @@ export function SnippetBlock({
         <CopyButton text={code} label={copyLabel} />
       </div>
       {note && <p className="mt-1 mb-2 text-sm text-neutral-600">{note}</p>}
-      <pre className="overflow-x-auto rounded border border-neutral-200 bg-neutral-50 p-3 text-xs leading-relaxed">
+      {/* Focusable: a region that scrolls must be reachable from the keyboard (axe scrollable-region-focusable). */}
+      <pre tabIndex={0} className="overflow-x-auto rounded border border-neutral-200 bg-neutral-50 p-3 text-xs leading-relaxed">
         <code>{code}</code>
       </pre>
     </div>

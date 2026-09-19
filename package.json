@@ -23,7 +23,8 @@
     "build:flags-off": "SITE_FLAGS_OVERRIDE=off next build",
     "build:flags-on": "SITE_FLAGS_OVERRIDE=on next build",
     "verify:isr": "bash scripts/verify-isr.sh",
-    "new-site": "tsx scripts/new-site.ts"
+    "new-site": "tsx scripts/new-site.ts",
+    "audit:pages": "node scripts/audit-pages.mjs"
   },
   "keywords": [],
   "author": "",
@@ -60,11 +61,14 @@
     "undici": "8.10.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.4.1",
     "@types/node-cron": "^3.0.11",
     "@types/react": "^19.2.18",
+    "chrome-launcher": "1.2.1",
     "drizzle-kit": "^0.31.10",
+    "lighthouse": "13.4.1",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"

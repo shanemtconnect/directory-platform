@@ -56,7 +56,7 @@ export function CityRow({ city }: { city: AdminCity }) {
           <span className="text-sm font-semibold uppercase tracking-wide text-muted">
             Currently stored
           </span>
-          <pre className="mt-1 max-h-48 overflow-auto rounded border border-line bg-raised p-3 text-sm whitespace-pre-wrap">
+          <pre tabIndex={0} className="mt-1 max-h-48 overflow-auto rounded border border-line bg-raised p-3 text-sm whitespace-pre-wrap">
             {city.introHtml}
           </pre>
         </div>

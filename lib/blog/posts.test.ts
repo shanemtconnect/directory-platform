@@ -107,8 +107,19 @@ describe("renderMarkdown", () => {
     expect(renderMarkdown("# One\n\n### Three")).toBe("<h2>One</h2>\n<h4>Three</h4>");
   });
 
+  it("starts a post written from ## down at h2, so nothing skips a level under the h1", () => {
+    expect(renderMarkdown("## Two\n\n### Three")).toBe("<h2>Two</h2>\n<h3>Three</h3>");
+    expect(renderMarkdown("### Only")).toBe("<h2>Only</h2>");
+  });
+
+  it("ignores # lines inside a fence when deciding the top level", () => {
+    expect(renderMarkdown("```\n# not a heading\n```\n\n## Real")).toBe(
+      "<pre><code># not a heading</code></pre>\n<h2>Real</h2>",
+    );
+  });
+
   it("does not demote past h6", () => {
-    expect(renderMarkdown("###### Six")).toBe("<h6>Six</h6>");
+    expect(renderMarkdown("# One\n\n###### Six")).toBe("<h2>One</h2>\n<h6>Six</h6>");
   });
 
   it("joins wrapped lines into one paragraph and separates blocks", () => {

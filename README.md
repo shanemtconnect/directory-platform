@@ -245,6 +245,36 @@ whatever is already listening there — another worktree's build, quietly testin
 somebody else's code. And the submission form is rate-limited to three per IP
 per hour; `redis-cli -n <db> FLUSHDB` clears it.
 
+## Audits
+
+`corepack pnpm audit:pages` runs Lighthouse (mobile and desktop) and axe-core
+against a running **production** build and fails on a miss: SEO ≥ 95,
+accessibility ≥ 95, best practices ≥ 90, performance ≥ 80, and any `serious`
+or `critical` axe violation. It audits one page of every type the site
+serves — home, the indexes, a city pillar, a city + category pillar, a
+listing, a second page of results, search, the forms (add, claim, report,
+review, login, signup, forgot-password), the legal pages, a blog post and the
+404 — and derives every slug from the sitemap shards, so it works unchanged
+on a clone with different data. Start the server the way Playwright does
+(build, assemble the standalone bundle, `node .next/standalone/server.js`
+with the env from `playwright.config.ts`), then:
+
+```bash
+AUDIT_BASE_URL=http://localhost:3241 corepack pnpm audit:pages
+```
+
+It prints a table, writes `audit-report.json` (gitignored; failing audits
+carry their offending nodes) and exits 1 on any miss. `AUDIT_PAGES=home,login`
+narrows a run while you chase one fix; `AUDIT_FORM_FACTORS=desktop` skips
+mobile; `AUDIT_MIN_PERFORMANCE` and friends move the bars; `CHROME_PATH`
+points Lighthouse at a browser (it falls back to Playwright's Chromium).
+Two deliberate allowances: a page whose own document declares `noindex`
+(login, search results, the claim flow) has its SEO score computed without
+the `is-crawlable` audit, since it can never pass that one and every other
+SEO audit still counts; and the 404 page gets axe only, because Lighthouse
+refuses to score an error document. In CI the `audit` job runs on
+`workflow_dispatch` only, so it never slows a push.
+
 ## Deploy
 
 The image builds two targets from one Dockerfile: `runner` (the app) and

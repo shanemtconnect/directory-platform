@@ -178,6 +178,25 @@ const NUMBER_RE = /^\s*\d+\.\s+(.*)$/;
 const FENCE_RE = /^\s*```\s*([A-Za-z0-9+#-]*)\s*$/;
 
 /**
+ * The smallest heading level the body uses, ignoring anything inside a fence.
+ * A body with no headings answers 1, which shifts nothing it would render.
+ */
+function topHeadingLevel(lines: string[]): number {
+  let top = 6;
+  let fenced = false;
+  for (const line of lines) {
+    if (FENCE_RE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const heading = HEADING_RE.exec(line);
+    if (heading && heading[1] !== undefined) top = Math.min(top, heading[1].length);
+  }
+  return top === 6 && !lines.some((l) => HEADING_RE.test(l)) ? 1 : top;
+}
+
+/**
  * Markdown → HTML. Supports headings, paragraphs, links, bold, italic,
  * ordered and unordered lists, inline code and fenced code blocks.
  *
@@ -188,6 +207,7 @@ export function renderMarkdown(source: string): string {
   // \u0000 is the code-span placeholder marker; strip any in the source first.
   const lines = escapeHtml(source.replace(/\r\n/g, "\n").replace(/\u0000/g, "")).split("\n");
   const out: string[] = [];
+  const shift = 2 - topHeadingLevel(lines);
   let i = 0;
 
   // The fence marker survives escaping, but a language like `c++` does not
@@ -217,9 +237,11 @@ export function renderMarkdown(source: string): string {
 
     const heading = HEADING_RE.exec(line);
     if (heading && heading[1] !== undefined) {
-      // Demoted one level: the page already renders the post title as its h1,
-      // so a `#` in the body would give the document a second one.
-      const level = Math.min(heading[1].length + 1, 6);
+      // Shifted so the post's TOP level lands on h2: the page renders the
+      // title as its h1, so a body `#` must not produce a second one, and a
+      // post written from `##` down must not open with an h3 under that h1
+      // (a skipped level fails the heading-order audit on every post).
+      const level = Math.min(heading[1].length + shift, 6);
       out.push(`<h${level}>${inline(heading[2] ?? "")}</h${level}>`);
       i += 1;
       continue;
