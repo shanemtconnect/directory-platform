@@ -22,3 +22,6 @@ playwright-report/
 .claude/worktrees/
 # Local SDD scratch reports — never intended for the public repo
 .superpowers/
+
+# Lighthouse + axe audit output (corepack pnpm audit:pages)
+audit-report.json
