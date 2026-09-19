@@ -52,17 +52,44 @@ export function addWorkingDays(from: Date, days: number, timezone: string): Date
  */
 export const REMOVAL_SLA_WORKING_DAYS = 5;
 
-const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const ONES = [
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+];
+
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
 
 /**
  * "five", for prose that would read oddly with a digit ("past the
- * five-working-day deadline"). Anything outside one to ten — or not an
- * integer — comes back as digits, which is what house style wants for larger
- * numbers anyway.
+ * five-working-day deadline"). Whole numbers from zero to ninety-nine come
+ * back as English words, compounds hyphenated ("twenty-one"); anything
+ * larger, negative or fractional comes back as digits, which is what house
+ * style wants for numbers of that size anyway.
  */
 export function numberWord(n: number): string {
-  if (Number.isInteger(n) && n >= 1 && n <= 10) return WORDS[n]!;
-  return String(n);
+  if (!Number.isInteger(n) || n < 0 || n > 99) return String(n);
+  if (n < 20) return ONES[n]!;
+  const tens = TENS[Math.floor(n / 10)]!;
+  const ones = n % 10;
+  return ones === 0 ? tens : `${tens}-${ONES[ones]!}`;
 }
 
 export function removalDueAt(from: Date, timezone: string): Date {
