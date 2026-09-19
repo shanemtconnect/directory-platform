@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FEATURE_FLAGS, type FeatureMap } from "@/config/types";
 import { ConfigError, validateCountry, validateFeatureDependencies } from "@/config/validate";
@@ -10,6 +10,20 @@ export const SITE_CONFIG_PATH = "config/site.config.ts";
 
 /** The value a fresh checkout carries, and the one a production build must never see. */
 export const PLACEHOLDER_LEGAL_ENTITY = "TBC";
+
+/**
+ * Marks the config the repository ships with — the demo niche's. A fresh
+ * checkout always has one, so the wizard's first run would otherwise refuse
+ * to write over it and the operator's only way forward would be --overwrite,
+ * which is the flag meant for replacing THEIR OWN work. A file carrying this
+ * line is the template's and is replaced without asking; the wizard never
+ * writes it, so a clone's config stays protected.
+ */
+export const TEMPLATE_CONFIG_MARKER = "@template-config: replaced by `pnpm new-site`";
+
+function isShippedTemplate(path: string): boolean {
+  return readFileSync(path, "utf8").includes(TEMPLATE_CONFIG_MARKER);
+}
 
 export interface WriteConfigOptions {
   readonly targetDir: string;
@@ -325,7 +339,7 @@ export function writeSiteConfig(a: Answers, opts: WriteConfigOptions): WriteConf
 
   if (opts.dryRun === true) return { path, source, written: false };
 
-  if (existsSync(path) && opts.overwrite !== true) {
+  if (existsSync(path) && opts.overwrite !== true && !isShippedTemplate(path)) {
     throw new ConfigError(
       `${path} already exists. Re-run with --overwrite to replace it, after checking there is ` +
         `nothing in it you meant to keep.`,

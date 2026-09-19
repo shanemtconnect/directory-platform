@@ -3,6 +3,11 @@ import type { CustomField, SiteConfig } from "./types";
 /**
  * THE ONLY FILE A CLONE EDITS.
  *
+ * @template-config: replaced by `pnpm new-site` — this is the demo niche the
+ * repository ships with. The wizard writes over it without --overwrite; the
+ * config it writes does not carry this line, so a real clone's config is
+ * never replaced by accident.
+ *
  * Every value here is niche-specific. If a string in a component would need to
  * change when this repo is cloned for a different niche, it belongs in here or
  * in the database — never in the component.

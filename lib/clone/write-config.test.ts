@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildAnswers, type Answers } from "./questions";
-import { renderSiteConfig, writeSiteConfig, SITE_CONFIG_PATH } from "./write-config";
+import { renderSiteConfig, writeSiteConfig, SITE_CONFIG_PATH, TEMPLATE_CONFIG_MARKER } from "./write-config";
 import { ConfigError } from "@/config/validate";
 
 const BASE = {
@@ -138,6 +138,31 @@ describe("writeSiteConfig", () => {
     writeFileSync(join(dir, SITE_CONFIG_PATH), "// someone's work\n");
     expect(() => writeSiteConfig(answers(), { targetDir: dir })).toThrow(/already exists/);
     expect(readFileSync(join(dir, SITE_CONFIG_PATH), "utf8")).toContain("someone's work");
+  });
+
+  it("replaces the template's own demo config without being told to", () => {
+    // A fresh checkout always carries the demo niche's config, so the first
+    // run of the wizard — the only run most clones ever make — used to fail on
+    // "already exists" and send the operator back with --overwrite.
+    mkdirSync(join(dir, "config"), { recursive: true });
+    writeFileSync(
+      join(dir, SITE_CONFIG_PATH),
+      `// ${TEMPLATE_CONFIG_MARKER}\nexport const siteConfig = { name: "Demo" };\n`,
+    );
+    const result = writeSiteConfig(answers(), { targetDir: dir });
+    expect(result.written).toBe(true);
+    expect(readFileSync(result.path, "utf8")).not.toContain("Demo");
+  });
+
+  it("does not mark what it writes as the template, so a clone's config is protected", () => {
+    const result = writeSiteConfig(answers(), { targetDir: dir });
+    expect(readFileSync(result.path, "utf8")).not.toContain(TEMPLATE_CONFIG_MARKER);
+    expect(() => writeSiteConfig(answers(), { targetDir: dir })).toThrow(/already exists/);
+  });
+
+  it("the shipped config carries the marker", () => {
+    const shipped = readFileSync(join(__dirname, "..", "..", SITE_CONFIG_PATH), "utf8");
+    expect(shipped).toContain(TEMPLATE_CONFIG_MARKER);
   });
 
   it("overwrites when told to, so re-running the wizard is possible", () => {
