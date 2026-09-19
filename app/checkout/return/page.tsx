@@ -9,6 +9,10 @@ import { getPayPalClient } from "@/lib/billing/paypal";
 import { reconcileSubscription } from "@/lib/billing/subscriptions";
 import { subscriptionForOwnerByProviderId } from "@/lib/db/queries/billing";
 import type { TestDb } from "@/lib/db/types";
+import { CHECKOUT_STEPS } from "@/components/billing/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
+import { Notice } from "@/components/ui/Notice";
 
 /**
  * Where PayPal sends the buyer after they approve.
@@ -92,31 +96,45 @@ export default async function CheckoutReturnPage({
 
   return (
     <main data-testid="checkout-return" data-confirmed={String(confirmed)}>
-      <h1>{confirmed ? "Your subscription is live" : "Setting up your subscription"}</h1>
-      {confirmed ? (
-        <p data-testid="return-confirmed">
-          Thank you — the plan is active and your {e.singular} has been upgraded.
-        </p>
-      ) : (
-        <p data-testid="return-pending">
-          PayPal has your approval and we are waiting for them to confirm the first payment. This
-          usually takes a few seconds. Your {e.singular} updates on its own; there is nothing else
-          for you to do.
-        </p>
-      )}
-      <p>
-        <a href="/account/billing">Your billing</a>
-        {listingPath !== null && (
-          <>
-            {" · "}
-            <a href={listingPath}>See your {e.singular}</a>
-          </>
+      <div className="mx-auto max-w-2xl">
+        <PageHeader title={confirmed ? "Your subscription is live" : "Setting up your subscription"} />
+        <Steps steps={CHECKOUT_STEPS} current={confirmed ? 3 : 2} />
+        {confirmed ? (
+          <Notice variant="success" testId="return-confirmed" title="What happens next">
+            <p>Thank you — the plan is active and your {e.singular} has been upgraded.</p>
+            <p className="mb-0">
+              The page ranks and renders on the new plan from now. PayPal emails the receipt, and
+              each payment appears under <a href="/account/billing">your billing</a> as it is
+              taken.
+            </p>
+          </Notice>
+        ) : (
+          <Notice variant="status" testId="return-pending" title="What happens next">
+            <p>
+              PayPal has your approval and we are waiting for them to confirm the first payment.
+              This usually takes a few seconds. Your {e.singular} updates on its own; there is
+              nothing else for you to do.
+            </p>
+            <p className="mb-0">
+              Reload <a href="/account/billing">your billing</a> in a minute to see the plan
+              marked active.
+            </p>
+          </Notice>
         )}
-      </p>
-      <p className="text-sm text-muted">
-        Verification is a separate check. We will be in touch about it — paying does not put the
-        badge on the page.
-      </p>
+        <p>
+          <a href="/account/billing" className="btn btn-primary">Your billing</a>
+          {listingPath !== null && (
+            <>
+              {" · "}
+              <a href={listingPath}>See your {e.singular}</a>
+            </>
+          )}
+        </p>
+        <p className="text-sm text-muted">
+          Verification is a separate check. We will be in touch about it — paying does not put the
+          badge on the page.
+        </p>
+      </div>
     </main>
   );
 }

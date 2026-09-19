@@ -12,6 +12,11 @@ import { billingConfigured } from "@/lib/billing/paypal";
 import { parseBillingInterval, parseTier } from "@/lib/billing/plans";
 import { CheckoutForm } from "@/components/billing/CheckoutForm";
 import { PlanSummary } from "@/components/billing/PlanSummary";
+import { CHECKOUT_STEPS } from "@/components/billing/steps";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Steps } from "@/components/ui/Steps";
+import { Notice } from "@/components/ui/Notice";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
  * `/checkout/[tier]/[interval]?listing=<id>`.
@@ -78,13 +83,16 @@ export default async function CheckoutPage({
           : "");
       return (
         <main data-testid="checkout-listing-picker">
-          <h1>Checkout</h1>
-          <p>
-            Which {e.singular} is the {spec.label} plan for?
-          </p>
-          <ul>
+          <div className="mx-auto max-w-2xl">
+          <PageHeader
+            title="Checkout"
+            back={{ href: "/pricing", label: "Compare the plans" }}
+            lede={`Which ${e.singular} is the ${spec.label} plan for?`}
+          />
+          <Steps steps={CHECKOUT_STEPS} current={0} />
+          <ul className="card-grid">
             {mine.map((l) => (
-              <li key={l.id}>
+              <li key={l.id} className="card card-hover">
                 <a href={withListing(l.id)} data-testid="checkout-listing-option" rel="nofollow">
                   {l.name}
                 </a>
@@ -97,6 +105,7 @@ export default async function CheckoutPage({
           <p className="text-sm text-muted">
             <a href="/pricing">Compare the plans</a> · <a href="/account">Your account</a>
           </p>
+          </div>
         </main>
       );
     }
@@ -110,14 +119,19 @@ export default async function CheckoutPage({
   if (listing === null) {
     return (
       <main>
-        <h1>Checkout</h1>
-        <p data-testid="checkout-refused">
-          You can only subscribe for a {e.singular} you have claimed. Find yours and claim it
-          first, and the plan will be waiting.
-        </p>
-        <p>
-          <a href="/search">Find your {e.singular}</a> · <a href="/account">Your account</a>
-        </p>
+        <div className="mx-auto max-w-2xl">
+          <PageHeader title="Checkout" back={{ href: "/pricing", label: "Compare the plans" }} />
+          <EmptyState
+            title={`You can only subscribe for a ${e.singular} you have claimed.`}
+            testId="checkout-refused"
+            action={{ href: "/search", label: `Find your ${e.singular}` }}
+          >
+            <p>
+              Find yours and claim it first, and the plan will be waiting.{" "}
+              <a href="/search">Find your {e.singular}</a> · <a href="/account">Your account</a>
+            </p>
+          </EmptyState>
+        </div>
       </main>
     );
   }
@@ -129,12 +143,14 @@ export default async function CheckoutPage({
   if (!billingConfigured()) {
     return (
       <main>
-        <h1>Checkout</h1>
-        <p data-testid="billing-unavailable">
-          Subscriptions are not set up on this site yet, so there is nothing to pay for here.
-          Email <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a> and
-          we will sort it out with you directly.
-        </p>
+        <div className="mx-auto max-w-2xl">
+          <PageHeader title="Checkout" back={{ href: "/pricing", label: "Compare the plans" }} />
+          <Notice variant="status" testId="billing-unavailable">
+            Subscriptions are not set up on this site yet, so there is nothing to pay for here.
+            Email <a href={`mailto:${siteConfig.supportEmail}`}>{siteConfig.supportEmail}</a> and
+            we will sort it out with you directly.
+          </Notice>
+        </div>
       </main>
     );
   }
@@ -161,7 +177,13 @@ export default async function CheckoutPage({
 
   return (
     <main data-testid="checkout-page">
-      <h1>Checkout</h1>
+      <div className="mx-auto max-w-2xl">
+      <PageHeader
+        title="Checkout"
+        back={{ href: "/pricing", label: "Compare the plans" }}
+        lede={`Check the plan and the ${e.singular} it is for, then PayPal takes the payment.`}
+      />
+      <Steps steps={CHECKOUT_STEPS} current={1} />
       <PlanSummary
         name={tier}
         tier={spec}
@@ -187,6 +209,7 @@ export default async function CheckoutPage({
       <p className="text-sm text-muted">
         <a href="/pricing">Compare the plans</a> · <a href="/terms">Terms</a>
       </p>
+      </div>
     </main>
   );
 }

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const MIN_PASSWORD = 10;
 
@@ -71,13 +73,13 @@ export function ResetPasswordForm({ token }: { token: string }) {
         <input id="confirm" name="confirm" type="password" required autoComplete="new-password" />
       </p>
       {error && (
-        <p role="alert" data-testid="reset-password-error">
+        <Notice variant="error" testId="reset-password-error">
           {error}
-        </p>
+        </Notice>
       )}
-      <button type="submit" disabled={pending} className="btn btn-primary w-full">
-        {pending ? "Saving…" : "Set my new password"}
-      </button>
+      <SubmitButton pending={pending} pendingLabel="Saving…" block>
+        Set my new password
+      </SubmitButton>
     </form>
   );
 }

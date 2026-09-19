@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { registerBacklinkAction, type BacklinkFormState } from "@/lib/actions/badge";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: BacklinkFormState = { status: "idle" };
 
@@ -51,21 +53,21 @@ export function BacklinkForm({ listingId, currentUrl, expectedDomain }: Backlink
             We check it within the hour, and again every week while the link stays up.
           </small>
         </p>
-        <p>
-          <button type="submit" disabled={pending}>
-            {pending ? "Saving…" : currentUrl ? "Update" : "Save"}
-          </button>
-        </p>
         {state.status === "saved" && (
-          <p role="status" data-testid="backlink-saved">
+          <Notice variant="success" testId="backlink-saved">
             Saved. We will look for the link at <code>{state.url}</code> within the hour.
-          </p>
+          </Notice>
         )}
         {state.status === "error" && state.message && (
-          <p role="alert" data-testid="backlink-error">
+          <Notice variant="error" testId="backlink-error">
             {state.message}
-          </p>
+          </Notice>
         )}
+        <div className="form-actions">
+          <SubmitButton pending={pending} pendingLabel="Saving…">
+            {currentUrl ? "Update" : "Save"}
+          </SubmitButton>
+        </div>
       </form>
 
       {currentUrl && (
@@ -75,10 +77,10 @@ export function BacklinkForm({ listingId, currentUrl, expectedDomain }: Backlink
               refresh lands would otherwise re-post the previous URL and
               un-verify what was just registered. */}
           <input type="hidden" name="url" value={state.url ?? currentUrl} />
-          <button type="submit" disabled={pending} className="text-sm">
+          <button type="submit" disabled={pending} className="btn btn-secondary text-sm">
             Check now
           </button>
-          <small className="ml-2 text-neutral-600">
+          <small className="ml-2">
             Puts the page back in the queue for the next hourly check.
           </small>
         </form>

@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { startCheckoutAction, type CheckoutState } from "@/lib/actions/billing";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const initial: CheckoutState = { status: "idle" };
 
@@ -48,17 +50,18 @@ export function CheckoutForm({
           autoComplete="off"
           spellCheck={false}
           aria-invalid={Boolean(state.couponError)}
+          aria-describedby={state.couponError ? "coupon-error" : undefined}
           data-testid="coupon-input"
         />
         {state.couponError && (
-          <span role="alert" data-testid="coupon-error">
+          <span role="alert" id="coupon-error" data-testid="coupon-error">
             {state.couponError}
           </span>
         )}
       </p>
 
       {state.message && (
-        <p role="alert" data-testid="checkout-error">
+        <Notice variant="error" testId="checkout-error">
           {state.message}
           {state.billingLink && (
             <>
@@ -66,14 +69,14 @@ export function CheckoutForm({
               <a href="/account/billing">Go to Billing</a>
             </>
           )}
-        </p>
+        </Notice>
       )}
 
-      <p>
-        <button type="submit" disabled={pending} data-testid="checkout-submit">
-          {pending ? "Taking you to PayPal…" : providerLabel}
-        </button>
-      </p>
+      <div className="form-actions">
+        <SubmitButton pending={pending} pendingLabel="Taking you to PayPal…" testId="checkout-submit" block>
+          {providerLabel}
+        </SubmitButton>
+      </div>
 
       <p className="text-sm text-muted">
         Payment is taken by PayPal. We never see or store your card details.

@@ -32,11 +32,12 @@ export async function UnverifiedEmailBanner() {
 
   return (
     <aside
-      className="card"
+      className="notice notice-status"
       role="status"
       data-testid="unverified-email-banner"
       aria-label="Email address not confirmed"
     >
+      <div className="notice-body">
       <p>
         <strong>Confirm your email address.</strong> We sent a link to{" "}
         <span data-testid="unverified-email-address">{profile.email}</span> when you
@@ -47,6 +48,7 @@ export async function UnverifiedEmailBanner() {
         You can carry on in the meantime — nothing here depends on it.
       </p>
       <ResendVerificationButton email={profile.email} />
+      </div>
     </aside>
   );
 }

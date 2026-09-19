@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth/client";
 import { DEFAULT_NEXT } from "@/lib/auth/next";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 /**
  * `next` arrives already validated by the page (lib/auth/next.ts). It is never
@@ -40,10 +42,14 @@ export function LoginForm({ next = DEFAULT_NEXT }: { next?: string }) {
         <label htmlFor="password">Password</label>
         <input id="password" name="password" type="password" required autoComplete="current-password" />
       </p>
-      {error && <p role="alert" data-testid="login-error">{error}</p>}
-      <button type="submit" disabled={pending} className="btn btn-primary w-full">
-        {pending ? "Signing in…" : "Sign in"}
-      </button>
+      {error && (
+        <Notice variant="error" testId="login-error">
+          {error}
+        </Notice>
+      )}
+      <SubmitButton pending={pending} pendingLabel="Signing in…" block>
+        Sign in
+      </SubmitButton>
       <p className="mt-3 text-sm">
         <a href="/forgot-password" data-testid="forgot-password-link">Forgotten your password?</a>
       </p>

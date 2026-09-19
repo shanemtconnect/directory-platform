@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth/client";
+import { Notice } from "@/components/ui/Notice";
 
 /**
  * "Send it again."
@@ -22,17 +23,17 @@ export function ResendVerificationButton({ email }: { email: string }) {
 
   if (state === "throttled") {
     return (
-      <span role="status" data-testid="verification-throttled">
+      <Notice variant="status" testId="verification-throttled">
         Too many requests just now. Try again in a few minutes.
-      </span>
+      </Notice>
     );
   }
 
   if (state === "done") {
     return (
-      <span role="status" data-testid="verification-resent">
+      <Notice variant="success" testId="verification-resent">
         Sent. Give it a minute, then check your spam folder.
-      </span>
+      </Notice>
     );
   }
 

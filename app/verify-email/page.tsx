@@ -3,6 +3,8 @@ import { ResendVerificationButton } from "@/components/auth/ResendVerificationBu
 import { currentViewer } from "@/lib/auth/viewer";
 import { ownProfile } from "@/lib/db/queries/profile";
 import { db } from "@/lib/db/client";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Notice } from "@/components/ui/Notice";
 
 export const metadata: Metadata = {
   title: "Confirm your email address",
@@ -46,10 +48,13 @@ export default async function VerifyEmailPage({
     return (
       <main>
         <div className="mx-auto max-w-md">
-          <h1>Address confirmed</h1>
-          <p className="text-muted" data-testid="verify-email-ok">
-            Thank you — we can reach you now. There is nothing else to do.
-          </p>
+          <PageHeader title="Address confirmed" />
+          <Notice variant="success" testId="verify-email-ok" title="What happens next">
+            <p className="mb-0">
+              Thank you — we can reach you now. There is nothing else to do. Anything you claim
+              or list from here on comes with the confirmed address attached.
+            </p>
+          </Notice>
           <p>
             <a href="/account" className="btn btn-primary">
               Go to your account
@@ -63,14 +68,14 @@ export default async function VerifyEmailPage({
   return (
     <main>
       <div className="mx-auto max-w-md">
-        <h1>{failed ? "That link has expired" : "Not confirmed yet"}</h1>
-        <p className="text-muted" data-testid="verify-email-failed">
+        <PageHeader title={failed ? "That link has expired" : "Not confirmed yet"} />
+        <Notice variant="status" testId="verify-email-failed">
           {failed
             ? "Confirmation links work once, and for an hour. Nothing is wrong with your " +
               "account — you just need a fresh one."
             : "Your address has not been confirmed yet. Open the link in the email we sent, " +
               "or ask for a new one below."}
-        </p>
+        </Notice>
         {profile === null ? (
           <p>
             <a href="/login?next=/account" className="btn btn-primary">

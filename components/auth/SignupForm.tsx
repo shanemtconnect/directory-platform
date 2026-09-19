@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signUp } from "@/lib/auth/client";
 import { DEFAULT_NEXT } from "@/lib/auth/next";
+import { Notice } from "@/components/ui/Notice";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const MIN_PASSWORD = 10;
 
@@ -47,10 +49,14 @@ export function SignupForm({ next = DEFAULT_NEXT }: { next?: string }) {
           minLength={MIN_PASSWORD} autoComplete="new-password" />
         <small>At least {MIN_PASSWORD} characters.</small>
       </p>
-      {error && <p role="alert" data-testid="signup-error">{error}</p>}
-      <button type="submit" disabled={pending} className="btn btn-primary w-full">
-        {pending ? "Creating…" : "Create account"}
-      </button>
+      {error && (
+        <Notice variant="error" testId="signup-error">
+          {error}
+        </Notice>
+      )}
+      <SubmitButton pending={pending} pendingLabel="Creating…" block>
+        Create account
+      </SubmitButton>
     </form>
   );
 }
