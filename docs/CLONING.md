@@ -106,12 +106,14 @@ Rehearsal Rooms,rehearsal room,rehearsal rooms,0
 **listings.csv** — required: `name`, `city`, `category`
 
 ```csv
-name,city,category,address_line1,postcode,phone,website
-Northgate Rooms,Leeds,Rehearsal Rooms,12 Northgate,LS1 4DY,01632 960000,https://example.com/northgate
+name,city,region,category,address_line1,postcode,phone,website
+Northgate Rooms,Leeds,West Yorkshire,Rehearsal Rooms,12 Northgate,LS1 4DY,01632 960000,https://example.com/northgate
 ```
 
 `city` and `category` must match a `name` in the other two files exactly, or
-the row is skipped. Values must not contain commas or quotes — the seed parser
+the row is skipped — and `region` must match the city's `region` too, because
+that pair is how the loader tells two Richmonds apart. A city with no region in
+`cities.csv` takes a blank `region` here. Values must not contain commas or quotes — the seed parser
 is deliberately naive; the CSV importer in `lib/import/` is the one that
 handles third-party files.
 

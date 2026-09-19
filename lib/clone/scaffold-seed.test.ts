@@ -44,8 +44,15 @@ describe("SEED_HEADERS", () => {
     expect(SEED_HEADERS.cities).toEqual(["name", "region", "country", "lat", "lng", "population"]);
     expect(SEED_HEADERS.categories).toEqual(["name", "singular", "plural", "sort_order"]);
     expect(SEED_HEADERS.listings).toEqual([
-      "name", "city", "category", "address_line1", "postcode", "phone", "website",
+      "name", "city", "region", "category", "address_line1", "postcode", "phone", "website",
     ]);
+  });
+
+  it("knows the loader reads a listing's region to tell two same-named cities apart", () => {
+    // scripts/seed.ts keys a listing's city on name AND region. Without this
+    // column a wizard-copied file with two Springfields was warned about as
+    // "ignored" and every listing in the second one was silently skipped.
+    expect(SEED_HEADERS.listings).toContain("region");
   });
 
   it("names the columns the loader cannot do without", () => {
@@ -178,5 +185,13 @@ describe("scaffoldSeed — csv", () => {
     const paths = supplied({ cities: "name,nonsense\nReal City,x\n" });
     const report = scaffoldSeed(csvAnswers(paths), { targetDir: dir });
     expect(report.warnings.join("\n")).toMatch(/nonsense/);
+  });
+
+  it("does not warn about a listings region column — the loader reads it", () => {
+    const paths = supplied({
+      listings: "name,city,region,category\nReal Listing,Real City,Real Region,Real Category\n",
+    });
+    const report = scaffoldSeed(csvAnswers(paths), { targetDir: dir });
+    expect(report.warnings).toEqual([]);
   });
 });
