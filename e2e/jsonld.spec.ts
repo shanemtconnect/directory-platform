@@ -9,10 +9,14 @@ test.beforeAll(async () => {
 /**
  * The highest-value assertion in the suite.
  *
- * No reviews exist yet. Emitting `aggregateRating` for a listing nobody has
- * rated is fabricated structured data — a Google structured-data policy
- * violation that risks a manual action across the whole domain, and it is the
- * single easiest thing for a well-meaning change to reintroduce.
+ * Emitting `aggregateRating` for a listing nobody has rated is fabricated
+ * structured data — a Google structured-data policy violation that risks a
+ * manual action across the whole domain, and it is the single easiest thing
+ * for a well-meaning change to reintroduce. The rule is constraint 11: the
+ * markup may carry a rating exactly when the page renders one. Asserted that
+ * way round rather than as "no reviews exist", because the e2e database
+ * accumulates the reviews e2e/reviews.spec.ts publishes, and a listing with a
+ * real, rendered rating is not fabricating anything.
  */
 
 /** Recursively collects every object key in a parsed JSON-LD graph. */
@@ -69,7 +73,7 @@ test.describe("JSON-LD", () => {
     }
   });
 
-  test("no listing page emits aggregateRating", async ({ page }) => {
+  test("a listing page emits aggregateRating only when it renders a rating", async ({ page }) => {
     // Check several listings, not one — a tier- or claim-status-dependent
     // branch would slip through a single-page check.
     await page.goto(CITY);
@@ -83,11 +87,17 @@ test.describe("JSON-LD", () => {
       const blocks = await jsonLdBlocks(page);
       expect(blocks.length, `${path} must ship JSON-LD`).toBeGreaterThan(0);
 
-      for (const raw of blocks) {
-        const keys = collectKeys(JSON.parse(raw));
+      // What the visitor sees is the only licence for what the markup says.
+      const rendered = (await page.locator('[data-testid="rating-summary"]').count()) > 0;
+      const keys = new Set<string>();
+      for (const raw of blocks) for (const k of collectKeys(JSON.parse(raw))) keys.add(k);
+
+      if (rendered) {
+        expect(keys.has("aggregateRating"), `${path} renders a rating but the markup omits it`).toBe(true);
+      } else {
         expect(
           keys.has("aggregateRating"),
-          `${path} emits aggregateRating but no reviews exist — fabricated structured data`,
+          `${path} emits aggregateRating but renders no rating — fabricated structured data`,
         ).toBe(false);
         // The same fabrication wearing a different key.
         expect(keys.has("ratingValue"), `${path} emits ratingValue`).toBe(false);
