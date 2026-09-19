@@ -295,9 +295,14 @@ if grep -q "Disallow: /$" <<<"$ROBOTS"; then fail "robots.txt disallows everythi
 echo "    200 /robots.txt"
 # The sitemap must actually advertise the clone's city, or the index is empty
 # and the suite's sitemap spec would be testing a shell.
-if ! curl -s "$SITE_URL/sitemap.xml" | grep -oE 'https?://[^<]+' | while read -r shard; do curl -s "$shard"; done | grep -q "/$CITY_SLUG<"; then
-  fail "no sitemap shard lists /$CITY_SLUG"
-fi
+# Fetched into a variable first: `grep -q` at the end of a pipeline exits on
+# the first match, the still-running curls get SIGPIPE, and under pipefail the
+# whole pipeline reports failure for a sitemap that was fine.
+SHARDS=$(curl -s "$SITE_URL/sitemap.xml" | grep -oE '<loc>[^<]+' | sed 's/<loc>//')
+SHARD_BODIES=""
+for shard in $SHARDS; do SHARD_BODIES+=$(curl -s "$shard"); done
+grep -q "/$CITY_SLUG<" <<<"$SHARD_BODIES" || fail "no sitemap shard lists /$CITY_SLUG"
+echo "    sitemap lists /$CITY_SLUG"
 finish
 
 # --- 6. the suite ------------------------------------------------------------
