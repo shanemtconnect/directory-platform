@@ -363,7 +363,12 @@
   .notice-error .notice-icon { color: var(--color-danger); }
   /* A notice under a field is an inline message, not a banner: the global
      [role=alert] rule already colours and sizes it. */
-  main .notice[role="alert"] { font-size: 1rem; font-weight: 400; color: var(--color-ink); }
+  main .notice[role="alert"] {
+    /* `display: flex` again: the global `main [role="alert"]` rule sets block
+       and outranks `.notice`, which stacked the icon above the message. */
+    display: flex;
+    font-size: 1rem; font-weight: 400; color: var(--color-ink);
+  }
 
   /* ---- Page header -------------------------------------------------------- */
   .page-header { margin-block-end: 1.5rem; }

@@ -133,16 +133,6 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
         Actioning takes the page down, writes a suppression so the next import cannot put it back,
         and emails {request.requesterEmail ?? "the requester"}.
       </p>
-      <div className="action-bar" role="group" aria-labelledby={titleId}>
-        <form action={action}>
-          <input type="hidden" name="removalRequestId" value={request.id} />
-          <input type="hidden" name="listingId" value={request.listingId} />
-          <SubmitButton pending={actioning} pendingLabel="Removing…" testId="removal-action">
-            Action the removal
-          </SubmitButton>
-        </form>
-      </div>
-
       <details className="mt-2">
         <summary className="cursor-pointer text-sm">Turn this request down instead</summary>
         <p className="text-sm text-muted">
@@ -172,6 +162,16 @@ function RemovalCard({ request, now }: { request: OpenRemovalRequest; now: Date 
           </SubmitButton>
         </form>
       </details>
+
+      <div className="action-bar" role="group" aria-labelledby={titleId}>
+        <form action={action}>
+          <input type="hidden" name="removalRequestId" value={request.id} />
+          <input type="hidden" name="listingId" value={request.listingId} />
+          <SubmitButton pending={actioning} pendingLabel="Removing…" testId="removal-action">
+            Action the removal
+          </SubmitButton>
+        </form>
+      </div>
     </li>
   );
 }
