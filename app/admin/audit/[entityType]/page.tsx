@@ -5,6 +5,8 @@ import { currentViewer } from "@/lib/auth/viewer";
 import { AUDIT_PAGE_SIZE, auditEntityTypes, recentAudit } from "@/lib/db/queries/admin/audit";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { AuditFilter, AuditTable } from "@/components/admin/AuditTable";
+import { adminNavCounts } from "@/components/admin/nav-counts";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export const metadata: Metadata = {
   title: "Audit log",
@@ -29,15 +31,22 @@ export default async function AuditFilteredPage({
   const types = await auditEntityTypes(db, viewer);
   if (!types.includes(entityType)) notFound();
 
-  const rows = await recentAudit(db, viewer, entityType);
+  const [rows, counts] = await Promise.all([
+    recentAudit(db, viewer, entityType),
+    adminNavCounts(db, viewer),
+  ]);
 
   return (
     <main>
-      <AdminNav current="/admin/audit" />
-      <h1>Audit log</h1>
-      <p className="text-muted">
-        The last {AUDIT_PAGE_SIZE} changes against <strong>{entityType}</strong>.
-      </p>
+      <AdminNav current="/admin/audit" counts={counts} />
+      <PageHeader
+        title="Audit log"
+        lede={
+          <>
+            The last {AUDIT_PAGE_SIZE} changes against <strong>{entityType}</strong>.
+          </>
+        }
+      />
       <AuditFilter types={types} current={entityType} />
       <AuditTable rows={rows} />
     </main>

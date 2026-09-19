@@ -7,6 +7,9 @@ import { age } from "@/components/admin/ReportQueue";
 import { publishReviewAction, rejectReviewAction } from "@/lib/actions/admin-reviews";
 import type { QueueState } from "@/lib/actions/admin-trust";
 import type { ReviewAwaitingModeration } from "@/lib/db/queries/reviews";
+import { Notice } from "@/components/ui/Notice";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 
 /**
  * Every review the heuristics held after its author confirmed it, newest first.
@@ -51,10 +54,12 @@ function ReviewCard({ review, now }: { review: ReviewAwaitingModeration; now: Da
     review.flaggedReason === null
       ? null
       : (HELD_REASONS[review.flaggedReason] ?? review.flaggedReason);
+  const done = published.status === "done" || rejected.status === "done";
+  const titleId = `review-${review.id}-title`;
 
   return (
     <li className="card mb-3" data-testid={`review-${review.id}`}>
-      <h2 className="mt-0 text-lg">
+      <h2 className="mt-0 text-lg" id={titleId}>
         <a href={review.listingPath}>{review.listingName}</a>
       </h2>
       <p className="text-sm text-muted">
@@ -81,7 +86,7 @@ function ReviewCard({ review, now }: { review: ReviewAwaitingModeration; now: Da
 
       {reason !== null && (
         <p className="text-sm" data-testid="review-held-reason">
-          Held: <strong className="text-ink">{reason}</strong>
+          <span className="pill pill-on">Held: {reason}</span>
         </p>
       )}
 
@@ -90,26 +95,31 @@ function ReviewCard({ review, now }: { review: ReviewAwaitingModeration; now: Da
         <a href={`${review.listingPath}/reviews`}>See the published reviews</a>
       </p>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {failure !== null && (
+        <Notice variant="error" testId="review-error">
+          {failure}
+        </Notice>
+      )}
+      {done && failure === null && (
+        <Notice variant="success" testId="review-done">
+          Done — this review is decided and leaves the queue on the next load.
+        </Notice>
+      )}
+
+      <div className="action-bar" role="group" aria-labelledby={titleId}>
         <form action={publish}>
           <input type="hidden" name="reviewId" value={review.id} />
-          <button type="submit" disabled={publishing} data-testid="review-publish">
-            {publishing ? "Saving…" : "Publish"}
-          </button>
+          <SubmitButton pending={publishing} pendingLabel="Saving…" testId="review-publish">
+            Publish
+          </SubmitButton>
         </form>
         <form action={reject}>
           <input type="hidden" name="reviewId" value={review.id} />
-          <button type="submit" disabled={rejecting} data-testid="review-reject">
-            {rejecting ? "Saving…" : "Reject"}
-          </button>
+          <SubmitButton pending={rejecting} pendingLabel="Saving…" variant="secondary" testId="review-reject">
+            Reject
+          </SubmitButton>
         </form>
       </div>
-
-      {failure !== null && (
-        <p role="alert" className="mt-2 text-sm" data-testid="review-error">
-          {failure}
-        </p>
-      )}
     </li>
   );
 }
@@ -123,10 +133,12 @@ export function ReviewQueue({
 }) {
   if (reviews.length === 0) {
     return (
-      <p data-testid="review-queue-empty">
-        Nothing is held. A review lands here when its author has confirmed it and the checks
-        want a person to look before it goes on a {siteConfig.entity.singular} page.
-      </p>
+      <EmptyState title="Nothing is held." testId="review-queue-empty">
+        <p>
+          A review lands here when its author has confirmed it and the checks want a person to
+          look before it goes on a {siteConfig.entity.singular} page.
+        </p>
+      </EmptyState>
     );
   }
 

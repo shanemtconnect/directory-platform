@@ -32,3 +32,20 @@ describe("AdminNav", () => {
     expect((current[0]!.props as { href: string }).href).toBe("/admin/claims");
   });
 });
+
+describe("AdminNav counts", () => {
+  it("shows a count beside a queue that has work, and none beside one that does not", () => {
+    const el = AdminNav({ current: "/admin", counts: { "/admin/claims": 4 } });
+    const claims = links(el).find((l) => l.href === "/admin/claims");
+    const reviews = links(el).find((l) => l.href === "/admin/reviews");
+
+    expect(claims?.text).toBe("Claims44 waiting");
+    expect(reviews?.text).toBe("Reviews");
+  });
+
+  it("renders the same links with no counts at all", () => {
+    expect(links(AdminNav({ current: "/admin" })).map((l) => l.text)).toEqual([
+      "Dashboard", "Submissions", "Claims", "Reviews", "Towns", "Reports", "Removals", "Audit log",
+    ]);
+  });
+});

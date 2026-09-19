@@ -15,12 +15,7 @@ import type { AdminCity } from "@/lib/db/queries/admin/cities";
  */
 function Flag({ on, yes, no }: { on: boolean; yes: string; no: string }) {
   return (
-    <span
-      className={
-        "inline-block rounded-full border px-2 py-0.5 text-xs font-semibold " +
-        (on ? "border-primary text-ink" : "border-line text-muted")
-      }
-    >
+    <span className={on ? "pill pill-on" : "pill"}>
       {on ? yes : no}
     </span>
   );
@@ -80,7 +75,7 @@ export function CityRow({ city }: { city: AdminCity }) {
             whatever is there; saving nothing removes it and closes the gate.
           </small>
         </p>
-        <button type="submit">Save intro copy</button>
+        <button type="submit" className="btn btn-primary">Save intro copy</button>
       </form>
 
       <form action={setCityPublishedAction} className="mt-4">

@@ -1,5 +1,6 @@
 import { siteConfig } from "@/config/site.config";
 import type { SubmissionQueue as Queue } from "@/lib/db/queries/admin/submissions";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /**
  * The queue table.
@@ -23,16 +24,16 @@ function when(value: Date): string {
 export function SubmissionQueue({ queue }: { queue: Queue }) {
   if (queue.total === 0) {
     return (
-      <p data-testid="submission-queue-empty">
-        Nothing is waiting. New submissions from the add form land here.
-      </p>
+      <EmptyState title="Nothing is waiting." testId="submission-queue-empty">
+        <p>New submissions from the add form land here.</p>
+      </EmptyState>
     );
   }
 
   return (
     <>
       <div className="table-scroll">
-        <table data-testid="submission-queue">
+        <table data-testid="submission-queue" className="table-cards">
           <caption>
             {queue.total} waiting — page {queue.page} of {queue.pageCount}, oldest first.
           </caption>
@@ -49,20 +50,20 @@ export function SubmissionQueue({ queue }: { queue: Queue }) {
           <tbody>
             {queue.rows.map((row) => (
               <tr key={row.id}>
-                <th scope="row" className="font-normal">
+                <th scope="row" className="font-normal" data-label={siteConfig.entity.Singular}>
                   <a href={`/admin/submissions/${row.id}`}>{row.name}</a>
                 </th>
-                <td>{row.cityName}</td>
-                <td>{row.categoryName}</td>
-                <td>
+                <td data-label="Town">{row.cityName}</td>
+                <td data-label="Category">{row.categoryName}</td>
+                <td data-label="Submitted by">
                   {row.submitterEmail === null ? (
                     <span className="text-muted">not given</span>
                   ) : (
                     <a href={`mailto:${row.submitterEmail}`}>{row.submitterEmail}</a>
                   )}
                 </td>
-                <td>{row.requestedTier ?? "—"}</td>
-                <td>
+                <td data-label="Asked for">{row.requestedTier ?? "—"}</td>
+                <td data-label="Received">
                   <time dateTime={row.createdAt.toISOString()}>{when(row.createdAt)}</time>
                 </td>
               </tr>
@@ -72,9 +73,13 @@ export function SubmissionQueue({ queue }: { queue: Queue }) {
       </div>
 
       {queue.pageCount > 1 && (
-        <nav aria-label="Pagination" className="mt-4 flex gap-4">
-          {queue.page > 1 && <a href={pagePath(queue.page - 1)}>Previous page</a>}
-          {queue.page < queue.pageCount && <a href={pagePath(queue.page + 1)}>Next page</a>}
+        <nav aria-label="Pagination" className="mt-4 flex flex-wrap gap-3">
+          {queue.page > 1 && (
+            <a href={pagePath(queue.page - 1)} className="btn btn-secondary">Previous page</a>
+          )}
+          {queue.page < queue.pageCount && (
+            <a href={pagePath(queue.page + 1)} className="btn btn-secondary">Next page</a>
+          )}
         </nav>
       )}
     </>
