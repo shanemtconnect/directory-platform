@@ -46,9 +46,10 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
     { href: "/terms", label: "Terms", inNav: false, inFooter: false, inSitemap: true },
   ];
 
-  if (mode === "local-multi-vertical") {
-    routes.push({ href: "/areas", label: "Areas", inNav: true, inFooter: true, inSitemap: true });
-  }
+  // local-multi-vertical has no /areas page yet (only its schema and scope
+  // exist), so the mode advertises nothing extra until the page ships — see
+  // the note on the flagged routes below.
+  void mode;
 
   // contentHub REPLACES the flat blog rather than sitting beside it, so the two
   // can never both appear and split the same internal links. The flag changes
@@ -63,12 +64,13 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
   });
 
   if (f.shortlist) routes.push({ href: "/shortlist", label: "Shortlist", inNav: true, inFooter: false, inSitemap: false });
-  if (f.costGuides) routes.push({ href: "/cost", label: "Costs", inNav: true, inFooter: true, inSitemap: true });
-  if (f.quoteBroadcast) routes.push({ href: "/get-quotes", label: "Get quotes", inNav: true, inFooter: true, inSitemap: true });
-  if (f.jobBoard) routes.push({ href: "/jobs", label: "Jobs", inNav: true, inFooter: true, inSitemap: true });
-  if (f.awards) routes.push({ href: "/awards", label: "Awards", inNav: false, inFooter: true, inSitemap: true });
-  if (f.affiliates) routes.push({ href: "/affiliates", label: "Affiliates", inNav: false, inFooter: true, inSitemap: true });
-  if (f.utilityTool) routes.push({ href: "/tools", label: "Free tools", inNav: true, inFooter: true, inSitemap: true });
+
+  // costGuides, quoteBroadcast, jobBoard, awards, affiliates and utilityTool
+  // have no page yet. Until one ships under app/, its flag advertises nothing:
+  // a nav, footer and sitemap entry for /get-quotes was a link to a 404 on
+  // every clone that turned the flag on, found by scripts/verify-clone.sh.
+  // navigation.test.ts holds every href here to a page on disk, so a route
+  // is added back here in the same commit as its page and never before.
 
   return routes;
 }

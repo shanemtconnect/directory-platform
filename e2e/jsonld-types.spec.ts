@@ -82,11 +82,14 @@ test.describe("JSON-LD @type per page type", () => {
 
   test("a blog post is a BlogPosting", async ({ page }) => {
     await page.goto("/blog");
-    const href = await page.locator("main a[href^='/blog/']").first().getAttribute("href");
-    if (!href) {
+    // `count()` first: `.first().getAttribute()` waits for an element and times
+    // out on a site that ships no posts, which is every clone.
+    const posts = page.locator("main a[href^='/blog/']");
+    if ((await posts.count()) === 0) {
       test.skip(true, "no blog post to sample: this site ships without posts");
       return;
     }
+    const href = (await posts.first().getAttribute("href"))!;
 
     const types = await typesOn(page, href);
     expect([...types], `${href} is not typed as a BlogPosting`).toContain("BlogPosting");

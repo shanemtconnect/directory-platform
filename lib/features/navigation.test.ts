@@ -20,8 +20,20 @@ describe("buildRoutes", () => {
 
   it("omits every flagged route when all flags are off", () => {
     const hrefs = buildRoutes(allOff, "niche-national").map((r) => r.href);
-    for (const flagged of ["/shortlist", "/cost", "/get-quotes", "/jobs", "/awards", "/affiliates", "/tools"]) {
-      expect(hrefs).not.toContain(flagged);
+    expect(hrefs).not.toContain("/shortlist");
+  });
+
+  it("never advertises a route that has no route file, under any flags or mode", () => {
+    // The "advertised routes exist" suite below checks the CONFIGURED set. This
+    // checks every set buildRoutes can produce: a flag whose feature is not
+    // built yet must not produce a link to a 404 on the clone that turns it
+    // on — which /get-quotes did, and scripts/verify-clone.sh found.
+    for (const mode of ["niche-national", "local-multi-vertical"] as const) {
+      for (const flags of [allOff, allOn]) {
+        for (const { href } of buildRoutes(flags, mode)) {
+          expect(routeExists(href, { allowDynamic: false }), `${href} is advertised (${mode}) but has no static route file under app/`).toBe(true);
+        }
+      }
     }
   });
 
@@ -43,9 +55,12 @@ describe("buildRoutes", () => {
     expect(buildRoutes(allOn, "niche-national").map((r) => r.href)).not.toContain("/membership");
   });
 
-  it("adds /areas only in local-multi-vertical mode", () => {
-    expect(buildRoutes(allOff, "niche-national").map((r) => r.href)).not.toContain("/areas");
-    expect(buildRoutes(allOff, "local-multi-vertical").map((r) => r.href)).toContain("/areas");
+  it("advertises no /areas in either mode until the page exists", () => {
+    // local-multi-vertical has schema and scopes but no pages; a link to
+    // /areas was a 404 on any clone that chose the mode.
+    for (const mode of ["niche-national", "local-multi-vertical"] as const) {
+      expect(buildRoutes(allOff, mode).map((r) => r.href)).not.toContain("/areas");
+    }
   });
 
   it("returns no duplicate hrefs under any flag combination", () => {
@@ -63,10 +78,15 @@ describe("buildRoutes", () => {
     expect(labels).toContain("venue");
   });
 
-  it("emits every flagged route when all flags are on", () => {
+  it("emits the shortlist route when its flag is on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
-    for (const flagged of ["/shortlist", "/cost", "/get-quotes", "/jobs", "/awards", "/affiliates", "/tools"]) {
-      expect(hrefs).toContain(flagged);
+    expect(hrefs).toContain("/shortlist");
+  });
+
+  it("does not advertise the unbuilt features even with every flag on", () => {
+    const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
+    for (const unbuilt of ["/cost", "/get-quotes", "/jobs", "/awards", "/affiliates", "/tools"]) {
+      expect(hrefs).not.toContain(unbuilt);
     }
   });
 
