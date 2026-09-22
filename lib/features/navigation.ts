@@ -1,6 +1,7 @@
 import { siteConfig } from "@/config/site.config";
 import type { FeatureMap, SiteMode } from "@/config/types";
 import { features } from "./flags";
+import { countryProfile } from "@/lib/geo/countries";
 
 export interface NavEntry {
   readonly href: string;
@@ -46,10 +47,21 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
     { href: "/terms", label: "Terms", inNav: false, inFooter: false, inSitemap: true },
   ];
 
-  // local-multi-vertical has no /areas page yet (only its schema and scope
-  // exist), so the mode advertises nothing extra until the page ships — see
-  // the note on the flagged routes below.
-  void mode;
+  // /areas is the REGION index on a niche-national site — the counties or
+  // states the cities group into, at /areas/<region>. local-multi-vertical's
+  // own /areas (its `areas` table, the neighbourhoods of one city) has no
+  // page yet, so that mode still advertises nothing here, and app/areas 404s
+  // there rather than serving a page nothing links to.
+  if (mode === "niche-national") {
+    const profile = countryProfile(siteConfig.country);
+    routes.push({
+      href: "/areas",
+      label: `${e.Plural} by ${profile.regionLabel}`,
+      inNav: false,
+      inFooter: true,
+      inSitemap: true,
+    });
+  }
 
   // contentHub REPLACES the flat blog rather than sitting beside it, so the two
   // can never both appear and split the same internal links. The flag changes
