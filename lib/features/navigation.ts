@@ -65,9 +65,16 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
 
   if (f.shortlist) routes.push({ href: "/shortlist", label: "Shortlist", inNav: true, inFooter: false, inSitemap: false });
 
-  // costGuides, quoteBroadcast, jobBoard, awards, affiliates and utilityTool
-  // have no page yet. Until one ships under app/, its flag advertises nothing:
-  // a nav, footer and sitemap entry for /get-quotes was a link to a 404 on
+  // Quote broadcast (Task 47): the page is app/get-quotes/page.tsx, added in
+  // the same commit as this entry. Off means gone from every surface — the
+  // page 404s, and a link to a 404 is what this file exists to prevent.
+  if (f.quoteBroadcast) {
+    routes.push({ href: "/get-quotes", label: "Get quotes", inNav: true, inFooter: true, inSitemap: true });
+  }
+
+  // costGuides, jobBoard, awards, affiliates and utilityTool have no page
+  // yet. Until one ships under app/, its flag advertises nothing: a nav,
+  // footer and sitemap entry for /get-quotes was once a link to a 404 on
   // every clone that turned the flag on, found by scripts/verify-clone.sh.
   // navigation.test.ts holds every href here to a page on disk, so a route
   // is added back here in the same commit as its page and never before.
