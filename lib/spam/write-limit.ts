@@ -244,3 +244,15 @@ export const INTERNAL_REVALIDATE_RATE_LIMIT = { limit: 60, windowSeconds: 60 } a
  * `audit_log` with one row per second.
  */
 export const BADGE_BACKLINK_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as const;
+
+/**
+ * Three an hour, checked after validation. (Quotes module, Task 47.)
+ *
+ * One request already reaches up to `siteConfig.quotes.maxRecipients`
+ * inboxes, so this is the tightest of the public forms: a person asking for
+ * two different jobs in one sitting is real, and three is room for a retry;
+ * a script filling it in is a way to make the site send fifteen emails a
+ * minute signed with our domain. Sits after field validation, as the others
+ * do — a typo must not cost one of the three.
+ */
+export const QUOTE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
