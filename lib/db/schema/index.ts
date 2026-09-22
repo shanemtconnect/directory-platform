@@ -7,3 +7,4 @@ export * from "./money";
 export * from "./trust";
 export * from "./ops";
 export * from "./modules";
+export * from "./spots";

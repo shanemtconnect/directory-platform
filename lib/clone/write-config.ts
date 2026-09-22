@@ -308,6 +308,17 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     // on behalf of another has two answers and only one of them is right.
     dataController: ${str(a.legalEntity)},
   },
+
+  // Featured spots: three paid positions above the organic grid on every
+  // pillar page. Floors are the lowest monthly bid a spot accepts, in the
+  // site currency; region spots cover a whole county so they start higher.
+  featured: {
+    positions: 3,
+    floors: {
+      city: 50,
+      region: 100,
+    },
+  },
 } as const satisfies SiteConfig;
 
 ${ACCESSORS}`;
