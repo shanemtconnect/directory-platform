@@ -4,6 +4,8 @@ import sharp from "sharp";
 import { withTestDb, type TestDb } from "@/test/db";
 import { listingImages } from "@/lib/db/schema";
 import { makeScaffold, makeListing } from "@/test/factories";
+import { ADMIN_VIEWER } from "@/worker/viewer";
+import { listingPaths } from "@/lib/db/queries/paths";
 
 const getObject = vi.fn<(bucket: string, key: string) => Promise<Buffer>>();
 const putObject = vi.fn<() => Promise<void>>();
@@ -15,7 +17,7 @@ vi.mock("@/lib/media/r2", () => ({
   deleteObject: () => deleteObject(),
 }));
 
-const { processPendingDerivatives, MAX_DERIVATIVE_ATTEMPTS } =
+const { processPendingDerivatives, derivativesJob, MAX_DERIVATIVE_ATTEMPTS } =
   await import("./derivatives");
 
 const realPng = await sharp({
@@ -141,6 +143,53 @@ describe("processPendingDerivatives", () => {
       await makeImage(tx, { derivatives: { thumb: "a", card: "b", hero: "c", full: "d" } });
       expect(await processPendingDerivatives(tx)).toBe(0);
       expect(getObject).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The public gallery sets width and height on every <img> so the page does
+   * not shift as the photos load. The worker is the only thing that has seen
+   * the decoded, rotated image, so it records the size of the largest
+   * derivative — after the EXIF orientation has been applied, which is why a
+   * portrait phone photo comes out taller than it is wide.
+   */
+  it("records the largest derivative's dimensions on the row", async () => {
+    await withTestDb(async (tx) => {
+      const id = await makeImage(tx);
+      const wide = await sharp({
+        create: { width: 3000, height: 1500, channels: 3, background: { r: 1, g: 2, b: 3 } },
+      }).png().toBuffer();
+      getObject.mockResolvedValue(wide);
+
+      expect(await processPendingDerivatives(tx)).toBe(1);
+      const [row] = await tx.select().from(listingImages).where(eq(listingImages.id, id));
+      // `full` is capped at 2000 wide and never enlarged.
+      expect(row?.width).toBe(2000);
+      expect(row?.height).toBe(1000);
+    });
+  });
+
+  it("hands back the paths of every listing whose photo just went live", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+      await tx.insert(listingImages).values([
+        { listingId, storagePath: `listings/${listingId}/photo-0000000000000001.jpg` },
+        { listingId, storagePath: `listings/${listingId}/photo-0000000000000002.jpg` },
+      ]);
+      getObject.mockResolvedValue(realPng);
+
+      const outcome = await derivativesJob(tx);
+      // Once per listing, not once per image.
+      expect(outcome.revalidate).toEqual(await listingPaths(tx, ADMIN_VIEWER, listingId));
+    });
+  });
+
+  it("hands back nothing when no image went live", async () => {
+    await withTestDb(async (tx) => {
+      await makeImage(tx);
+      getObject.mockResolvedValue(Buffer.from("not an image at all"));
+      expect((await derivativesJob(tx)).revalidate).toEqual([]);
     });
   });
 });

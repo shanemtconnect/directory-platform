@@ -1,5 +1,7 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
+import sharp from "sharp";
 import { listingImages } from "@/lib/db/schema";
+import { resolveListingPaths } from "@/lib/db/queries/paths";
 import { generateDerivatives, type DerivativeKey } from "@/lib/media/derivatives";
 import { assertUploadable, LISTING_IMAGE_TYPES } from "@/lib/media/validate";
 import { getObject, putObject, deleteObject } from "@/lib/media/r2";
@@ -23,7 +25,11 @@ class UnprocessableUpload extends Error {}
  * writes them back. Deliberately batched and idempotent: a row is only marked
  * done once every derivative is written, so a crash mid-batch just reprocesses.
  */
-export async function processPendingDerivatives(db: Db): Promise<number> {
+export async function processPendingDerivatives(
+  db: Db,
+  /** Filled with the listing id of every image that went live, for the caller to revalidate. */
+  liveListingIds?: Set<string>,
+): Promise<number> {
   const pending = await db
     .select({
       id: listingImages.id,
@@ -60,10 +66,19 @@ export async function processPendingDerivatives(db: Db): Promise<number> {
         await putObject(bucket, path, buf, "image/webp");
         paths[key] = path;
       }
+      // The size of the largest derivative, after `.rotate()` has applied the
+      // EXIF orientation: what the public <img> needs for its width/height.
+      const { width, height } = await sharp(derived.full).metadata();
       await db
         .update(listingImages)
-        .set({ derivatives: paths, derivativesError: null })
+        .set({
+          derivatives: paths,
+          derivativesError: null,
+          width: width ?? null,
+          height: height ?? null,
+        })
         .where(eq(listingImages.id, image.id));
+      liveListingIds?.add(image.listingId);
       done++;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -85,4 +100,18 @@ export async function processPendingDerivatives(db: Db): Promise<number> {
     }
   }
   return done;
+}
+
+/**
+ * The scheduled entry point. A photo that has just gone live is invisible on
+ * the ISR-cached listing page until the window turns over, so the job hands
+ * back the paths of every listing it finished an image for; worker/index.ts
+ * sends them to the web container once this transaction has committed.
+ */
+export async function derivativesJob(db: Db): Promise<{ revalidate: string[] }> {
+  const live = new Set<string>();
+  await processPendingDerivatives(db, live);
+  const revalidate: string[] = [];
+  for (const listingId of live) revalidate.push(...(await resolveListingPaths(db, listingId)));
+  return { revalidate };
 }
