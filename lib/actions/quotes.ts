@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer, requireAdmin } from "@/lib/auth/viewer";
@@ -137,5 +138,7 @@ export async function flagQuoteSpam(form: FormData): Promise<{ ok: boolean }> {
   const ok = await db.transaction(async (tx) =>
     flagQuoteRequestSpam(tx as unknown as TestDb, viewer, quoteRequestId, isSpam, ip),
   );
+  // A plain <form action>, so the list has to be told it changed.
+  if (ok) revalidatePath("/admin/quotes");
   return { ok };
 }

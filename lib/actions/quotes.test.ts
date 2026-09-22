@@ -36,6 +36,7 @@ vi.mock("next/headers", () => ({
   headers: () => Promise.resolve(new Headers({ "x-forwarded-for": "203.0.113.9" })),
 }));
 vi.mock("@/lib/db/client", () => ({ db: { transaction: (fn: never) => transaction(fn) } }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/features/flags", () => ({ isEnabled: () => isEnabled() }));
 vi.mock("@/lib/auth/viewer", () => ({
   currentViewer: () => currentViewer(),

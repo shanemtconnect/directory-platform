@@ -18,6 +18,7 @@ describe("AdminNav", () => {
     ["/admin/cities", "Towns"],
     ["/admin/reports", "Reports"],
     ["/admin/removals", "Removals"],
+    ["/admin/quotes", "Quotes"],
     ["/admin/audit", "Audit log"],
   ])("links to %s as %s", (href, label) => {
     expect(links(AdminNav({ current: "/admin" }))).toContainEqual({ href, text: label });
@@ -45,7 +46,7 @@ describe("AdminNav counts", () => {
 
   it("renders the same links with no counts at all", () => {
     expect(links(AdminNav({ current: "/admin" })).map((l) => l.text)).toEqual([
-      "Dashboard", "Submissions", "Claims", "Reviews", "Towns", "Reports", "Removals", "Audit log",
+      "Dashboard", "Submissions", "Claims", "Reviews", "Towns", "Reports", "Removals", "Quotes", "Audit log",
     ]);
   });
 });
