@@ -7,7 +7,7 @@ import { slugify, isReserved, RESERVED_SLUGS } from "./slugify";
 
 export const ROOT_SCOPE = "root";
 
-export type SlugKind = "static" | "city" | "vertical" | "area" | "category" | "listing";
+export type SlugKind = "static" | "city" | "vertical" | "area" | "category" | "listing" | "region";
 
 export interface SlugRow {
   parentScope: string;
@@ -151,6 +151,10 @@ async function writeEntitySlug(
     case "listing":
       await tx.update(listings).set({ slug }).where(eq(listings.id, entityId));
       return;
+    case "region":
+      // A region has no row of its own: its name lives on every city in it,
+      // and lib/db/queries/areas.ts `renameRegion` rewrites those.
+      return;
   }
 }
 
@@ -221,4 +225,51 @@ export async function reallocateSlug(
     .onConflictDoUpdate({ target: redirects.fromPath, set: { toPath: newPath } });
 
   return allocated;
+}
+
+/* ------------------------------------------------------------------ regions */
+
+/**
+ * Where region slugs live in the registry.
+ *
+ * A region is not a row of its own: it is the set of cities that share a
+ * `cities.region` value, and its page is /areas/<slug>. "areas" is a reserved
+ * root slug, so the scope is that literal rather than an entity id — the same
+ * way ROOT_SCOPE is a literal. Nothing else is ever allocated under it.
+ */
+export const REGION_SCOPE = "areas";
+
+/** The one spelling of a region's URL segment, from its name. */
+export const regionSlug = (region: string): string => slugify(region);
+
+/**
+ * Registers a region's slug. Idempotent, so the seed and every import can
+ * call it for every city row they touch.
+ *
+ * `entityId` is null on purpose: the registry has no region table to point
+ * at. The slug IS derived from the name, so resolution goes the other way —
+ * a region page asks the cities for the region whose slugified name matches —
+ * and the row here is what a rename hangs its redirect off (see
+ * `renameRegion` in lib/db/queries/areas.ts).
+ *
+ * Reserved words are refused as they are at the root: /areas/page/2 is page 2
+ * of /areas, so a region called "Page" would have a URL it could never own.
+ */
+export async function registerRegionSlug(tx: Tx, region: string): Promise<string> {
+  const slug = regionSlug(region);
+  if (slug === "") {
+    throw new SlugError(`Cannot derive a slug from region ${JSON.stringify(region)}`);
+  }
+  if (isReserved(slug)) {
+    throw new SlugError(`"${slug}" is a reserved slug and cannot be used for a region`);
+  }
+  await claim(tx, { parentScope: REGION_SCOPE, slug, kind: "region", entityId: null });
+  return slug;
+}
+
+/** The inverse, for a rename: the old spelling's row goes so nothing claims it twice. */
+export async function releaseRegionSlug(tx: Tx, region: string): Promise<void> {
+  await tx
+    .delete(slugs)
+    .where(and(eq(slugs.parentScope, REGION_SCOPE), eq(slugs.slug, regionSlug(region))));
 }

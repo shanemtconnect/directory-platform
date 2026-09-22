@@ -1,7 +1,7 @@
 import { pgEnum } from "drizzle-orm/pg-core";
 
 export const slugKind = pgEnum("slug_kind", [
-  "static", "city", "vertical", "area", "category", "listing",
+  "static", "city", "vertical", "area", "category", "listing", "region",
 ]);
 export const cityCreatedBy = pgEnum("city_created_by", ["seed", "admin", "auto"]);
 export const userRole = pgEnum("user_role", ["user", "owner", "admin"]);

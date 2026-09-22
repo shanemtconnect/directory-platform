@@ -6,7 +6,10 @@ import { withTestDb, type TestDb } from "@/test/db";
 import {
   makeCategory, makeCategoryInCity, makeCity, makeListing, makeScaffold, makeVertical,
 } from "@/test/factories";
-import { allocateSlug, reallocateSlug, resolveSlug, seedReservedSlugs, ROOT_SCOPE, SlugError } from "./slugs";
+import {
+  allocateSlug, reallocateSlug, resolveSlug, seedReservedSlugs, ROOT_SCOPE, SlugError,
+  registerRegionSlug, releaseRegionSlug, REGION_SCOPE,
+} from "./slugs";
 import { categories, cities, listings, redirects, slugs } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -321,5 +324,43 @@ describe("allocateSlug under concurrency", () => {
       await dbs[0]?.delete(slugs).where(eq(slugs.parentScope, scope));
       await Promise.all(clients.map((c) => c.end({ timeout: 5 })));
     }
+  });
+});
+
+describe("region slugs", () => {
+  it("registers slugify(region) under the areas scope as kind 'region', idempotently", async () => {
+    await withTestDb(async (tx) => {
+      expect(await registerRegionSlug(tx, "West Yorkshire")).toBe("west-yorkshire");
+      // A second registration of the same region is a no-op, not a "-2".
+      expect(await registerRegionSlug(tx, "West Yorkshire")).toBe("west-yorkshire");
+      const row = await resolveSlug(tx, REGION_SCOPE, "west-yorkshire");
+      expect(row).toMatchObject({ kind: "region", entityId: null, parentScope: REGION_SCOPE });
+    });
+  });
+
+  it("never lets a region take a reserved word — /areas/page is pagination, not a place", async () => {
+    await withTestDb(async (tx) => {
+      await expect(registerRegionSlug(tx, "Page")).rejects.toBeInstanceOf(SlugError);
+      await expect(registerRegionSlug(tx, "   ")).rejects.toBeInstanceOf(SlugError);
+    });
+  });
+
+  it("does not collide with a city of the same name at the root", async () => {
+    await withTestDb(async (tx) => {
+      await makeCity(tx, "Cornwall", "Cornwall");
+      expect(await registerRegionSlug(tx, "Cornwall")).toBe("cornwall");
+      expect((await resolveSlug(tx, ROOT_SCOPE, "cornwall"))?.kind).toBe("city");
+      expect((await resolveSlug(tx, REGION_SCOPE, "cornwall"))?.kind).toBe("region");
+    });
+  });
+
+  it("releases a region slug so a rename can re-register the new spelling", async () => {
+    await withTestDb(async (tx) => {
+      await registerRegionSlug(tx, "West Yorkshire");
+      await releaseRegionSlug(tx, "West Yorkshire");
+      expect(await resolveSlug(tx, REGION_SCOPE, "west-yorkshire")).toBeNull();
+      // Releasing what was never registered is fine.
+      await releaseRegionSlug(tx, "Nowhere");
+    });
   });
 });

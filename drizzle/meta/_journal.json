@@ -71,6 +71,13 @@
       "when": 1789742625323,
       "tag": "0009_removal_rejection_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789742625324,
+      "tag": "0012_slug_kind_region",
+      "breakpoints": true
     }
   ]
 }
