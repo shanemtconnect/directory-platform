@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
-import { auditLog, enquiries, listings, profiles, user } from "@/lib/db/schema";
+import {
+  auditLog, enquiries, listingImages, listings, profiles, reviewReplies, reviews, user,
+} from "@/lib/db/schema";
 import { resetClock, setClock } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
@@ -13,6 +15,7 @@ import {
   ownerEnquiries,
   ownerListing,
   ownerListings,
+  ownerNextActions,
   updateOwnerListing,
 } from "./owner";
 
@@ -296,6 +299,50 @@ describe("markEnquiryHandled", () => {
       expect(await markEnquiryHandled(tx, stranger.viewer, jo.enquiryId, "read", null)).toBe(false);
       const [row] = await tx.select().from(enquiries).where(eq(enquiries.id, jo.enquiryId));
       expect(row?.readAt).toBeNull();
+    });
+  });
+});
+
+describe("ownerNextActions", () => {
+  it("counts published reviews with no reply, and every photo row", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx, { claimStatus: "verified" });
+      const review = async (email: string, status: "published" | "pending" = "published") => {
+        const [r] = await tx.insert(reviews).values({
+          listingId: jo.listingId, authorEmail: email, rating: 4, status,
+        }).returning({ id: reviews.id });
+        return r!.id;
+      };
+      const answered = await review("a@example.test");
+      await review("b@example.test");
+      await review("c@example.test");
+      await review("d@example.test", "pending");
+      await tx.insert(reviewReplies).values({
+        reviewId: answered, listingId: jo.listingId, body: "Thank you.", status: "published",
+      });
+      // One live, one still pending with the worker: both count as photos.
+      await tx.insert(listingImages).values([
+        { listingId: jo.listingId, storagePath: `listings/${jo.listingId}/photo-0000000000000001.jpg`,
+          derivatives: { thumb: "t", card: "c", hero: "h", full: "f" } },
+        { listingId: jo.listingId, storagePath: `listings/${jo.listingId}/photo-0000000000000002.jpg` },
+      ]);
+
+      expect(await ownerNextActions(tx, jo.viewer, jo.listingId)).toEqual({
+        unrepliedReviews: 2, photoCount: 2, claimStatus: "verified", status: "published",
+      });
+    });
+  });
+
+  it("is zeros for a bare listing, and null for a stranger's or a non-uuid", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      expect(await ownerNextActions(tx, jo.viewer, jo.listingId)).toEqual({
+        unrepliedReviews: 0, photoCount: 0, claimStatus: "claimed", status: "published",
+      });
+      const stranger = await owner(tx);
+      expect(await ownerNextActions(tx, stranger.viewer, jo.listingId)).toBeNull();
+      expect(await ownerNextActions(tx, jo.viewer, "nope")).toBeNull();
+      await expect(ownerNextActions(tx, { role: "public" }, jo.listingId)).rejects.toThrow(/FORBIDDEN/);
     });
   });
 });

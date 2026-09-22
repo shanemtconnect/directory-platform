@@ -1,0 +1,320 @@
+import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { withTestDb, type TestDb } from "@/test/db";
+import { makeListing, makeScaffold } from "@/test/factories";
+import { auditLog, listingImages, profiles, user } from "@/lib/db/schema";
+import { siteConfig } from "@/config/site.config";
+import type { Viewer } from "@/lib/db/viewer";
+import { ADMIN_VIEWER } from "@/worker/viewer";
+import { listingPaths } from "./paths";
+import {
+  createOwnerPhoto,
+  deleteOwnerPhoto,
+  ownerPhotoQuota,
+  ownerPhotos,
+  reorderOwnerPhotos,
+  setOwnerPhotoAlt,
+} from "./photos";
+
+async function owner(tx: TestDb, role: "user" | "owner" | "admin" = "owner") {
+  const userId = `u_${randomUUID()}`;
+  await tx.insert(user).values({
+    id: userId, name: "Jo", email: `${userId}@example.test`, emailVerified: true,
+  });
+  const [profile] = await tx.insert(profiles).values({ userId, role }).returning({ id: profiles.id });
+  return { userId, profileId: profile!.id, viewer: { role, userId } as Viewer };
+}
+
+async function owned(tx: TestDb, patch: Record<string, unknown> = {}) {
+  const ctx = await makeScaffold(tx);
+  const jo = await owner(tx);
+  const listingId = await makeListing(tx, ctx, {
+    name: "The Old Mill", ownerId: jo.profileId, claimStatus: "claimed", ...patch,
+  });
+  return { ...jo, listingId, ctx };
+}
+
+const key = (listingId: string, n: number) =>
+  `listings/${listingId}/photo-${n.toString(16).padStart(16, "0")}.jpg`;
+
+const IP = "203.0.113.7";
+
+describe("ownerPhotoQuota", () => {
+  it("reports the tier's cap and how much of it is used", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx, { tier: "free" });
+      expect(await ownerPhotoQuota(tx, jo.viewer, jo.listingId)).toEqual({
+        used: 0, max: siteConfig.tiers.free.maxImages, tier: "free",
+      });
+    });
+  });
+
+  it("is null for somebody else's listing and for a non-uuid", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const stranger = await owner(tx);
+      expect(await ownerPhotoQuota(tx, stranger.viewer, jo.listingId)).toBeNull();
+      expect(await ownerPhotoQuota(tx, jo.viewer, "nope")).toBeNull();
+    });
+  });
+
+  it("refuses an anonymous viewer outright", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      await expect(ownerPhotoQuota(tx, { role: "public" }, jo.listingId)).rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+});
+
+describe("createOwnerPhoto", () => {
+  it("inserts a pending row, makes the first image the hero and writes an audit row with the ip", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const result = await createOwnerPhoto(tx, jo.viewer, {
+        listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP,
+      });
+      expect(result.outcome).toBe("created");
+      if (result.outcome !== "created") return;
+      expect(result.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, jo.listingId));
+
+      const [row] = await tx.select().from(listingImages).where(eq(listingImages.id, result.id));
+      expect(row?.derivatives).toBeNull();
+      expect(row?.isPrimary).toBe(true);
+      expect(row?.sortOrder).toBe(0);
+
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.entityId, result.id));
+      expect(audit?.action).toBe("photo.uploaded");
+      expect(audit?.ip).toBe(IP);
+      expect(audit?.actorId).toBe(jo.profileId);
+      expect(audit?.meta).toMatchObject({ listingId: jo.listingId });
+    });
+  });
+
+  it("appends after the existing images, which keep their hero", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      const b = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 2), ip: IP });
+      expect(a.outcome).toBe("created");
+      expect(b.outcome).toBe("created");
+      const rows = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(rows.map((r) => [r.sortOrder, r.isPrimary, r.status])).toEqual([
+        [0, true, "pending"], [1, false, "pending"],
+      ]);
+    });
+  });
+
+  it("enforces the tier's cap inside the transaction", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx, { tier: "free" });
+      const max = siteConfig.tiers.free.maxImages!;
+      for (let n = 0; n < max; n++) {
+        const r = await createOwnerPhoto(tx, jo.viewer, {
+          listingId: jo.listingId, storagePath: key(jo.listingId, n), ip: IP,
+        });
+        expect(r.outcome).toBe("created");
+      }
+      const over = await createOwnerPhoto(tx, jo.viewer, {
+        listingId: jo.listingId, storagePath: key(jo.listingId, 99), ip: IP,
+      });
+      expect(over).toEqual({ outcome: "limit", max });
+      expect(await ownerPhotoQuota(tx, jo.viewer, jo.listingId)).toMatchObject({ used: max, max });
+    });
+  });
+
+  it("has no cap on a tier whose maxImages is null", async () => {
+    await withTestDb(async (tx) => {
+      expect(siteConfig.tiers.premium.maxImages).toBeNull();
+      const jo = await owned(tx, { tier: "premium" });
+      for (let n = 0; n < 12; n++) {
+        const r = await createOwnerPhoto(tx, jo.viewer, {
+          listingId: jo.listingId, storagePath: key(jo.listingId, n), ip: IP,
+        });
+        expect(r.outcome).toBe("created");
+      }
+      expect(await ownerPhotoQuota(tx, jo.viewer, jo.listingId)).toEqual({
+        used: 12, max: null, tier: "premium",
+      });
+    });
+  });
+
+  it("refuses a key outside listings/<id>/ even from the owner", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const other = randomUUID();
+      const bad = await createOwnerPhoto(tx, jo.viewer, {
+        listingId: jo.listingId, storagePath: key(other, 1), ip: IP,
+      });
+      expect(bad).toEqual({ outcome: "bad-key" });
+      expect(await tx.select().from(listingImages)).toHaveLength(0);
+    });
+  });
+
+  it("is not-found for somebody else's listing, and writes nothing", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const stranger = await owner(tx);
+      const r = await createOwnerPhoto(tx, stranger.viewer, {
+        listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP,
+      });
+      expect(r).toEqual({ outcome: "not-found" });
+      expect(await tx.select().from(listingImages)).toHaveLength(0);
+      expect(await tx.select().from(auditLog)).toHaveLength(0);
+    });
+  });
+});
+
+describe("ownerPhotos", () => {
+  it("says which rows the worker has finished and which it gave up on", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      const b = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 2), ip: IP });
+      const c = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 3), ip: IP });
+      if (a.outcome !== "created" || b.outcome !== "created" || c.outcome !== "created") throw new Error();
+      await tx.update(listingImages).set({
+        derivatives: { thumb: "t", card: "c", hero: "h", full: "f" }, width: 2000, height: 1000,
+      }).where(eq(listingImages.id, a.id));
+      await tx.update(listingImages).set({ derivativesAttempts: 5, derivativesError: "boom" })
+        .where(eq(listingImages.id, b.id));
+
+      const rows = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(rows.map((r) => r.status)).toEqual(["live", "failed", "pending"]);
+      expect(rows[0]?.thumbPath).toBe("t");
+      expect(rows[1]?.thumbPath).toBeNull();
+      // The operator's error string stays out of the owner's page.
+      expect(JSON.stringify(rows)).not.toContain("boom");
+    });
+  });
+
+  it("returns nothing for a stranger, rather than the listing's photos", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      const stranger = await owner(tx);
+      expect(await ownerPhotos(tx, stranger.viewer, jo.listingId)).toEqual([]);
+    });
+  });
+});
+
+describe("reorderOwnerPhotos", () => {
+  it("renumbers in the order given and moves the hero to the first", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const ids: string[] = [];
+      for (let n = 0; n < 3; n++) {
+        const r = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, n), ip: IP });
+        if (r.outcome !== "created") throw new Error();
+        ids.push(r.id);
+      }
+      const result = await reorderOwnerPhotos(tx, jo.viewer, jo.listingId, [ids[2]!, ids[0]!, ids[1]!], IP);
+      expect(result.outcome).toBe("saved");
+      const rows = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(rows.map((r) => r.id)).toEqual([ids[2], ids[0], ids[1]]);
+      expect(rows.map((r) => r.isPrimary)).toEqual([true, false, false]);
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.action, "photo.reordered"));
+      expect(audit?.entityId).toBe(jo.listingId);
+      expect(audit?.ip).toBe(IP);
+    });
+  });
+
+  it("refuses a list that is not exactly the listing's own photos", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      const b = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 2), ip: IP });
+      if (a.outcome !== "created" || b.outcome !== "created") throw new Error();
+      // Missing one, a stranger's id, a duplicate: all refused, nothing moves.
+      expect(await reorderOwnerPhotos(tx, jo.viewer, jo.listingId, [a.id], IP)).toEqual({ outcome: "mismatch" });
+      expect(await reorderOwnerPhotos(tx, jo.viewer, jo.listingId, [a.id, randomUUID()], IP)).toEqual({ outcome: "mismatch" });
+      expect(await reorderOwnerPhotos(tx, jo.viewer, jo.listingId, [b.id, b.id], IP)).toEqual({ outcome: "mismatch" });
+      const rows = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(rows.map((r) => r.id)).toEqual([a.id, b.id]);
+    });
+  });
+
+  it("is not-found for a stranger", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      if (a.outcome !== "created") throw new Error();
+      const stranger = await owner(tx);
+      expect(await reorderOwnerPhotos(tx, stranger.viewer, jo.listingId, [a.id], IP)).toEqual({ outcome: "not-found" });
+    });
+  });
+});
+
+describe("setOwnerPhotoAlt", () => {
+  it("saves trimmed alt text on the owner's own photo and audits it", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      if (a.outcome !== "created") throw new Error();
+      const r = await setOwnerPhotoAlt(tx, jo.viewer, a.id, "  The front door  ", IP);
+      expect(r.outcome).toBe("saved");
+      const [row] = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(row?.alt).toBe("The front door");
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.action, "photo.alt_saved"));
+      expect(audit?.entityId).toBe(a.id);
+      expect(audit?.ip).toBe(IP);
+    });
+  });
+
+  it("stores empty alt as null and refuses a stranger", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      if (a.outcome !== "created") throw new Error();
+      await setOwnerPhotoAlt(tx, jo.viewer, a.id, "   ", IP);
+      const [row] = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(row?.alt).toBeNull();
+      const stranger = await owner(tx);
+      expect(await setOwnerPhotoAlt(tx, stranger.viewer, a.id, "Mine now", IP)).toEqual({ outcome: "not-found" });
+    });
+  });
+});
+
+describe("deleteOwnerPhoto", () => {
+  it("removes the row, hands back every key to delete, closes the gap and promotes a new hero", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const ids: string[] = [];
+      for (let n = 0; n < 3; n++) {
+        const r = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, n), ip: IP });
+        if (r.outcome !== "created") throw new Error();
+        ids.push(r.id);
+      }
+      await tx.update(listingImages).set({
+        derivatives: { thumb: "t", card: "c", hero: "h", full: "f" },
+      }).where(eq(listingImages.id, ids[0]!));
+
+      const result = await deleteOwnerPhoto(tx, jo.viewer, ids[0]!, IP);
+      expect(result.outcome).toBe("deleted");
+      if (result.outcome !== "deleted") return;
+      expect([...result.keys].sort()).toEqual([key(jo.listingId, 0), "c", "f", "h", "t"].sort());
+      expect(result.paths).toEqual(await listingPaths(tx, ADMIN_VIEWER, jo.listingId));
+
+      const rows = await ownerPhotos(tx, jo.viewer, jo.listingId);
+      expect(rows.map((r) => [r.id, r.sortOrder, r.isPrimary])).toEqual([
+        [ids[1], 0, true], [ids[2], 1, false],
+      ]);
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.action, "photo.deleted"));
+      expect(audit?.entityId).toBe(ids[0]);
+      expect(audit?.ip).toBe(IP);
+      expect(audit?.meta).toMatchObject({ listingId: jo.listingId, storagePath: key(jo.listingId, 0) });
+    });
+  });
+
+  it("is not-found for a stranger and for a non-uuid, and deletes nothing", async () => {
+    await withTestDb(async (tx) => {
+      const jo = await owned(tx);
+      const a = await createOwnerPhoto(tx, jo.viewer, { listingId: jo.listingId, storagePath: key(jo.listingId, 1), ip: IP });
+      if (a.outcome !== "created") throw new Error();
+      const stranger = await owner(tx);
+      expect(await deleteOwnerPhoto(tx, stranger.viewer, a.id, IP)).toEqual({ outcome: "not-found" });
+      expect(await deleteOwnerPhoto(tx, jo.viewer, "nope", IP)).toEqual({ outcome: "not-found" });
+      expect(await ownerPhotos(tx, jo.viewer, jo.listingId)).toHaveLength(1);
+    });
+  });
+});
