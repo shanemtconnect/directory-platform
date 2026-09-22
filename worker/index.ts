@@ -8,6 +8,7 @@ import { now } from "@/lib/clock";
 import { jobCounts } from "@/lib/db/queries/health";
 import { HEARTBEAT_CRON, pushUptime, runHeartbeat } from "@/lib/observability/heartbeat";
 import { revalidatePaths } from "@/lib/revalidate/client";
+import { features } from "@/lib/features/flags";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -187,3 +188,17 @@ schedule("purge-stats", "0 4 * * *", async (tx) => {
   const { purgeStats } = await import("./jobs/purge-stats");
   await purgeStats(tx);
 });
+
+// Awards (Task 50). Once a year, in the small hours of 1 January, in the
+// server's clock — the job itself reads the year in the site's timezone. Only
+// on a site with the module on: a clone without it must not accumulate award
+// rows nothing renders. Idempotent, so an admin who has already pressed
+// "compute" on /admin/awards for the year costs this run nothing. Off the
+// hour like the billing jobs, and after the nightly purges have finished.
+if (features.awards) {
+  schedule("awards", "23 5 1 1 *", async (tx) => {
+    const { computeAwards } = await import("./jobs/awards");
+    const { revalidate } = await computeAwards(tx);
+    return { revalidate };
+  });
+}

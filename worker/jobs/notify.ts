@@ -2,6 +2,7 @@ import {
   AUTH_TOKEN_TTL_SECONDS,
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
+  NOTIFY_AWARD_WON,
   NOTIFY_CLAIM_DECIDED,
   NOTIFY_CLAIM_LINK,
   NOTIFY_CLAIM_SUBMITTED,
@@ -57,6 +58,8 @@ import { claimNotification } from "@/lib/db/queries/claims";
 import { MAGIC_TOKEN_TTL_MINUTES, isTokenExpired } from "@/lib/claims/token";
 import { passwordReset, verifyEmailAddress } from "@/lib/email/templates/auth";
 import { authEmailRecipient } from "@/lib/db/queries/profile";
+import { awardNotification, awardsCityPath } from "@/lib/db/queries/awards";
+import { awardWon } from "@/lib/email/templates/award";
 import { hashToken } from "@/lib/security/token-hash";
 import type { Db } from "@/lib/db/client";
 
@@ -413,6 +416,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runAuthEmail(db, d, job.payload, passwordReset, passwordResetLink);
     case NOTIFY_AUTH_VERIFY:
       return runAuthEmail(db, d, job.payload, verifyEmailAddress, verifyEmailLink);
+    // Appended by the awards module; the handler is at the foot of the file.
+    case NOTIFY_AWARD_WON:
+      return runAwardWon(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -630,5 +636,38 @@ async function runAuthEmail(
   await deliver(d, ACCOUNT, {
     to: recipient.email,
     ...build({ name: recipient.name, url, expiresInMinutes: TOKEN_TTL_MINUTES }),
+  });
+}
+
+/* ------------------------------------------------------- awards (Task 50) */
+
+/** The winner. One recipient, one stable key, like the others. */
+const WINNER = "winner";
+
+/**
+ * "You won". The award is re-read at send time: one revoked between the run
+ * and the tick is a completed job with nothing to send, not a retry, and a
+ * winner with no address on file (an unclaimed listing with no contact email)
+ * is the same — there is nobody to tell and no attempt that would change it.
+ */
+async function runAwardWon(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const awardId = readId(payload, "awardId");
+  if (awardId === null) throw new Retryable("The job carries no awardId");
+
+  const data = await awardNotification(db, ADMIN_VIEWER, awardId);
+  if (!data) throw new Retryable(`No award ${awardId}`);
+  if (data.revoked || data.recipient === null) return;
+
+  await deliver(d, WINNER, {
+    to: data.recipient,
+    ...awardWon({
+      year: data.year,
+      listingName: data.listingName,
+      listingUrl: siteUrl(data.listingPath),
+      awardsUrl: siteUrl(awardsCityPath(data.year, data.citySlug)),
+      cityName: data.cityName,
+      categoryName: data.categoryName,
+      badgeUrl: siteUrl("/advertise/badge"),
+    }),
   });
 }
