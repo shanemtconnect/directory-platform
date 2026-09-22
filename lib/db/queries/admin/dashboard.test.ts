@@ -5,7 +5,7 @@ import { cities, claims, removalRequests, reports, reviews } from "@/lib/db/sche
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeViewer } from "@/test/admin-fixtures";
 import { makeScaffold, makeListing } from "@/test/factories";
-import { adminQueueCounts } from "./dashboard";
+import { adminQueueCounts, adminQueueCountsInOneQuery } from "./dashboard";
 
 describe("adminQueueCounts", () => {
   it("counts only the work that is still open", async () => {
@@ -68,6 +68,53 @@ describe("adminQueueCounts", () => {
       const owner = await makeViewer(tx, "owner");
       await expect(adminQueueCounts(tx, owner)).rejects.toThrow("FORBIDDEN");
       await expect(adminQueueCounts(tx, PUBLIC_VIEWER)).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});
+
+describe("adminQueueCountsInOneQuery", () => {
+  /** Counts every statement the handle is asked to run. */
+  function counting<T extends object>(tx: T): { tx: T; calls: () => number } {
+    let n = 0;
+    const proxy = new Proxy(tx, {
+      get(target, prop, receiver) {
+        if (prop === "select" || prop === "execute" || prop === "insert" || prop === "update" || prop === "delete") n++;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    return { tx: proxy, calls: () => n };
+  }
+
+  it("returns the same six numbers as the sequential version, in one statement", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeViewer(tx);
+      const ctx = await makeScaffold(tx);
+      const live = await makeListing(tx, ctx, { name: "Live" });
+      await makeListing(tx, ctx, { name: "Waiting", status: "pending" });
+      await tx.insert(reports).values([{ listingId: live, reason: "incorrect" }]);
+      await tx.insert(removalRequests).values([{ listingId: live }, { listingId: live, status: "actioned" }]);
+      await tx.insert(claims).values([{ listingId: live }, { listingId: live, status: "approved" }]);
+      await tx.insert(reviews).values([
+        { listingId: live, authorEmail: "a@example.test", rating: 4,
+          emailVerifiedAt: new Date(), flaggedReason: "too-short" },
+        { listingId: live, authorEmail: "b@example.test", rating: 4 },
+      ]);
+
+      const expected = await adminQueueCounts(tx, admin);
+      const { tx: watched, calls } = counting(tx);
+      const actual = await adminQueueCountsInOneQuery(watched, admin);
+
+      expect(actual).toEqual(expected);
+      expect(actual.pendingSubmissions).toBe(1);
+      expect(actual.reviewsAwaitingModeration).toBe(1);
+      expect(calls()).toBe(1);
+    });
+  });
+
+  it("refuses anyone who is not an admin", async () => {
+    await withTestDb(async (tx) => {
+      const owner = await makeViewer(tx, "owner");
+      await expect(adminQueueCountsInOneQuery(tx, owner)).rejects.toThrow("FORBIDDEN");
     });
   });
 });

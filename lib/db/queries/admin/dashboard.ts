@@ -1,7 +1,8 @@
 import { eq, sql } from "drizzle-orm";
 import { claims, cities, listings, removalRequests, reports } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import { countReviewsAwaitingModeration } from "@/lib/db/queries/reviews";
+import { awaitingModeration, countReviewsAwaitingModeration } from "@/lib/db/queries/reviews";
+import { reviews } from "@/lib/db/schema";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -76,5 +77,52 @@ export async function adminQueueCounts(tx: TestDb, viewer: Viewer): Promise<Admi
     citiesAwaitingIntro: awaitingIntro?.total ?? 0,
     pendingClaims: pendingClaims?.total ?? 0,
     reviewsAwaitingModeration,
+  };
+}
+
+/**
+ * The same six numbers in one round trip.
+ *
+ * `adminQueueCounts` runs six statements in sequence, and every console page
+ * asks for them beside its own query — so a page that needs one list was
+ * paying for seven round trips. Six scalar sub-selects in one statement cost
+ * the same work in Postgres and one trip on the wire. The predicates are the
+ * same as above, and the review one is the reviews module's own, so the nav
+ * badge and the tile cannot disagree.
+ */
+export async function adminQueueCountsInOneQuery(
+  tx: TestDb,
+  viewer: Viewer,
+): Promise<AdminQueueCounts> {
+  assertAdmin(viewer);
+
+  const rows = await tx.execute<Record<string, unknown>>(sql`
+    select
+      (select count(*)::int from ${listings} where ${listings.status} = 'pending')
+        as pending_submissions,
+      (select count(*)::int from ${reports} where ${reports.status} = 'open')
+        as open_reports,
+      (select count(*)::int from ${removalRequests} where ${removalRequests.status} = 'open')
+        as open_removals,
+      (select count(*)::int from ${cities}
+        where ${cities.isPublished} and (${cities.introHtml} is null or btrim(${cities.introHtml}) = ''))
+        as cities_awaiting_intro,
+      (select count(*)::int from ${claims} where ${claims.status} = 'pending')
+        as pending_claims,
+      (select count(*)::int from ${reviews} where ${awaitingModeration()})
+        as reviews_awaiting_moderation
+  `);
+  const row = rows[0] ?? {};
+  const n = (key: string): number => {
+    const value = row[key];
+    return typeof value === "number" ? value : Number(value ?? 0);
+  };
+  return {
+    pendingSubmissions: n("pending_submissions"),
+    openReports: n("open_reports"),
+    openRemovals: n("open_removals"),
+    citiesAwaitingIntro: n("cities_awaiting_intro"),
+    pendingClaims: n("pending_claims"),
+    reviewsAwaitingModeration: n("reviews_awaiting_moderation"),
   };
 }
