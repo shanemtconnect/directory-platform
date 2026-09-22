@@ -60,6 +60,7 @@ const METRICS: Metric[] = [
   { key: "enquiries", label: "Enquiries", hint: "Messages sent to you through the site." },
   { key: "shortlistAdds", label: "Saves", hint: "Times someone saved you to a shortlist." },
   { key: "badgeClicks", label: "Badge clicks", hint: "Visits from the badge on your own website." },
+  { key: "quoteRequests", label: "Quote requests", hint: "Requests for a quote sent to you from the get-quotes page." },
 ];
 
 function formatNumber(n: number): string {

@@ -202,15 +202,15 @@ describe("listingStats — the rows", () => {
       const owner = await makeOwner(tx);
       const listingId = await makeListing(tx, ctx, { ownerId: owner.profileId });
       await seedDay(tx, listingId, "2026-09-11",
-        { views: 4, impressions: 40, enquiries: 1, shortlistAdds: 2, badgeClicks: 3 });
+        { views: 4, impressions: 40, enquiries: 1, shortlistAdds: 2, badgeClicks: 3, quoteRequests: 0 });
       await seedDay(tx, listingId, "2026-09-12",
-        { views: 6, impressions: 60, enquiries: 2, shortlistAdds: 1, badgeClicks: 0 });
+        { views: 6, impressions: 60, enquiries: 2, shortlistAdds: 1, badgeClicks: 0, quoteRequests: 0 });
       const viewer: Viewer = { role: "owner", userId: owner.userId };
 
       const stats = await listingStats(tx, viewer, listingId, 7);
 
       expect(stats!.totals).toEqual({
-        views: 10, impressions: 100, enquiries: 3, shortlistAdds: 3, badgeClicks: 3,
+        views: 10, impressions: 100, enquiries: 3, shortlistAdds: 3, badgeClicks: 3, quoteRequests: 0,
       });
     });
   });
@@ -254,7 +254,7 @@ describe("applyStatDeltas — who may write it", () => {
 
       await expect(applyStatDeltas(tx, PUBLIC_VIEWER, [{
         listingId, day: "2026-09-12",
-        views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
+        views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0,
       }])).rejects.toThrow("FORBIDDEN");
 
       expect(await tx.select().from(listingStatsDaily)
@@ -280,7 +280,7 @@ describe("applyStatDeltas", () => {
 
       const written = await applyStatDeltas(tx, ADMIN_VIEWER, [{
         listingId, day: "2026-09-12",
-        views: 3, impressions: 30, enquiries: 1, shortlistAdds: 2, badgeClicks: 0,
+        views: 3, impressions: 30, enquiries: 1, shortlistAdds: 2, badgeClicks: 0, quoteRequests: 0,
       }]);
 
       expect(written).toBe(1);
@@ -298,7 +298,7 @@ describe("applyStatDeltas", () => {
       const listingId = await makeListing(tx, ctx);
       const delta = {
         listingId, day: "2026-09-12",
-        views: 3, impressions: 30, enquiries: 1, shortlistAdds: 0, badgeClicks: 0,
+        views: 3, impressions: 30, enquiries: 1, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0,
       };
 
       await applyStatDeltas(tx, ADMIN_VIEWER, [delta]);
@@ -316,8 +316,8 @@ describe("applyStatDeltas", () => {
       const listingId = await makeListing(tx, ctx);
 
       const written = await applyStatDeltas(tx, ADMIN_VIEWER, [
-        { listingId: randomUUID(), day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
-        { listingId, day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
+        { listingId: randomUUID(), day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 },
+        { listingId, day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 },
       ]);
 
       expect(written).toBe(1);
@@ -337,7 +337,7 @@ describe("applyStatDeltas", () => {
       const live = await makeListing(tx, ctx);
       const archived = await makeListing(tx, ctx, { status: "archived" });
       const pending = await makeListing(tx, ctx, { status: "pending" });
-      const delta = { day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
+      const delta = { day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 };
 
       const written = await applyStatDeltas(tx, ADMIN_VIEWER, [
         { listingId: archived, ...delta },
@@ -364,7 +364,7 @@ describe("applyStatDeltas", () => {
 
       const written = await applyStatDeltas(tx, ADMIN_VIEWER, [{
         listingId, day: "2026-09-12",
-        views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
+        views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0,
       }]);
 
       expect(written).toBe(0);
@@ -376,8 +376,8 @@ describe("applyStatDeltas", () => {
   it("refuses a malformed listing id or day rather than putting it in the statement", async () => {
     await withTestDb(async (tx) => {
       const written = await applyStatDeltas(tx, ADMIN_VIEWER, [
-        { listingId: "1); drop table listings; --", day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
-        { listingId: randomUUID(), day: "not-a-day", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
+        { listingId: "1); drop table listings; --", day: "2026-09-12", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 },
+        { listingId: randomUUID(), day: "not-a-day", views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 },
       ]);
 
       expect(written).toBe(0);
@@ -386,7 +386,7 @@ describe("applyStatDeltas", () => {
 });
 
 describe("applyStatDeltas — listings.view_count", () => {
-  const zero = { impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
+  const zero = { impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 };
 
   async function viewCount(tx: TestDb, listingId: string): Promise<number> {
     const [row] = await tx.select({ n: listings.viewCount }).from(listings)
@@ -429,7 +429,7 @@ describe("applyStatDeltas — listings.view_count", () => {
 
       await applyStatDeltas(tx, ADMIN_VIEWER, [{
         listingId, day: "2026-09-12",
-        views: 0, impressions: 40, enquiries: 2, shortlistAdds: 3, badgeClicks: 1,
+        views: 0, impressions: 40, enquiries: 2, shortlistAdds: 3, badgeClicks: 1, quoteRequests: 0,
       }]);
 
       expect(await viewCount(tx, listingId)).toBe(0);

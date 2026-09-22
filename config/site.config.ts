@@ -200,6 +200,10 @@ export const siteConfig = {
     footerCitiesPerCategory: 18,
   },
 
+  quotes: {
+    maxRecipients: 5,
+  },
+
   stats: {
     // A year and a bit: covers the 365-day paid window with room for an
     // owner to compare this month against the same month last year.
