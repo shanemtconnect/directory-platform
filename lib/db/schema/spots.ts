@@ -75,6 +75,12 @@ export const featuredSubscriptions = pgTable("featured_subscriptions", {
   quantity: integer("quantity").notNull().default(0),
   requestedQuantity: integer("requested_quantity").notNull().default(0),
   reviseRequestedAt: timestamp("revise_requested_at", { withTimezone: true }),
+  /**
+   * Where the buyer approves the subscription (first time) or its latest
+   * revision. Kept so an owner who closed the PayPal tab can be sent back to
+   * it from the bidding page instead of starting a second subscription.
+   */
+  approveUrl: text("approve_url"),
   currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
 }, (t) => [
   index("featured_subscriptions_listing_idx").on(t.listingId),

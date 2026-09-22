@@ -44,6 +44,7 @@ CREATE TABLE "featured_subscriptions" (
 	"quantity" integer DEFAULT 0 NOT NULL,
 	"requested_quantity" integer DEFAULT 0 NOT NULL,
 	"revise_requested_at" timestamp with time zone,
+	"approve_url" text,
 	"current_period_end" timestamp with time zone,
 	CONSTRAINT "featured_subscriptions_status_check" CHECK ("featured_subscriptions"."status" in ('approval_pending', 'active', 'past_due', 'cancelled', 'suspended', 'expired')),
 	CONSTRAINT "featured_subscriptions_quantity_check" CHECK ("featured_subscriptions"."quantity" >= 0),

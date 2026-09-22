@@ -1,5 +1,5 @@
 {
-  "id": "6b1cde18-6941-4cde-966e-a0499701df80",
+  "id": "16c64534-47e6-40b3-b9f2-76cd1f2c29da",
   "prevId": "0647cf58-2726-4a6d-9454-187dbccff204",
   "version": "7",
   "dialect": "postgresql",
@@ -6103,6 +6103,12 @@
         "revise_requested_at": {
           "name": "revise_requested_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approve_url": {
+          "name": "approve_url",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
