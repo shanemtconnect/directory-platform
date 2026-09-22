@@ -211,6 +211,15 @@ export const siteConfig = {
     termsLastUpdated: "2026-09-08",
     dataController: "TBC",
   },
+
+  // The jobs board. Verified-tier owners post free; everyone else pays this
+  // once per post through PayPal Orders. Approval, expiry and the reminder are
+  // driven by the two day counts.
+  jobs: {
+    price: 29,
+    durationDays: 30,
+    reminderDays: 7,
+  },
 } as const satisfies SiteConfig;
 
 /**

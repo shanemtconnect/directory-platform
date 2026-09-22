@@ -122,7 +122,37 @@ export const jobs = pgTable("jobs", {
   status: jobStatus("status").notNull().default("pending"),
   /** Expired jobs 410 rather than 404, so dead pages do not accumulate. */
   expiresAt: timestamp("expires_at", { withTimezone: true }),
-}, (t) => [index("jobs_status_idx").on(t.status, t.expiresAt)]);
+  // ---- Task 49 (migration 0015). Everything below is additive. ----
+  /** The Verified listing a free post is made on behalf of. Null for a paid post. */
+  listingId: uuid("listing_id").references(() => listings.id, { onDelete: "set null" }),
+  /** profiles.id of the poster when signed in (constraint 21). Null for a stranger. */
+  posterProfileId: uuid("poster_profile_id"),
+  posterName: text("poster_name"),
+  /** Who is hiring, as rendered and as `hiringOrganization`. */
+  companyName: text("company_name"),
+  /** 'email' → a mailto button; 'url' → an external link. Never both stored blank. */
+  applyMethod: text("apply_method"),
+  applyEmail: text("apply_email"),
+  applyUrl: text("apply_url"),
+  /** The only thing kept about applications: how many times Apply was pressed. */
+  applyCount: integer("apply_count").notNull().default(0),
+  /** `datePosted` in the markup. Set once, on approval. */
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  /** 'free' (verified owner or a zero price), 'pending' (awaiting capture) or 'paid'. */
+  paymentStatus: text("payment_status").notNull().default("free"),
+  /** Provider-neutral, like subscriptions: PayPal's order id today. */
+  providerOrderId: text("provider_order_id"),
+  providerCaptureId: text("provider_capture_id"),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  /** The expiry reminder is sent once; this is the once. */
+  reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+  rejectedReason: text("rejected_reason"),
+  ip: text("ip"),
+}, (t) => [
+  index("jobs_status_idx").on(t.status, t.expiresAt),
+  index("jobs_listing_idx").on(t.listingId),
+  uniqueIndex("jobs_provider_order_key").on(t.providerOrderId),
+]);
 
 export const jobApplications = pgTable("job_applications", {
   ...base,

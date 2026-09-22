@@ -308,6 +308,14 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     // on behalf of another has two answers and only one of them is right.
     dataController: ${str(a.legalEntity)},
   },
+
+  // The jobs board (flag jobBoard). Verified-tier owners post free; everyone
+  // else pays this once per post. Change the price here, never in a page.
+  jobs: {
+    price: 29,
+    durationDays: 30,
+    reminderDays: 7,
+  },
 } as const satisfies SiteConfig;
 
 ${ACCESSORS}`;

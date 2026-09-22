@@ -200,4 +200,21 @@ export interface SiteConfig {
      */
     readonly dataController: string;
   };
+
+  /**
+   * The jobs board (flag `jobBoard`). Every number a clone would change lives
+   * here; the pages and the worker read them and never carry their own.
+   */
+  readonly jobs: {
+    /**
+     * What a poster without a Verified listing pays, one-off, in the site
+     * currency. A verified-tier owner posts free — that is the upsell.
+     * 0 makes every post free (the payment step is skipped, not charged £0).
+     */
+    readonly price: number;
+    /** How long a job stays open after it is approved. */
+    readonly durationDays: number;
+    /** How many days before expiry the poster is reminded. Less than durationDays. */
+    readonly reminderDays: number;
+  };
 }
