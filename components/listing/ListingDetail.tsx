@@ -4,6 +4,7 @@ import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { displayedDescription } from "@/lib/listing/display";
 import { EnquiryForm } from "./EnquiryForm";
+import { Gallery } from "./Gallery";
 import { features } from "@/lib/features/flags";
 import { SaveButton } from "@/components/shortlist/SaveButton";
 import { ReviewSummary } from "@/components/reviews/ReviewSummary";
@@ -62,6 +63,11 @@ export function ListingDetail({
           before, and the right one on a phone. */}
       <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0">
+          {/* The owner's photos (Task 48): live derivatives only, hero first.
+              Renders nothing for a listing with no processed image, so the
+              page reads exactly as it did before photos existed. */}
+          <Gallery images={detail.images} listingName={listing.name} />
+
           {description && <div data-testid="description" className="prose text-lg">{description}</div>}
 
           {tier.descriptionDisplay === "excerpt" && listing.description &&
