@@ -8,6 +8,7 @@ import {
   NOTIFY_DECISION,
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
+  NOTIFY_QUOTE,
   NOTIFY_REMOVAL,
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
@@ -413,6 +414,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runAuthEmail(db, d, job.payload, passwordReset, passwordResetLink);
     case NOTIFY_AUTH_VERIFY:
       return runAuthEmail(db, d, job.payload, verifyEmailAddress, verifyEmailLink);
+    // Appended by the quotes module; the handler is at the foot of the file.
+    case NOTIFY_QUOTE:
+      return runQuote(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -630,5 +634,61 @@ async function runAuthEmail(
   await deliver(d, ACCOUNT, {
     to: recipient.email,
     ...build({ name: recipient.name, url, expiresInMinutes: TOKEN_TTL_MINUTES }),
+  });
+}
+
+/* ------------------------------------------------------- quotes (Task 47) */
+
+import { quoteNotification } from "@/lib/db/queries/quotes";
+import { quoteAcknowledgement, quoteToRecipient } from "@/lib/email/templates/quotes";
+
+/**
+ * One request, many recipients, one job.
+ *
+ * Each recipient is its own delivery key — `recipient:<listingId>`, stable
+ * across attempts — so a rejected address on the third of five sends only
+ * the third again on the retry. The requester's acknowledgement goes LAST
+ * and says how many were actually written to: the number on the form was
+ * the number chosen, and an unsubscribe or a lost address between the
+ * request and this tick is not something to pad over.
+ */
+async function runQuote(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const quoteRequestId = readId(payload, "quoteRequestId");
+  if (quoteRequestId === null) throw new Retryable("The job carries no quoteRequestId");
+
+  const data = await quoteNotification(db, ADMIN_VIEWER, quoteRequestId);
+  // Flagged as spam, or gone: nothing to send, and the job is done.
+  if (!data) return;
+
+  let delivered = 0;
+  for (const r of data.recipients) {
+    // No address (the listing lost its email, or its owner's account went) or
+    // an unsubscribe: skipped, not retried. The next tick would find the same.
+    if (r.email === null || r.unsubscribed) continue;
+    delivered++;
+    await deliver(d, `recipient:${r.listingId}`, {
+      to: r.email,
+      ...quoteToRecipient({
+        listingName: r.listingName,
+        leadsUrl: siteUrl(`/account/listings/${r.listingId}/leads`),
+        pricingUrl: siteUrl("/pricing"),
+        cityName: data.cityName,
+        categoryName: data.categoryName,
+        contactVisible: r.contactVisible,
+        requester: data.requester,
+        message: data.message,
+      }),
+    });
+  }
+
+  await deliver(d, REQUESTER, {
+    to: data.requester.email,
+    ...quoteAcknowledgement({
+      requesterName: data.requester.name,
+      cityName: data.cityName,
+      categoryName: data.categoryName,
+      recipientCount: delivered,
+      message: data.message,
+    }),
   });
 }

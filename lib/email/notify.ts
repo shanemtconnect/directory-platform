@@ -53,6 +53,13 @@ export const NOTIFY_AUTH_RESET = "notify.auth-reset";
 export const NOTIFY_AUTH_VERIFY = "notify.auth-verify";
 
 /**
+ * One broadcast quote request: every recipient's copy and the requester's
+ * acknowledgement, as one job. The handler sits at the foot of
+ * worker/jobs/notify.ts (quotes module, Task 47).
+ */
+export const NOTIFY_QUOTE = "notify.quote";
+
+/**
  * Every kind worker/jobs/notify.ts claims — the ONE answer to "what does the
  * notify worker drain". `BILLING_NOTIFY_KINDS` below is deliberately not in
  * it: renewal-reminders.ts drains those itself.
@@ -76,6 +83,7 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_REVIEW_VERIFIED,
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
+  NOTIFY_QUOTE,
 ];
 
 /**
@@ -377,4 +385,21 @@ export async function notifyAuthEmail(
   payload: AuthEmailJobPayload,
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind, payload });
+}
+
+/* ------------------------------------------------------- quotes (Task 47) */
+
+import type { QuoteRequestResult } from "@/lib/db/queries/quotes";
+
+/** An id alone: the worker re-reads the request and re-resolves every address. */
+export type QuoteJobPayload = { quoteRequestId: string };
+
+export async function notifyQuoteRequest(
+  tx: TestDb,
+  viewer: Viewer,
+  result: QuoteRequestResult,
+): Promise<void> {
+  if (result.outcome !== "created") return;
+  const payload: QuoteJobPayload = { quoteRequestId: result.quoteRequestId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE, payload });
 }
