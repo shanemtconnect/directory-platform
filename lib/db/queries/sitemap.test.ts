@@ -12,6 +12,7 @@ import {
   shardPath,
   STATIC_SHARD_ID,
   CATEGORY_SHARD_ID,
+  REGION_SHARD_ID,
   SITEMAP_SHARD_SIZE,
 } from "./sitemap";
 import { cities, categories } from "@/lib/db/schema";
@@ -165,18 +166,18 @@ describe("sitemap queries", () => {
 });
 
 describe("sitemap shard ids", () => {
-  it("always has a static+cities and a categories shard, plus one listing shard", () => {
-    expect(sitemapShardIds(0)).toEqual([STATIC_SHARD_ID, CATEGORY_SHARD_ID, "listings-0"]);
+  it("always has a static+cities, a categories and a regions shard, plus one listing shard", () => {
+    expect(sitemapShardIds(0)).toEqual([STATIC_SHARD_ID, CATEGORY_SHARD_ID, REGION_SHARD_ID, "listings-0"]);
   });
 
   it("adds a listing shard per SITEMAP_SHARD_SIZE URLs", () => {
     expect(sitemapShardIds(SITEMAP_SHARD_SIZE)).toEqual([
-      STATIC_SHARD_ID, CATEGORY_SHARD_ID, "listings-0",
+      STATIC_SHARD_ID, CATEGORY_SHARD_ID, REGION_SHARD_ID, "listings-0",
     ]);
     expect(sitemapShardIds(SITEMAP_SHARD_SIZE + 1)).toEqual([
-      STATIC_SHARD_ID, CATEGORY_SHARD_ID, "listings-0", "listings-1",
+      STATIC_SHARD_ID, CATEGORY_SHARD_ID, REGION_SHARD_ID, "listings-0", "listings-1",
     ]);
-    expect(sitemapShardIds(SITEMAP_SHARD_SIZE * 3)).toHaveLength(5);
+    expect(sitemapShardIds(SITEMAP_SHARD_SIZE * 3)).toHaveLength(6);
   });
 
   it("reads a listing shard's index back, and rejects anything else", () => {

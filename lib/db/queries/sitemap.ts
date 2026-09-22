@@ -23,6 +23,8 @@ export const SITEMAP_SHARD_SIZE = 5000;
 /** Static routes, blog posts and city pillars — everything but the long tails. */
 export const STATIC_SHARD_ID = "static+cities";
 export const CATEGORY_SHARD_ID = "categories";
+/** Region pillars — /areas/<region>. Their own shard so coverage reports per type. */
+export const REGION_SHARD_ID = "regions";
 
 const LISTING_SHARD_PREFIX = "listings-";
 
@@ -57,6 +59,7 @@ export function sitemapShardIds(listingCount: number): string[] {
   return [
     STATIC_SHARD_ID,
     CATEGORY_SHARD_ID,
+    REGION_SHARD_ID,
     ...Array.from({ length: shards }, (_, i) => listingShardId(i)),
   ];
 }

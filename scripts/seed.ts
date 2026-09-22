@@ -9,6 +9,7 @@ import { allocateSlug, seedReservedSlugs, resolveSlug, ROOT_SCOPE } from "@/lib/
 import { slugify } from "@/lib/routing/slugify";
 import { siteConfig } from "@/config/site.config";
 import { recomputeCityIndexability } from "@/lib/db/queries/indexing";
+import { registerRegionSlugs } from "@/lib/db/queries/areas";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
@@ -169,6 +170,11 @@ export async function runSeed(tx: TestDb, niche: string = DEFAULT_NICHE): Promis
     cityIdByKey.set(cityKey(name, region), id);
     report.cities++;
   }
+
+  // Region slugs, once every city is in. Idempotent, like the rest of this
+  // function: /areas/<region> resolves from cities.region, and the registry
+  // row is what a later rename hangs its redirect off.
+  await registerRegionSlugs(tx);
 
   // --- Categories (global rows; per-city routing added with the listings) ---
   const categoryIdByName = new Map<string, string>();

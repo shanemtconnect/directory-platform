@@ -272,3 +272,32 @@ export function faqSchema(faq: { question: string; answer: string }[]): JsonLd |
     })),
   });
 }
+
+/**
+ * A region page: the same CollectionPage + ItemList as every pillar, plus
+ * `about` naming the region as an AdministrativeArea inside its country.
+ *
+ * The region name and the country are both on the page (the H1 and the
+ * intro), so the markup asserts nothing the page does not show. No geo, no
+ * population, no boundaries: nothing the page has and nothing it invents.
+ */
+export function regionPillarSchema(input: {
+  title: string;
+  region: string;
+  path: string;
+  description?: string | null;
+  items: { name: string; path: string }[];
+}): JsonLd {
+  const base = pillarSchema(input);
+  return prune({
+    ...base,
+    about: {
+      "@type": "AdministrativeArea",
+      name: input.region,
+      containedInPlace: {
+        "@type": "Country",
+        name: countryProfile(siteConfig.country).name,
+      },
+    },
+  });
+}
