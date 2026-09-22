@@ -263,3 +263,23 @@ describe("review markup", () => {
     })).toBeNull();
   });
 });
+
+/* ------------------------------------------------------- awards (Task 50) */
+
+describe("award markup", () => {
+  it("NEVER emits award unless the page rendered one", () => {
+    expect(listingSchema(base)).not.toHaveProperty("award");
+    expect(listingSchema({ ...base, awards: [] })).not.toHaveProperty("award");
+  });
+
+  it("emits award as the exact text the page shows, one per award", () => {
+    const out = listingSchema({
+      ...base,
+      awards: ["Example 2031 winner — Barn Venues, Leeds", "Example 2030 winner — Barn Venues, Leeds"],
+    });
+    expect(out.award).toEqual([
+      "Example 2031 winner — Barn Venues, Leeds",
+      "Example 2030 winner — Barn Venues, Leeds",
+    ]);
+  });
+});

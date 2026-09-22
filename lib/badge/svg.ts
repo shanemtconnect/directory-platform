@@ -7,17 +7,39 @@
  * element and turns a listing name into markup served from our own origin.
  */
 
+/** The styles every listing gets. The gallery lists these for everyone. */
 export const BADGE_STYLES = ["dark", "light", "compact", "rating"] as const;
-export type BadgeStyle = (typeof BADGE_STYLES)[number];
+export type StaticBadgeStyle = (typeof BADGE_STYLES)[number];
+
+/**
+ * The awards module's style (Task 50): `award-<year>`, one per year a listing
+ * won. It is not in BADGE_STYLES because it is not a style every listing may
+ * use — the badge route checks the `awards` table before rendering it, and
+ * the gallery offers it only for the years the listing actually won.
+ */
+export type AwardBadgeStyle = `award-${number}`;
+export type BadgeStyle = StaticBadgeStyle | AwardBadgeStyle;
 
 export const DEFAULT_BADGE_STYLE: BadgeStyle = "dark";
+
+const AWARD_STYLE = /^award-(\d{4})$/;
+
+/** The style for a year's award badge. */
+export const awardBadgeStyle = (year: number): AwardBadgeStyle => `award-${year}`;
+
+/** The year an award style names, or null for any other style. */
+export function awardYearOfStyle(style: string): number | null {
+  const m = AWARD_STYLE.exec(style);
+  return m ? Number(m[1]) : null;
+}
 
 /** Unknown or absent style falls back to the default rather than 400ing. */
 export function parseBadgeStyle(value: string | null | undefined): BadgeStyle {
   const v = (value ?? "").toLowerCase();
-  return (BADGE_STYLES as readonly string[]).includes(v)
-    ? (v as BadgeStyle)
-    : DEFAULT_BADGE_STYLE;
+  if ((BADGE_STYLES as readonly string[]).includes(v)) return v as StaticBadgeStyle;
+  const year = awardYearOfStyle(v);
+  if (year !== null) return awardBadgeStyle(year);
+  return DEFAULT_BADGE_STYLE;
 }
 
 /**
@@ -45,15 +67,18 @@ export function truncate(value: string, max: number): string {
 
 export type BadgeDimensions = { width: number; height: number };
 
-const DIMENSIONS: Record<BadgeStyle, BadgeDimensions> = {
+const DIMENSIONS: Record<StaticBadgeStyle, BadgeDimensions> = {
   dark: { width: 220, height: 64 },
   light: { width: 220, height: 64 },
   compact: { width: 180, height: 40 },
   rating: { width: 220, height: 78 },
 };
 
+/** The award badge is the dark badge's size with the winner line in place of the verified line. */
+const AWARD_DIMENSIONS: BadgeDimensions = { width: 220, height: 64 };
+
 export function badgeDimensions(style: BadgeStyle): BadgeDimensions {
-  return DIMENSIONS[style];
+  return awardYearOfStyle(style) !== null ? AWARD_DIMENSIONS : DIMENSIONS[style as StaticBadgeStyle];
 }
 
 type Palette = {
@@ -78,6 +103,15 @@ const LIGHT: Palette = {
   body: "#1E1B18",
   muted: "#6E645A",
   accent: "#8B5A3C",
+};
+
+/** The award badge: the dark palette with a gold border, so it reads as a different thing at a glance. */
+const AWARD: Palette = {
+  bg: "#1E1B18",
+  border: "#D4AF37",
+  body: "#F5F1EC",
+  muted: "#B9AFA4",
+  accent: "#D4AF37",
 };
 
 export type BadgeInput = {
@@ -117,7 +151,8 @@ function stars(rating: number, x: number, y: number, on: string, off: string): s
 export function renderBadgeSvg(input: BadgeInput): string {
   const { style } = input;
   const { width, height } = badgeDimensions(style);
-  const p = style === "light" ? LIGHT : DARK;
+  const awardYear = awardYearOfStyle(style);
+  const p = style === "light" ? LIGHT : awardYear !== null ? AWARD : DARK;
 
   // Uppercase BEFORE escaping: toUpperCase() on escaped text turns &amp; into
   // the invalid entity &AMP;, which strict SVG parsers reject outright.
@@ -130,7 +165,9 @@ export function renderBadgeSvg(input: BadgeInput): string {
 
   const label = escapeXml(
     truncate(
-      `${input.listingName} on ${input.siteName}${input.verified ? " - Verified" : ""}`,
+      `${input.listingName} on ${input.siteName}` +
+        (awardYear !== null ? ` - ${awardYear} winner` : "") +
+        (input.verified ? " - Verified" : ""),
       140,
     ),
   );
@@ -181,6 +218,20 @@ export function renderBadgeSvg(input: BadgeInput): string {
         tick(width - 24.6, 26, p.accent),
       );
     }
+  } else if (awardYear !== null) {
+    // The winner line replaces the verified/listed line; the tick stays for a
+    // verified winner because both facts are true and neither implies the other.
+    body.push(
+      `<text x="14" y="22" font-family="${FONT}" font-size="9" font-weight="600" ` +
+        `letter-spacing="0.7" fill="${p.muted}">${site}</text>`,
+      `<text x="14" y="40" font-family="${FONT}" font-size="13" font-weight="700" ` +
+        `fill="${p.body}">${name}</text>`,
+      `<text x="14" y="55" font-family="${FONT}" font-size="10" font-weight="700" ` +
+        `letter-spacing="0.6" fill="${p.accent}">WINNER ${awardYear}</text>`,
+      // A rosette, drawn: a ring with the year's tick inside it.
+      `<circle cx="${width - 22}" cy="32" r="11" fill="none" stroke="${p.accent}" stroke-width="1.6"/>`,
+      `<circle cx="${width - 22}" cy="32" r="6.5" fill="${p.accent}"/>`,
+    );
   } else {
     body.push(
       `<text x="14" y="22" font-family="${FONT}" font-size="9" font-weight="600" ` +
