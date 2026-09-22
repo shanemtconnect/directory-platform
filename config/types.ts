@@ -200,4 +200,16 @@ export interface SiteConfig {
      */
     readonly dataController: string;
   };
+
+  /**
+   * The awards module (flag `awards`, requires `reviews`). Awards are computed,
+   * never voted or sold: a city × category with at least three rated listings
+   * gets one winner a year, the highest-rated listing with at least
+   * `minReviews` published reviews. Optional so a config scaffolded before the
+   * module existed still type-checks; `awardsMinReviews()` in
+   * lib/db/queries/awards.ts supplies the default of 5.
+   */
+  readonly awards?: {
+    readonly minReviews: number;
+  };
 }
