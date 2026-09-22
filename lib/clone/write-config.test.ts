@@ -188,3 +188,16 @@ describe("writeSiteConfig", () => {
     expect(readFileSync(result.path, "utf8")).toContain("export const siteConfig");
   });
 });
+
+describe("renderSiteConfig — sponsor rails (Task 43)", () => {
+  it("renders the ads block from the wizard answer, off by default", () => {
+    const source = renderSiteConfig(answers());
+    expect(source).toContain("  ads: {\n    enabled: false,");
+    expect(source).toContain('listingDetail: "unpaid-only"');
+    expect(source).toContain('home: "never"');
+  });
+
+  it("turns the rails on when the wizard was told to", () => {
+    expect(renderSiteConfig(answers({ adsEnabled: "yes" }))).toContain("  ads: {\n    enabled: true,");
+  });
+});

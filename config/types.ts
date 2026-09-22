@@ -106,6 +106,32 @@ export type FeatureMap = { readonly [K in FeatureFlag]: boolean };
 
 export type SiteMode = "niche-national" | "local-multi-vertical";
 
+/**
+ * Where a sponsor rail may be mounted. Every page that mounts `<SponsorRails>`
+ * names one of these; the policy in `lib/ads/policy.ts` decides per placement.
+ */
+export const AD_PLACEMENTS = [
+  "home",
+  "cityPillar",
+  "categoryPillar",
+  "listingDetail",
+  "search",
+  "blog",
+  "other",
+] as const;
+export type AdPlacement = (typeof AD_PLACEMENTS)[number];
+
+/** `unpaid-only` = the page's listing is tier `free` AND not verified. */
+export type AdPlacementRule = "never" | "always" | "unpaid-only";
+
+export interface AdsConfig {
+  /** Master switch. Off, nothing renders anywhere; the env kill switch is on top. */
+  readonly enabled: boolean;
+  /** What a self-serve sponsor pays per month, in `currency`. */
+  readonly monthlyPrice: number;
+  readonly placements: { readonly [K in AdPlacement]: AdPlacementRule };
+}
+
 export interface SiteConfig {
   readonly name: string;
   readonly shortName: string;
@@ -179,6 +205,9 @@ export interface SiteConfig {
      */
     readonly retentionDays: number;
   };
+
+  /** Sponsor rails — house ads and self-serve sponsors. See lib/ads/policy.ts. */
+  readonly ads: AdsConfig;
 
   /**
    * The facts /privacy and /terms state about themselves.

@@ -165,6 +165,7 @@ export interface Answers extends FeatureAnswers {
   readonly seoMinListingsToIndex: number;
   readonly seoRequireIntroCopyToIndex: boolean;
   readonly seoFooterCitiesPerCategory: number;
+  readonly adsEnabled: boolean;
 
   readonly niche: string;
   readonly seedSource: SeedSource;
@@ -708,6 +709,15 @@ export const QUESTIONS: readonly Question[] = [
   },
 
   // --- seed data ---
+  {
+    key: "adsEnabled",
+    type: "boolean",
+    prompt: "Show sponsor rails on unpaid pages?",
+    help:
+      "House ads and self-serve sponsors on pillar, search, blog and unpaid listing pages. " +
+      "Never an ad network. Off until the site has traffic worth selling.",
+    default: false,
+  },
   {
     key: "niche",
     type: "text",
