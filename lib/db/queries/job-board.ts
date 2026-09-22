@@ -227,11 +227,9 @@ export async function getPublicJob(tx: TestDb, _viewer: Viewer, id: string): Pro
   if (!row) return null;
   const { status, applyMethod, ...rest } = row;
   const lapsed = row.expiresAt !== null && row.expiresAt.getTime() <= now().getTime();
-  return withCard({
-    ...rest,
-    applyMethod: applyMethod === "email" || applyMethod === "url" ? applyMethod : null,
-    open: status === "published" && !lapsed,
-  });
+  // Typed here rather than inline: generic inference widens the literal.
+  const method: PublicJob["applyMethod"] = applyMethod === "email" || applyMethod === "url" ? applyMethod : null;
+  return withCard({ ...rest, applyMethod: method, open: status === "published" && !lapsed });
 }
 
 /** Counts a press on Apply. Nothing else about the applicant is kept. */
@@ -409,6 +407,14 @@ export async function jobForOrder(tx: TestDb, viewer: Viewer, providerOrderId: s
     .where(eq(jobs.providerOrderId, providerOrderId))
     .limit(1);
   return row ?? null;
+}
+
+/** The provider order a job was created with, for a capture that names only our row id. */
+export async function providerOrderIdForJob(tx: TestDb, viewer: Viewer, jobId: string): Promise<string | null> {
+  assertAdmin(viewer);
+  if (!UUID.test(jobId)) return null;
+  const [row] = await tx.select({ orderId: jobs.providerOrderId }).from(jobs).where(eq(jobs.id, jobId)).limit(1);
+  return row?.orderId ?? null;
 }
 
 export type MarkPaidResult =
