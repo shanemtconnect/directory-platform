@@ -3,6 +3,7 @@ import { cities, listings, slugs } from "@/lib/db/schema";
 import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 import { countListings, PER_PAGE } from "./listings";
+import { regionPaths } from "./areas";
 
 /**
  * The ISR pages a change to one listing can leave stale.
@@ -80,6 +81,7 @@ export async function resolveListingPaths(tx: TestDb, listingId: string): Promis
       slug: listings.slug,
       cityId: listings.cityId,
       citySlug: cities.slug,
+      region: cities.region,
       categorySlug: slugs.slug,
     })
     .from(listings)
@@ -113,5 +115,8 @@ export async function resolveListingPaths(tx: TestDb, listingId: string): Promis
     `/${row.citySlug}`,
     ...paginatedCityPaths(row.citySlug, published),
     ...(row.categorySlug === null ? [] : [`/${row.citySlug}/${row.categorySlug}`]),
+    // The region pillar and its paginated pages: the listing is on them too,
+    // in the same rank order, and the same shrink/grow rule applies.
+    ...(await regionPaths(tx, row.region)),
   ];
 }
