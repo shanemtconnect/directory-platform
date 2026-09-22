@@ -42,6 +42,11 @@ export interface CreateSubscriptionInput {
   readonly cancelUrl: string;
   readonly subscriberEmail?: string | null;
   readonly planOverride?: PlanOverride | null;
+  /**
+   * Units of a `quantity_supported` plan (the featured-spots plan). Omitted
+   * for the tier plans, which do not support it and would reject it.
+   */
+  readonly quantity?: number | null;
 }
 
 export interface CreatedSubscription {
@@ -57,6 +62,23 @@ export interface PayPalSubscriptionView {
   readonly planId: string | null;
   readonly nextBillingTime: string | null;
   readonly lastPaymentTime: string | null;
+  /** Present on a quantity-supported subscription; absent on the tier plans. */
+  readonly quantity?: number | null;
+}
+
+export interface ReviseSubscriptionInput {
+  readonly quantity: number;
+  readonly returnUrl: string;
+  readonly cancelUrl: string;
+}
+
+export interface RevisedSubscription {
+  /**
+   * PayPal's revise requires the buyer's consent: the revision takes effect
+   * when they approve it here, and BILLING.SUBSCRIPTION.UPDATED confirms it.
+   * Null if PayPal offered no link.
+   */
+  readonly approveUrl: string | null;
 }
 
 export interface PayPalClient {
@@ -75,6 +97,13 @@ export interface PayPalClient {
     headers: Record<string, string | null | undefined>,
     rawBody: string,
   ): Promise<boolean>;
+  /**
+   * `/v1/billing/subscriptions/{id}/revise` with a new quantity — the
+   * featured-spots plan only. Optional on the interface so the fakes written
+   * before featured spots existed still satisfy it; a caller that needs it
+   * treats its absence as "not configured".
+   */
+  reviseSubscription?(id: string, input: ReviseSubscriptionInput): Promise<RevisedSubscription>;
 }
 
 type Env = Record<string, string | undefined>;
@@ -127,6 +156,14 @@ function linkHref(links: unknown, rel: string): string | null {
   if (!Array.isArray(links)) return null;
   const hit = (links as Link[]).find((l) => l?.rel === rel);
   return typeof hit?.href === "string" ? hit.href : null;
+}
+
+/** PayPal's quantity is a decimal string; ours is a whole number of units. */
+export function parseQuantity(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : null;
 }
 
 /** PayPal signs a webhook with five headers. All five or nothing. */
@@ -236,6 +273,8 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
           ? { subscriber: { email_address: input.subscriberEmail } }
           : {}),
         ...(input.planOverride ? { plan: input.planOverride } : {}),
+        // PayPal takes the quantity as a string.
+        ...(typeof input.quantity === "number" ? { quantity: String(input.quantity) } : {}),
         application_context: {
           user_action: "SUBSCRIBE_NOW",
           shipping_preference: "NO_SHIPPING",
@@ -270,6 +309,8 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
         planId: typeof json.plan_id === "string" ? json.plan_id : null,
         nextBillingTime: billing.next_billing_time ?? null,
         lastPaymentTime: billing.last_payment?.time ?? null,
+        // Only when PayPal sent one: the tier-plan tests compare the whole view.
+        ...(parseQuantity(json.quantity) === null ? {} : { quantity: parseQuantity(json.quantity) }),
       };
     },
 
@@ -282,6 +323,26 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
       // is the state the caller wanted — treating it as an error would leave a
       // customer unable to cancel a subscription that is already gone.
       if (!ok && status !== 422) throw fail("cancel subscription", status, json);
+    },
+
+    async reviseSubscription(id, input) {
+      const { ok, status, json } = await call(
+        `/v1/billing/subscriptions/${encodeURIComponent(id)}/revise`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            quantity: String(input.quantity),
+            application_context: {
+              user_action: "SUBSCRIBE_NOW",
+              shipping_preference: "NO_SHIPPING",
+              return_url: input.returnUrl,
+              cancel_url: input.cancelUrl,
+            },
+          }),
+        },
+      );
+      if (!ok) throw fail("revise subscription", status, json);
+      return { approveUrl: linkHref(json.links, "approve") };
     },
 
     async manageUrl(id) {

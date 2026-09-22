@@ -12,6 +12,11 @@ import {
   planRequestBody,
   productNameFor,
 } from "@/lib/billing/plans";
+import {
+  FEATURED_PLAN_ENV_VAR,
+  featuredPlanNameFor,
+  featuredPlanRequestBody,
+} from "@/lib/billing/featured-plan";
 
 /**
  * Creates the PayPal product and the one plan per billable tier and interval
@@ -132,6 +137,27 @@ async function main(): Promise<void> {
     }
     console.log(`plan      created ${json.id}  ${name}`);
     lines.push(`${planEnvVar(tier, interval)}=${json.id}`);
+  }
+
+  // The featured-spots plan: one per site, quantity-supported, one unit a
+  // month. Same idempotency-by-name as the tier plans above.
+  {
+    const name = featuredPlanNameFor();
+    const existing = await findPlan(call, productId, name);
+    if (existing?.id) {
+      console.log(`plan      reused  ${existing.id}  ${name}`);
+      lines.push(`${FEATURED_PLAN_ENV_VAR}=${existing.id}`);
+    } else {
+      const { ok, status, json } = await call("/v1/billing/plans", {
+        method: "POST",
+        body: JSON.stringify(featuredPlanRequestBody(productId)),
+      });
+      if (!ok || typeof json.id !== "string") {
+        throw new Error(`could not create plan "${name}" (${status}): ${JSON.stringify(json)}`);
+      }
+      console.log(`plan      created ${json.id}  ${name}`);
+      lines.push(`${FEATURED_PLAN_ENV_VAR}=${json.id}`);
+    }
   }
 
   console.log(`\nAdd these to the site's environment:\n`);
