@@ -56,6 +56,13 @@ ENV NEXT_PUBLIC_MEDIA_URL=$NEXT_PUBLIC_MEDIA_URL
 # without the arg gets indexed, and a de-indexing takes months.
 ARG SITE_ENV
 ENV SITE_ENV=$SITE_ENV
+# SITE_FLAGS_OVERRIDE is a build arg for the same reason: `lib/features/flags.ts`
+# freezes `resolveFeatures()` at build time so disabled routes are tree-shaken
+# and 404. A staging deploy passes `on` so every module renders for review;
+# `config/flag-variants.ts` ignores it under SITE_ENV=production, so it cannot
+# flip a flag on a real site however it is set.
+ARG SITE_FLAGS_OVERRIDE
+ENV SITE_FLAGS_OVERRIDE=$SITE_FLAGS_OVERRIDE
 # No DATABASE_URL. The build does not need one.
 #
 # `/`, `/cities` and `/categories` are still ISR pages that read Postgres, but
