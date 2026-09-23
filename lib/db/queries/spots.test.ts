@@ -213,6 +213,26 @@ describe("featuredForScope", () => {
     });
   });
 
+  it("carries the listing's own city slug, so a cross-town bidder links home", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const otherCity = await makeCity(tx, "Bradford", "West Yorkshire");
+      const a = await makeBidder(tx, { ...ctx, cityId: otherCity }, { name: "Away" });
+      const spot = await ensureSpot(tx, a.viewer, citySpotKey(ctx.cityId, null));
+      const subId = await createFeaturedSubscription(tx, a.viewer, {
+        listingId: a.listingId, profileId: a.profileId, planId: "P-F", quantity: 60, ip: null,
+      });
+      const bidId = await insertBid(tx, a.viewer, {
+        spotId: spot.id, listingId: a.listingId, subscriptionId: subId, amountCents: 6000, status: "active", ip: null,
+      });
+      await applyRanking(tx, ADMIN, spot.id, [{ id: bidId, listingId: a.listingId, amountCents: 6000, position: 1 }]);
+      const [row] = await featuredForScope(tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId });
+      const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, otherCity));
+      expect(row?.citySlug).toBe(city!.slug);
+      expect(row?.citySlug).not.toBe(undefined);
+    });
+  });
+
   it("shows nothing from a closed spot", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
