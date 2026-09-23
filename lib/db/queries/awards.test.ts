@@ -229,18 +229,28 @@ describe("computeAwardsForYear", () => {
     });
   });
 
-  it("queues one winner email per award, inside the same transaction, and writes an audit row", async () => {
+  it("queues one winner email per award, inside the same transaction, and writes an audit row with the admin's ip", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       await contest(tx, ctx);
-      const result = await computeAwardsForYear(tx, ADMIN_VIEWER, YEAR);
+      const result = await computeAwardsForYear(tx, ADMIN_VIEWER, YEAR, { ip: "203.0.113.9" });
 
       const jobs = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_AWARD_WON));
       const mine = jobs.filter((j) => (j.payload as { awardId?: string }).awardId === result.created[0]!.awardId);
       expect(mine).toHaveLength(1);
 
       const audits = await tx.select().from(auditLog).where(eq(auditLog.action, "awards.computed"));
-      expect(audits.some((a) => (a.meta as { year: number }).year === YEAR)).toBe(true);
+      const auditRow = audits.find((a) => (a.meta as { year: number }).year === YEAR);
+      expect(auditRow).toBeDefined();
+      expect(auditRow!.ip).toBe("203.0.113.9");
+      expect(auditRow!.meta).toMatchObject({ created: 1, skipped: 0 });
+
+      // The worker has no address: the row still lands, with a null ip.
+      const later = await computeAwardsForYear(tx, ADMIN_VIEWER, YEAR + 1);
+      expect(later.created).toHaveLength(1);
+      const workerRow = (await tx.select().from(auditLog).where(eq(auditLog.action, "awards.computed")))
+        .find((a) => (a.meta as { year: number }).year === YEAR + 1);
+      expect(workerRow!.ip).toBeNull();
     });
   });
 });
@@ -286,6 +296,8 @@ describe("revokeAward", () => {
       const { created } = await computeAwardsForYear(tx, ADMIN_VIEWER, YEAR);
       const admin = await adminViewer(tx);
 
+      // No reason, no revoke — the reason is the record.
+      await expect(revokeAward(tx, admin, created[0]!.awardId, { reason: "   ", ip: null })).rejects.toThrow(/reason/);
       await revokeAward(tx, admin, created[0]!.awardId, { reason: "once", ip: null });
       expect((await revokeAward(tx, admin, created[0]!.awardId, { reason: "twice", ip: null })).outcome).toBe("already-revoked");
       expect((await revokeAward(tx, admin, randomUUID(), { reason: "x", ip: null })).outcome).toBe("not-found");
@@ -392,18 +404,36 @@ describe("awardNotification", () => {
     });
   });
 
-  it("falls back to the listing's own address, and to nobody", async () => {
+  it("falls back to a CLAIMED listing's own address, and to nobody", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      await rated(tx, ctx, "4.9", 7, { email: "listing@example.test" });
+      await rated(tx, ctx, "4.9", 7, { email: "listing@example.test", claimStatus: "claimed" });
       await rated(tx, ctx, "4.2", 6);
       await rated(tx, ctx, "3.5", 9);
       const { created } = await computeAwardsForYear(tx, ADMIN_VIEWER, YEAR);
-      expect((await awardNotification(tx, ADMIN_VIEWER, created[0]!.awardId))!.recipient).toBe("listing@example.test");
+      const awardId = created[0]!.awardId;
+      expect((await awardNotification(tx, ADMIN_VIEWER, awardId))!.recipient).toBe("listing@example.test");
+
+      await tx.update(listings).set({ claimStatus: "verified" }).where(eq(listings.id, created[0]!.listingId));
+      expect((await awardNotification(tx, ADMIN_VIEWER, awardId))!.recipient).toBe("listing@example.test");
 
       await tx.update(listings).set({ email: null }).where(eq(listings.id, created[0]!.listingId));
-      expect((await awardNotification(tx, ADMIN_VIEWER, created[0]!.awardId))!.recipient).toBeNull();
+      expect((await awardNotification(tx, ADMIN_VIEWER, awardId))!.recipient).toBeNull();
       expect(await awardNotification(tx, ADMIN_VIEWER, randomUUID())).toBeNull();
+    });
+  });
+
+  it("never writes to an UNCLAIMED listing's contact address — the enquiry rule", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await rated(tx, ctx, "4.9", 7, { email: "listing@example.test", claimStatus: "unclaimed" });
+      await rated(tx, ctx, "4.2", 6);
+      await rated(tx, ctx, "3.5", 9);
+      const { created } = await computeAwardsForYear(tx, ADMIN_VIEWER, YEAR);
+      const data = await awardNotification(tx, ADMIN_VIEWER, created[0]!.awardId);
+      expect(data!.recipient).toBeNull();
+      // The award itself stands: the pill and the row do not depend on an address.
+      expect(await listingAwards(tx, PUBLIC_VIEWER, created[0]!.listingId)).toHaveLength(1);
     });
   });
 });

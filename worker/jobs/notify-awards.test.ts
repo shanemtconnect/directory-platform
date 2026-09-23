@@ -75,10 +75,10 @@ describe("notify.award.won", () => {
     });
   });
 
-  it("falls back to the listing's address, and sends nothing when there is none", async () => {
+  it("falls back to a claimed listing's address, and sends nothing when there is none", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      const winner = await contest(tx, ctx, { email: "listing@example.test" });
+      const winner = await contest(tx, ctx, { email: "listing@example.test", claimStatus: "claimed" });
       await computeAwardsForYear(tx, ADMIN_VIEWER, 2031);
       expect(await processNotifications(tx)).toBe(1);
       expect(sentTo()).toEqual(["listing@example.test"]);
@@ -87,6 +87,18 @@ describe("notify.award.won", () => {
       await tx.update(listings).set({ email: null }).where(eq(listings.id, winner));
       await computeAwardsForYear(tx, ADMIN_VIEWER, 2032);
       // Completed, not parked: nobody to tell is not a failure to retry.
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sentTo()).toEqual([]);
+      const rows = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_AWARD_WON));
+      expect(rows.every((r) => r.status === "done")).toBe(true);
+    });
+  });
+
+  it("sends nothing to an unclaimed listing's contact address, and completes the job", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await contest(tx, ctx, { email: "listing@example.test", claimStatus: "unclaimed" });
+      await computeAwardsForYear(tx, ADMIN_VIEWER, 2031);
       expect(await processNotifications(tx)).toBe(1);
       expect(sentTo()).toEqual([]);
       const rows = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_AWARD_WON));

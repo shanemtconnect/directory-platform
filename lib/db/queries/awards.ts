@@ -61,8 +61,8 @@ export function parseAwardYear(value: string): number | null {
 }
 
 /** The calendar year `at` falls in, in the site's timezone — not the server's. */
-export function awardYearFor(at: Date): number {
-  return Number(new Intl.DateTimeFormat("en-GB", { timeZone: siteConfig.timezone, year: "numeric" }).format(at));
+export function awardYearFor(at: Date, timezone: string = siteConfig.timezone): number {
+  return Number(new Intl.DateTimeFormat("en-GB", { timeZone: timezone, year: "numeric" }).format(at));
 }
 
 /** Where the winners of a year in a town are listed. */
@@ -168,7 +168,11 @@ export async function computeAwardsForYear(
   tx: TestDb,
   viewer: Viewer,
   year: number,
-  opts: { minReviews?: number } = {},
+  opts: {
+    minReviews?: number;
+    /** The admin's address for the audit row (constraint 22). Null from the worker. */
+    ip?: string | null;
+  } = {},
 ): Promise<ComputeAwardsResult> {
   if (!isAdmin(viewer)) forbid();
   if (!Number.isInteger(year)) throw new Error(`Not a year: ${String(year)}`);
@@ -222,6 +226,7 @@ export async function computeAwardsForYear(
   await writeAudit(tx, viewer, {
     action: "awards.computed",
     entityType: "awards",
+    ip: opts.ip ?? null,
     meta: {
       year,
       created: created.length,
@@ -270,7 +275,10 @@ export async function revokeAward(
   if (!row) return { outcome: "not-found" };
   if (row.revokedAt !== null) return { outcome: "already-revoked" };
 
+  // The reason is the record. The action checks too, but a caller that
+  // forgets must not be able to revoke silently.
   const reason = input.reason.trim();
+  if (reason === "") throw new Error("A revoke needs a reason");
   await tx
     .update(awards)
     .set({ revokedAt: now(), revokeReason: reason, updatedAt: now() })
@@ -494,7 +502,12 @@ export interface AwardNotification {
   cityName: string;
   citySlug: string;
   categoryName: string;
-  /** Owner's account address first, the listing's own address second, or nobody. */
+  /**
+   * Owner's account address first; the listing's own address second, but
+   * only once the listing is claimed; otherwise nobody. Same rule as the
+   * enquiry email (worker/jobs/notify.ts): an unclaimed listing's contact
+   * address is one we hold, not one anybody asked us to write to.
+   */
   recipient: string | null;
   revoked: boolean;
 }
@@ -518,6 +531,7 @@ export async function awardNotification(
       listingName: listings.name,
       listingSlug: listings.slug,
       listingEmail: listings.email,
+      claimStatus: listings.claimStatus,
       cityName: cities.name,
       citySlug: cities.slug,
       categoryName: categories.name,
@@ -534,7 +548,7 @@ export async function awardNotification(
   if (!row) return null;
 
   const owner = row.ownerEmail?.trim() ?? "";
-  const listed = row.listingEmail?.trim() ?? "";
+  const listed = row.claimStatus === "unclaimed" ? "" : (row.listingEmail?.trim() ?? "");
   return {
     awardId: row.awardId,
     year: row.year,
