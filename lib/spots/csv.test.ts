@@ -12,6 +12,10 @@ describe("csvLine", () => {
   it("quotes fields with commas, quotes and newlines, and doubles inner quotes", () => {
     expect(csvLine(["a", "b,c", 'say "hi"', "two\nlines", 3])).toBe('a,"b,c","say ""hi""","two\nlines",3');
   });
+
+  it("neutralises a cell that a spreadsheet would run as a formula", () => {
+    expect(csvLine(["=SUM(A1)", "+1", "-x", "@cmd", -3])).toBe(`"'=SUM(A1)","'+1","'-x","'@cmd",-3`);
+  });
 });
 
 describe("emptySpotsCsv", () => {

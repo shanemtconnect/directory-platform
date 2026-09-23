@@ -10,9 +10,8 @@ import {
 import { claimDailyView, recordStats, type StatEvent } from "@/lib/stats/counters";
 import { MAX_BEACON_SPONSOR_IMPRESSIONS, SPONSOR_BEACON_METRIC } from "@/lib/ads/keys";
 import { recordSponsorImpressions } from "@/lib/ads/counters";
-import {
-  FEATURED_CLICK_METRIC, MAX_BEACON_FEATURED_CLICKS, recordFeaturedClicks, type FeaturedClickEvent,
-} from "@/lib/spots/clicks";
+import { FEATURED_CLICK_METRIC, MAX_BEACON_FEATURED_CLICKS } from "@/lib/spots/click-keys";
+import { recordFeaturedClicks, type FeaturedClickEvent } from "@/lib/spots/clicks";
 import { clientIp } from "@/lib/spam/client-ip";
 import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 

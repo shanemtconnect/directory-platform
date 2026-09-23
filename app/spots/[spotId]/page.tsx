@@ -27,7 +27,9 @@ const e = siteConfig.entity;
 
 async function load(spotId: string): Promise<SpotLeaderboard | null> {
   if (!isUuid(spotId)) return null;
-  return spotLeaderboard(db as unknown as TestDb, PUBLIC_VIEWER, spotId);
+  const board = await spotLeaderboard(db as unknown as TestDb, PUBLIC_VIEWER, spotId);
+  // A closed spot has no ranking to show; it is not a page.
+  return board !== null && board.spot.status === "closed" ? null : board;
 }
 
 function titleFor(board: SpotLeaderboard): string {
@@ -66,7 +68,6 @@ export default async function SpotLeaderboardPage({ params }: Props) {
 
       <p data-testid="spot-scarcity">
         <strong>{filled} of {spot.positions} taken.</strong>
-        {spot.status === "closed" && <span data-testid="spot-closed"> This spot is closed to bidding at the moment.</span>}
       </p>
 
       <ol data-testid="spot-positions" className="list-none p-0">

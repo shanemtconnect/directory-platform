@@ -11,11 +11,18 @@ const HEADER = [
   "area_kind", "area", "category", "filled", "positions", "empty", "floor", "top", "page_url", "leaderboard_url",
 ] as const;
 
+/**
+ * A cell that starts with `=`, `+`, `-` or `@` would be run as a formula by
+ * a spreadsheet; the area and category names are imported data, so such a
+ * cell is prefixed with an apostrophe (the spreadsheet convention for
+ * "text") and quoted.
+ */
 export function csvLine(fields: readonly (string | number)[]): string {
   return fields
     .map((f) => {
-      const s = String(f);
-      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      let s = String(f);
+      if (typeof f === "string" && /^[=+\-@]/.test(s)) s = `'${s}`;
+      return /[",\r\n']/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     })
     .join(",");
 }

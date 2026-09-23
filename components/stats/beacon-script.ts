@@ -1,5 +1,5 @@
 import { MAX_BEACON_EVENTS } from "@/lib/stats/keys";
-import { FEATURED_CLICK_METRIC } from "@/lib/spots/clicks";
+import { FEATURED_CLICK_METRIC } from "@/lib/spots/click-keys";
 
 /**
  * The entire client side of the stats feature.

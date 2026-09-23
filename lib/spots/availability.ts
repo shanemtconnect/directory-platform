@@ -17,7 +17,7 @@ import {
 } from "@/lib/db/queries/spots";
 import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
-import { minimumToEnter } from "./rank";
+import { minimumToEnter, UNIT_CENTS } from "./rank";
 import { spotKeysFor } from "./table";
 
 /**
@@ -32,8 +32,6 @@ import { spotKeysFor } from "./table";
  * every category is not an outreach list, it is noise.
  */
 
-const SYSTEM: Viewer = { role: "admin", userId: "00000000-0000-0000-0000-000000000000" };
-
 export interface ListingAvailability {
   readonly listingName: string;
   readonly ownerEmail: string | null;
@@ -44,7 +42,7 @@ export interface ListingAvailability {
   readonly fromCents: number;
 }
 
-const floorFor = (key: SpotKey) => Math.round(siteConfig.featured.floors[key.areaKind] * 100);
+const floorFor = (key: SpotKey) => Math.round(siteConfig.featured.floors[key.areaKind] * UNIT_CENTS);
 
 /**
  * For one listing: how many of its spots (its town, its town × categories,
@@ -53,19 +51,19 @@ const floorFor = (key: SpotKey) => Math.round(siteConfig.featured.floors[key.are
  */
 export async function availabilityForListing(
   tx: TestDb,
-  _viewer: Viewer,
+  viewer: Viewer,
   listingId: string,
 ): Promise<ListingAvailability | null> {
-  const listing = await listingForSystem(tx, SYSTEM, listingId);
+  const listing = await listingForSystem(tx, viewer, listingId);
   if (listing === null || !listing.eligible) return null;
   const keys = spotKeysFor(listing);
-  const spots = await spotsForKeys(tx, SYSTEM, keys.map((k) => k.key));
+  const spots = await spotsForKeys(tx, viewer, keys.map((k) => k.key));
   let emptyCount = 0;
   let fromCents = Number.POSITIVE_INFINITY;
   for (const { key } of keys) {
     const spot = spots.get(spotKeyString(key)) ?? null;
     if (spot?.status === "closed") continue;
-    const bids = spot === null ? [] : await spotBids(tx, SYSTEM, spot.id);
+    const bids = spot === null ? [] : await spotBids(tx, viewer, spot.id);
     const featured = bids.filter((b) => b.status === "active" && b.position !== null);
     if (featured.some((b) => b.listingId === listing.id)) continue;
     const positions = spot?.positions ?? siteConfig.featured.positions;
@@ -82,7 +80,7 @@ export async function availabilityForListing(
   return {
     listingName: listing.name,
     ownerEmail,
-    unsubscribed: ownerEmail === null ? false : await isUnsubscribed(tx, SYSTEM, ownerEmail),
+    unsubscribed: ownerEmail === null ? false : await isUnsubscribed(tx, viewer, ownerEmail),
     emptyCount,
     fromCents: emptyCount === 0 ? 0 : fromCents,
   };
@@ -110,8 +108,8 @@ export interface EmptySpotRow {
  * (the admin table shows them) — callers wanting the outreach list filter
  * `status === "open" && filled < positions`.
  */
-export async function emptySpotsReport(tx: TestDb, _viewer: Viewer): Promise<EmptySpotRow[]> {
-  const [rows, fills, areas] = await Promise.all([allSpots(tx, SYSTEM), spotFills(tx, SYSTEM), publishedCityAreas(tx, SYSTEM)]);
+export async function emptySpotsReport(tx: TestDb, viewer: Viewer): Promise<EmptySpotRow[]> {
+  const [rows, fills, areas] = await Promise.all([allSpots(tx, viewer), spotFills(tx, viewer), publishedCityAreas(tx, viewer)]);
   const keys: SpotKey[] = rows.map((r) => ({ areaKind: r.areaKind, areaId: r.areaId, categoryId: r.categoryId }));
   const have = new Set(keys.map(spotKeyString));
   const virtual: SpotKey[] = [];
@@ -125,7 +123,7 @@ export async function emptySpotsReport(tx: TestDb, _viewer: Viewer): Promise<Emp
     const key = regionSpotKey(region, null);
     if (!have.has(spotKeyString(key))) virtual.push(key);
   }
-  const names = new Map((await describeSpotKeys(tx, SYSTEM, [...keys, ...virtual])).map((a) => [spotKeyString(a.key), a]));
+  const names = new Map((await describeSpotKeys(tx, viewer, [...keys, ...virtual])).map((a) => [spotKeyString(a.key), a]));
   const citySlug = new Map(areas.map((c) => [c.id, c.slug]));
   const out: EmptySpotRow[] = [];
   for (const r of rows) {
@@ -144,7 +142,7 @@ export async function emptySpotsReport(tx: TestDb, _viewer: Viewer): Promise<Emp
       floorCents: r.floorCents,
       filled: fill.filled,
       topCents: fill.topCents,
-      path: (await spotPaths(tx, SYSTEM, r.id))[0] ?? null,
+      path: (await spotPaths(tx, viewer, r.id))[0] ?? null,
     });
   }
   for (const key of virtual) {

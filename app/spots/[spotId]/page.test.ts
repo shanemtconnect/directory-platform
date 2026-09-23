@@ -72,18 +72,13 @@ describe("/spots/[spotId]", () => {
     expect(spotLeaderboard).not.toHaveBeenCalled();
   });
 
-  it("a city spot without a category reads 'in <town>'; a closed spot says so", async () => {
-    spotLeaderboard.mockResolvedValue({
-      ...BOARD,
-      spot: { ...BOARD.spot, categoryId: null, status: "closed" },
-      categoryName: null,
-      path: "/leeds",
-      featured: [],
-    });
+  it("a city spot without a category reads 'in <town>'; a closed spot is a 404", async () => {
+    spotLeaderboard.mockResolvedValue({ ...BOARD, spot: { ...BOARD.spot, categoryId: null }, categoryName: null, path: "/leeds", featured: [] });
     const { default: Page } = await import("./page");
     const body = text(await Page({ params: Promise.resolve({ spotId: SPOT }) }));
     expect(body).toContain(`Featured ${siteConfig.entity.plural} in Leeds`);
     expect(body).toContain("0 of 3 taken");
-    expect(body.toLowerCase()).toContain("closed");
+    spotLeaderboard.mockResolvedValue({ ...BOARD, spot: { ...BOARD.spot, status: "closed" } });
+    await expect(Page({ params: Promise.resolve({ spotId: SPOT }) })).rejects.toThrow(NotFound);
   });
 });
