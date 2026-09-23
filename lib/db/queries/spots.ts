@@ -1343,3 +1343,14 @@ export async function publishedCityAreas(tx: TestDb, viewer: Viewer): Promise<Pu
     .where(eq(cities.isPublished, true))
     .orderBy(asc(cities.name));
 }
+
+/** Whether the monthly digest has already been queued for this `YYYY-MM` (its audit mark). */
+export async function digestSentForMonth(tx: TestDb, viewer: Viewer, month: string): Promise<boolean> {
+  assertWorker(viewer);
+  const [row] = await tx
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "spots.digest_sent"), sql`${auditLog.meta}->>'month' = ${month}`))
+    .limit(1);
+  return row !== undefined;
+}
