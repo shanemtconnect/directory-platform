@@ -7,15 +7,19 @@ import { ensureProfile } from "@/lib/auth/profile";
 import { billingConfigured } from "@/lib/billing/paypal";
 import { featuredPlanIdFor } from "@/lib/billing/featured-plan";
 import {
+  bidHistory,
   currentFeaturedSubscription,
   describeSpotKeys,
+  featuredClicksForListing,
   listingForBidding,
   recentRaiseExpiry,
   searchCities,
   spotBids,
   spotsForKeys,
+  type BidHistoryEntry,
   type BidRow,
 } from "@/lib/db/queries/spots";
+import { leaderboardPath } from "@/lib/spots/notify";
 import { formatMoney } from "@/lib/pricing";
 import { UNIT_CENTS } from "@/lib/spots/rank";
 import { buildSpotTable, monthlyTotalCents, spotKeysFor, type SpotTableRow } from "@/lib/spots/table";
@@ -47,6 +51,31 @@ interface Props {
 
 const GROUP_TITLES = { here: "Where you are listed", region: `Your ${siteConfig.regionLabel}`, other: "Other areas" } as const;
 
+/** How far back the clicks column looks. */
+const CLICK_DAYS = 30;
+
+const HISTORY_LABELS: Record<string, string> = {
+  "spots.bid_placed": "Bid placed",
+  "spots.bid_raise_requested": "Raise requested",
+  "spots.bid_lowered": "Bid lowered",
+  "spots.bid_cancelled": "Bid cancelled",
+  "spots.raise_withdrawn": "Raise withdrawn",
+  "spots.raise_expired": "Raise expired (not approved in time)",
+};
+
+/**
+ * The email's one-click link: `?bid=<spot key>&amount=<whole units>`. Only a
+ * whole positive amount on a spot the table shows is honoured; anything else
+ * is ignored rather than trusted.
+ */
+function readPrefill(query: Record<string, string | string[] | undefined>): { keyString: string; amount: number } | null {
+  const keyString = String(Array.isArray(query.bid) ? query.bid[0] : (query.bid ?? "")).trim();
+  const raw = String(Array.isArray(query.amount) ? query.amount[0] : (query.amount ?? "")).trim();
+  if (keyString === "" || !/^\d{1,6}$/.test(raw)) return null;
+  const amount = Number(raw);
+  return amount > 0 ? { keyString, amount } : null;
+}
+
 export default async function FeaturedSpotsPage({ params, searchParams }: Props) {
   const { id } = await params;
   const query = await searchParams;
@@ -67,6 +96,12 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
   const rows = buildSpotTable({ listing, keys, spots, bidsBySpot, areas, config: siteConfig.featured });
   const subscription = await currentFeaturedSubscription(db, viewer, listing.id, profile.id);
   const expiredAt = await recentRaiseExpiry(db, viewer, { listingId: listing.id, profileId: profile.id, withinDays: 7 });
+  const clicks = await featuredClicksForListing(db, viewer, { listingId: listing.id, profileId: profile.id, days: CLICK_DAYS });
+  const history = await bidHistory(db, viewer, { listingId: listing.id, profileId: profile.id });
+  const historyAreas = await describeSpotKeys(db, viewer, history.map((h) => h.key));
+  const historyLabel = new Map(historyAreas.map((a) => [`${a.key.areaKind}:${a.key.areaId}:${a.key.categoryId ?? "-"}`, a.categoryName === null ? a.areaName : `${a.categoryName} in ${a.areaName}`]));
+  const prefillRaw = readPrefill(query);
+  const prefill = prefillRaw !== null && rows.some((r) => r.keyString === prefillRaw.keyString) ? prefillRaw : null;
 
   const e = siteConfig.entity;
   const money = (cents: number) => formatMoney(cents / UNIT_CENTS, siteConfig.locale, siteConfig.currency);
@@ -96,6 +131,13 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
           )}
         </p>
       </PageHeader>
+
+      {prefill !== null && (
+        <Notice variant="status" testId="prefill-notice">
+          The amount from your email, {money(prefill.amount * UNIT_CENTS)} a month, is filled in below for{" "}
+          {rows.find((r) => r.keyString === prefill.keyString)?.areaName}. Check it and press Bid.
+        </Notice>
+      )}
 
       {expiredAt !== null && (
         <Notice variant="status" testId="raise-expired">
@@ -149,7 +191,16 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
                 </thead>
                 <tbody>
                   {groupRows.map((row) => (
-                    <SpotTableRowView key={row.keyString} row={row} listingId={listing.id} money={money} currencySymbol={currencySymbol} canBid={canBid} />
+                    <SpotTableRowView
+                      key={row.keyString}
+                      row={row}
+                      listingId={listing.id}
+                      money={money}
+                      currencySymbol={currencySymbol}
+                      canBid={canBid}
+                      clicks={row.spotId === null ? undefined : clicks.get(row.spotId)}
+                      prefillAmount={prefill !== null && prefill.keyString === row.keyString ? prefill.amount : null}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -158,6 +209,29 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
         );
       })}
 
+      <section aria-labelledby="bid-history" data-testid="bid-history">
+        <h2 id="bid-history">Your bid history</h2>
+        {history.length === 0 ? (
+          <p className="text-muted">No bids yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th scope="col" className="text-left">When</th>
+                <th scope="col" className="text-left">What</th>
+                <th scope="col" className="text-left">Spot</th>
+                <th scope="col" className="text-left">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <HistoryRow key={`${h.bidId}-${h.at.toISOString()}-${h.action}`} entry={h} label={historyLabel.get(`${h.key.areaKind}:${h.key.areaId}:${h.key.categoryId ?? "-"}`) ?? h.key.areaId} money={money} />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
       <p className="text-sm text-muted">
         Bids are per month and billed by PayPal as one subscription for this {e.singular}, at exactly the total of the spots you hold. Raising a bid needs your approval at PayPal before it counts (unapproved after a day, it is dropped); lowering or cancelling takes effect at once. Ties go to whoever set that amount first. If every one of your bids is outbid the subscription is paused, not cancelled — your bids keep their place and billing resumes only when one is featured again. A plan that is behind on payment may still bid while PayPal retries.
       </p>
@@ -165,14 +239,29 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
   );
 }
 
+function HistoryRow({ entry, label, money }: { entry: BidHistoryEntry; label: string; money: (cents: number) => string }) {
+  return (
+    <tr data-testid="history-row" data-action={entry.action}>
+      <td>{entry.at.toLocaleDateString(siteConfig.locale, { timeZone: siteConfig.timezone, day: "numeric", month: "short", year: "numeric" })}</td>
+      <td>{HISTORY_LABELS[entry.action] ?? entry.action}</td>
+      <td>{label}</td>
+      <td>{entry.amountCents === null ? "—" : money(entry.amountCents)}</td>
+    </tr>
+  );
+}
+
 function SpotTableRowView({
-  row, listingId, money, currencySymbol, canBid,
+  row, listingId, money, currencySymbol, canBid, clicks, prefillAmount,
 }: {
   row: SpotTableRow;
   listingId: string;
   money: (cents: number) => string;
   currencySymbol: string;
   canBid: boolean;
+  /** Clicks on the featured card in this spot over the last CLICK_DAYS days (Task 45). */
+  clicks?: number;
+  /** The amount the email link asked to prefill, in major units, for this row only. */
+  prefillAmount: number | null;
 }) {
   const label = row.categoryName === null ? row.areaName : `${row.categoryName} in ${row.areaName}`;
   const you =
@@ -188,6 +277,14 @@ function SpotTableRowView({
       <th scope="row" className="text-left font-normal">
         {label}
         {row.closed && <span className="pill"> closed</span>}
+        {row.spotId !== null && (
+          <>
+            {" "}
+            <a href={leaderboardPath(row.spotId)} className="text-xs text-muted" data-testid="spot-leaderboard">
+              who is featured
+            </a>
+          </>
+        )}
       </th>
       <td data-testid="spot-top">
         {row.top.length === 0 ? <span className="text-muted">nobody yet</span> : row.top.map((c) => money(c)).join(" · ")}
@@ -196,6 +293,9 @@ function SpotTableRowView({
       <td data-testid="spot-you">
         {you}
         {row.yourPendingCents !== null && <span className="text-muted"> (raising to {money(row.yourPendingCents)})</span>}
+        {row.yourPosition !== null && clicks !== undefined && (
+          <span className="text-muted" data-testid="spot-clicks"> · {clicks} {clicks === 1 ? "click" : "clicks"} in {CLICK_DAYS} days</span>
+        )}
       </td>
       <td data-testid="spot-minimums">
         {money(row.minToEnterCents)} / {money(row.minToTakeFirstCents)}
@@ -205,7 +305,7 @@ function SpotTableRowView({
           listingId={listingId}
           spot={row.key}
           keyString={row.keyString}
-          defaultAmount={(row.yourAmountCents ?? row.minToEnterCents) / UNIT_CENTS}
+          defaultAmount={prefillAmount ?? (row.yourAmountCents ?? row.minToEnterCents) / UNIT_CENTS}
           currencySymbol={currencySymbol}
           hasBid={row.yourAmountCents !== null}
           disabled={!canBid || row.closed}

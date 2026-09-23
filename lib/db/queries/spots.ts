@@ -1553,3 +1553,65 @@ export async function upsellCandidate(
 
 /** One major unit; `lib/spots/rank.ts` owns the constant, repeated here to keep this module free of that import at load. */
 const UNIT_CENTS_LOCAL = 100;
+
+/* ---------------------------------------------- appended: Task 45 history */
+
+export interface BidHistoryEntry {
+  readonly at: Date;
+  /** `spots.bid_placed`, `spots.bid_raise_requested`, `spots.bid_lowered`, `spots.bid_cancelled`, `spots.raise_withdrawn`, `spots.raise_expired`. */
+  readonly action: string;
+  readonly bidId: string;
+  readonly key: SpotKey;
+  /** The amount the row recorded, when it did. */
+  readonly amountCents: number | null;
+  readonly meta: Record<string, unknown>;
+}
+
+/**
+ * The owner's bid history: every audit row written against one of the
+ * listing's bids (cancelled ones included), newest first. Scoped by the
+ * listing's owner (constraint 24).
+ */
+export async function bidHistory(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string; limit?: number },
+): Promise<BidHistoryEntry[]> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return [];
+  const rows = await tx
+    .select({
+      at: auditLog.createdAt,
+      action: auditLog.action,
+      bidId: featuredBids.id,
+      meta: auditLog.meta,
+      areaKind: featuredSpots.areaKind,
+      areaId: featuredSpots.areaId,
+      categoryId: featuredSpots.categoryId,
+    })
+    .from(auditLog)
+    .innerJoin(featuredBids, eq(featuredBids.id, auditLog.entityId))
+    .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .where(
+      and(
+        eq(auditLog.entityType, "featured_bid"),
+        eq(featuredBids.listingId, input.listingId),
+        eq(listings.ownerId, input.profileId),
+      ),
+    )
+    .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+    .limit(input.limit ?? 50);
+  return rows.map((r) => {
+    const meta = (r.meta ?? {}) as Record<string, unknown>;
+    const amount = [meta.amountCents, meta.pendingAmountCents].find((v): v is number => typeof v === "number") ?? null;
+    return {
+      at: r.at,
+      action: r.action,
+      bidId: r.bidId,
+      key: { areaKind: r.areaKind as AreaKind, areaId: r.areaId, categoryId: r.categoryId },
+      amountCents: amount,
+      meta,
+    };
+  });
+}
