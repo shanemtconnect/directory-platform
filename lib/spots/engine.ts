@@ -3,7 +3,6 @@ import { now } from "@/lib/clock";
 import type { PayPalClient } from "@/lib/billing/paypal";
 import {
   applyRanking,
-  cancelListingBids,
   chargeableBidsForListing,
   currentFeaturedSubscription,
   hasPendingBids,
@@ -70,7 +69,13 @@ export interface BillingDeps {
   readonly env?: Record<string, string | undefined>;
 }
 
-export type QuantityAction = "none" | "revised" | "cancelled" | "not-configured" | "awaiting-approval";
+export type QuantityAction =
+  | "none"
+  | "revised"
+  | "paused"
+  | "resumed"
+  | "not-configured"
+  | "awaiting-approval";
 
 export interface QuantityChange {
   readonly listingId: string;
@@ -82,15 +87,18 @@ export interface QuantityChange {
 }
 
 /**
- * THE invariant, applied: for each listing, quantity = the sum of its bids
- * that are active AND hold a position. A listing left with nothing featured
- * and nothing pending has its subscription cancelled outright — PayPal offers
- * no consent-free way to bill zero and resume later — and its remaining
- * (outbid) bids go with it; the owner bids again to come back.
+ * THE invariant, applied: for each listing, the quantity PayPal is asked
+ * for = the sum of its bids that are active AND hold a position.
  *
- * A revise needs the buyer's approval (see lib/billing/featured-plan.ts).
- * It is requested here and noted on the row; `spots-sync` re-requests it
- * until PayPal's confirmed quantity agrees with the requested one.
+ *  - Nothing featured and nothing pending: the subscription is SUSPENDED at
+ *    PayPal (no consent needed) and the row is `paused`; the outbid bids stay
+ *    in the queue. When one re-enters, the subscription is ACTIVATED again —
+ *    no new approval, no fresh first cycle — and revised only if the amount
+ *    differs from what was consented to. `spots-sync` cancels a subscription
+ *    that has been paused for a whole cycle.
+ *  - A revise needs the buyer's approval (lib/billing/featured-plan.ts). It
+ *    is requested here, `requested_quantity` records what was asked, and the
+ *    sync re-requests it until PayPal's confirmed quantity agrees.
  */
 export async function syncQuantities(
   tx: TestDb,
@@ -106,55 +114,93 @@ export async function syncQuantities(
 
     const quantity = quantityFor(await chargeableBidsForListing(tx, viewer, listingId));
     const pending = await hasPendingBids(tx, viewer, listingId);
+    const push = (action: QuantityAction, approveUrl: string | null = null) =>
+      out.push({ listingId, subscriptionId: sub.id, quantity, action, approveUrl });
 
-    if (quantity !== sub.requestedQuantity) {
+    // Nothing to tell PayPal until the buyer has approved the subscription
+    // at all; the first ACTIVATED brings the confirmed quantity.
+    if (sub.status === "approval_pending" || sub.providerSubscriptionId === null) {
+      push("awaiting-approval", sub.approveUrl);
+      continue;
+    }
+    const providerId = sub.providerSubscriptionId;
+
+    if (quantity === 0 && !pending) {
+      if (sub.status === "paused") {
+        push("none");
+        continue;
+      }
+      if (deps.client?.suspendSubscription === undefined) {
+        push("not-configured");
+        continue;
+      }
+      // PayPal FIRST; a failure throws and the caller's transaction rolls back.
+      await deps.client.suspendSubscription(providerId, "No featured positions held");
       await updateFeaturedSubscription(
         tx,
         viewer,
         sub.id,
-        { requestedQuantity: quantity },
-        { action: "spots.quantity_requested", meta: { listingId, was: sub.requestedQuantity } },
+        { status: "paused", pausedAt: now(), reviseRequestedAt: null, approveUrl: null },
+        { action: "spots.paused", meta: { listingId, reason: "nothing-featured" } },
       );
-    }
-
-    // Nothing to tell PayPal until the buyer has approved the subscription
-    // at all; the first ACTIVATED brings the confirmed quantity and the
-    // sync catches any drift from there.
-    if (sub.status === "approval_pending" || sub.providerSubscriptionId === null) {
-      out.push({ listingId, subscriptionId: sub.id, quantity, action: "awaiting-approval", approveUrl: sub.approveUrl });
+      push("paused");
       continue;
     }
 
-    if (quantity === 0 && !pending) {
-      if (deps.client === null) {
-        out.push({ listingId, subscriptionId: sub.id, quantity, action: "not-configured", approveUrl: null });
+    let status = sub.status;
+    if (status === "paused" && quantity > 0) {
+      if (deps.client?.activateSubscription === undefined) {
+        push("not-configured");
         continue;
       }
-      // Cancel at PayPal FIRST; a PayPal failure throws and the caller's
-      // transaction rolls back with it.
-      await deps.client.cancelSubscription(sub.providerSubscriptionId, "No featured positions held");
+      await deps.client.activateSubscription(providerId, "A featured position was regained");
       await updateFeaturedSubscription(
         tx,
         viewer,
         sub.id,
-        { status: "cancelled", requestedQuantity: 0, reviseRequestedAt: null, approveUrl: null },
-        { action: "spots.subscription_cancelled", meta: { listingId, reason: "nothing-featured" } },
+        { status: "active", pausedAt: null },
+        { action: "spots.resumed", meta: { listingId, quantity } },
       );
-      await cancelListingBids(tx, viewer, listingId, { reason: "nothing-featured" });
-      out.push({ listingId, subscriptionId: sub.id, quantity, action: "cancelled", approveUrl: null });
+      status = "active";
+      if (quantity === sub.quantity) {
+        push("resumed");
+        continue;
+      }
+    }
+
+    // A raise or a new bid is waiting for the click on a revise already
+    // asked for: do not ask for a different quantity underneath it. The
+    // sync expires it after a day if the click never comes.
+    if (pending && sub.reviseRequestedAt !== null && sub.approveUrl !== null) {
+      push("awaiting-approval", sub.approveUrl);
       continue;
     }
 
     if (quantity === sub.quantity || quantity === 0) {
-      out.push({ listingId, subscriptionId: sub.id, quantity, action: "none", approveUrl: null });
+      if (!pending && (sub.approveUrl !== null || sub.reviseRequestedAt !== null || sub.requestedQuantity !== quantity)) {
+        // Whatever was outstanding is moot: PayPal already bills this amount.
+        await updateFeaturedSubscription(
+          tx,
+          viewer,
+          sub.id,
+          { requestedQuantity: quantity, reviseRequestedAt: null, approveUrl: null },
+          { action: "spots.revise_settled", meta: { listingId, quantity } },
+        );
+      }
+      push("none");
       continue;
     }
 
-    if (deps.client === null || deps.client.reviseSubscription === undefined) {
-      out.push({ listingId, subscriptionId: sub.id, quantity, action: "not-configured", approveUrl: null });
+    if (deps.client?.reviseSubscription === undefined) {
+      push("not-configured");
       continue;
     }
-    const revised = await deps.client.reviseSubscription(sub.providerSubscriptionId, {
+    if (sub.requestedQuantity === quantity && sub.reviseRequestedAt !== null && sub.approveUrl !== null) {
+      // Already asked, still waiting for the click. Do not ask twice.
+      push("awaiting-approval", sub.approveUrl);
+      continue;
+    }
+    const revised = await deps.client.reviseSubscription(providerId, {
       quantity,
       returnUrl: siteUrl(FEATURED_RETURN_PATH),
       cancelUrl: siteUrl(FEATURED_CANCELLED_PATH),
@@ -163,10 +209,10 @@ export async function syncQuantities(
       tx,
       viewer,
       sub.id,
-      { reviseRequestedAt: now(), approveUrl: revised.approveUrl },
+      { requestedQuantity: quantity, reviseRequestedAt: now(), approveUrl: revised.approveUrl },
       { action: "spots.revise_requested", meta: { listingId, quantity, was: sub.quantity } },
     );
-    out.push({ listingId, subscriptionId: sub.id, quantity, action: "revised", approveUrl: revised.approveUrl });
+    push("revised", revised.approveUrl);
   }
   return out;
 }

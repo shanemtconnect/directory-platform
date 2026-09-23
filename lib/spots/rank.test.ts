@@ -18,11 +18,11 @@ function bid(
   createdAt: string,
   status: RankableBid["status"] = "active",
 ): RankableBid {
-  return { id, listingId: `L-${id}`, amountCents, createdAt: at(createdAt), status };
+  return { id, listingId: `L-${id}`, amountCents, amountSetAt: at(createdAt), status };
 }
 
 describe("rankBids", () => {
-  it("orders by amount desc, then created_at asc, and hands out positions 1..N", () => {
+  it("orders by amount desc, then amount_set_at asc, and hands out positions 1..N", () => {
     const ranked = rankBids(
       [
         bid("a", 5000, "2026-09-01T00:00:00Z"),

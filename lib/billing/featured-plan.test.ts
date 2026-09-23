@@ -136,6 +136,21 @@ describe("PayPalClient quantity support", () => {
     });
   });
 
+  it("suspends and activates without consent, tolerating PayPal's already-in-that-state 422", async () => {
+    const seen: string[] = [];
+    const http: PayPalHttp = async (url, init) => {
+      if (url.includes("/v1/oauth2/token")) return new Response(JSON.stringify(TOKEN["/v1/oauth2/token"]), { status: 200 });
+      seen.push(`${init.method} ${url.split("/v1/billing/subscriptions/")[1]}`);
+      return url.endsWith("/activate")
+        ? new Response(JSON.stringify({ name: "SUBSCRIPTION_STATUS_INVALID" }), { status: 422 })
+        : new Response(null, { status: 204 });
+    };
+    const client = createPayPalClient({ env: ENV, http });
+    await client.suspendSubscription!("I-F1", "outbid");
+    await client.activateSubscription!("I-F1", "re-entered");
+    expect(seen).toEqual(["POST I-F1/suspend", "POST I-F1/activate"]);
+  });
+
   it("throws on a failed revise so the caller's transaction rolls back", async () => {
     const http: PayPalHttp = async (url) =>
       url.includes("/v1/oauth2/token")

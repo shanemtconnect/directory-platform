@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import { siteConfig } from "@/config/site.config";
 import {
+  auditLog,
   categories,
   cities,
   featuredBids,
@@ -41,7 +42,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const FEATURED_PROVIDER = "paypal";
 
 /** A featured subscription that is still, or may still become, billing. */
-export const LIVE_FEATURED_STATUSES = ["approval_pending", "active", "past_due"] as const;
+export const LIVE_FEATURED_STATUSES = ["approval_pending", "active", "past_due", "paused"] as const;
 
 function assertSignedIn(viewer: Viewer): void {
   if (viewer.role === "public") throw new Error("FORBIDDEN");
@@ -291,7 +292,7 @@ export interface CityMatch {
 /** "Other areas": published cities whose name starts with what the owner typed. */
 export async function searchCities(tx: TestDb, viewer: Viewer, q: string): Promise<CityMatch[]> {
   assertSignedIn(viewer);
-  const needle = q.trim().toLowerCase();
+  const needle = q.trim().toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`);
   if (needle.length < 2) return [];
   return tx
     .select({ id: cities.id, name: cities.name, region: cities.region })
@@ -304,6 +305,7 @@ export async function searchCities(tx: TestDb, viewer: Viewer, q: string): Promi
 /* ---------------------------------------------------------------------- bids */
 
 export interface BidRow extends RankableBid {
+  readonly createdAt: Date;
   readonly pendingAmountCents: number | null;
   readonly position: number | null;
   readonly subscriptionId: string | null;
@@ -313,6 +315,7 @@ const bidColumns = {
   id: featuredBids.id,
   listingId: featuredBids.listingId,
   amountCents: featuredBids.amountCents,
+  amountSetAt: featuredBids.amountSetAt,
   pendingAmountCents: featuredBids.pendingAmountCents,
   createdAt: featuredBids.createdAt,
   status: featuredBids.status,
@@ -324,6 +327,7 @@ function toBid(row: {
   id: string;
   listingId: string;
   amountCents: number;
+  amountSetAt: Date;
   pendingAmountCents: number | null;
   createdAt: Date;
   status: string;
@@ -389,6 +393,10 @@ export async function insertBid(tx: TestDb, viewer: Viewer, input: InsertBidInpu
       subscriptionId: input.subscriptionId,
       amountCents: input.amountCents,
       status: input.status,
+      // Through lib/clock: the tie-break and the expiry are both provable.
+      createdAt: now(),
+      amountSetAt: now(),
+      updatedAt: now(),
     })
     .returning({ id: featuredBids.id });
   const id = row!.id;
@@ -431,7 +439,7 @@ export async function setBidAmount(
   assertSignedIn(viewer);
   await tx
     .update(featuredBids)
-    .set({ amountCents: input.amountCents, pendingAmountCents: null, updatedAt: now() })
+    .set({ amountCents: input.amountCents, amountSetAt: now(), pendingAmountCents: null, updatedAt: now() })
     .where(eq(featuredBids.id, input.bidId));
   await writeAuditAs(tx, await actorFor(tx, viewer), {
     entityType: "featured_bid",
@@ -503,6 +511,9 @@ export async function confirmListingBids(
     .set({
       status: sql`case when ${featuredBids.status} = 'pending' then 'active' else ${featuredBids.status} end`,
       amountCents: sql`coalesce(${featuredBids.pendingAmountCents}, ${featuredBids.amountCents})`,
+      // A confirmed raise is a NEW amount: it queues behind everyone who
+      // already held that amount (I1).
+      amountSetAt: sql`case when ${featuredBids.pendingAmountCents} is null then ${featuredBids.amountSetAt} else ${at.toISOString()}::timestamptz end`,
       pendingAmountCents: null,
       updatedAt: at,
     })
@@ -577,6 +588,7 @@ export type FeaturedSubscriptionStatus =
   | "approval_pending"
   | "active"
   | "past_due"
+  | "paused"
   | "cancelled"
   | "suspended"
   | "expired";
@@ -591,6 +603,7 @@ export interface FeaturedSubscription {
   readonly quantity: number;
   readonly requestedQuantity: number;
   readonly reviseRequestedAt: Date | null;
+  readonly pausedAt: Date | null;
   readonly approveUrl: string | null;
   readonly currentPeriodEnd: Date | null;
   readonly createdAt: Date;
@@ -606,6 +619,7 @@ const subColumns = {
   quantity: featuredSubscriptions.quantity,
   requestedQuantity: featuredSubscriptions.requestedQuantity,
   reviseRequestedAt: featuredSubscriptions.reviseRequestedAt,
+  pausedAt: featuredSubscriptions.pausedAt,
   approveUrl: featuredSubscriptions.approveUrl,
   currentPeriodEnd: featuredSubscriptions.currentPeriodEnd,
   createdAt: featuredSubscriptions.createdAt,
@@ -696,6 +710,7 @@ export interface FeaturedSubscriptionPatch {
   readonly quantity?: number;
   readonly requestedQuantity?: number;
   readonly reviseRequestedAt?: Date | null;
+  readonly pausedAt?: Date | null;
   readonly approveUrl?: string | null;
   readonly currentPeriodEnd?: Date | null;
 }
@@ -769,12 +784,13 @@ export async function featuredSubscriptionForOwnerByProviderId(
 export async function featuredSubscriptionsForSync(
   tx: TestDb,
   viewer: Viewer,
-  opts: { graceDays: number; pendingHours: number; limit: number },
+  opts: { graceDays: number; pendingHours: number; pausedDays: number; limit: number },
 ): Promise<FeaturedSubscription[]> {
   assertWorker(viewer);
   const at = now();
   const lapsedBefore = new Date(at.getTime() - opts.graceDays * 86_400_000);
   const pendingBefore = new Date(at.getTime() - opts.pendingHours * 3_600_000);
+  const pausedBefore = new Date(at.getTime() - opts.pausedDays * 86_400_000);
   const rows = await tx
     .select(subColumns)
     .from(featuredSubscriptions)
@@ -787,12 +803,16 @@ export async function featuredSubscriptionsForSync(
             or(
               ne(featuredSubscriptions.quantity, featuredSubscriptions.requestedQuantity),
               lt(featuredSubscriptions.currentPeriodEnd, lapsedBefore),
+              // An unapproved revise (a raise, a second-spot bid, a decrease).
+              lt(featuredSubscriptions.reviseRequestedAt, pendingBefore),
             ),
           ),
           and(
             eq(featuredSubscriptions.status, "approval_pending"),
             lt(featuredSubscriptions.createdAt, pendingBefore),
           ),
+          // Paused for a whole cycle: nothing featured for a month.
+          and(eq(featuredSubscriptions.status, "paused"), lt(featuredSubscriptions.pausedAt, pausedBefore)),
         ),
       ),
     )
@@ -805,6 +825,8 @@ export async function featuredSubscriptionsForSync(
 
 export interface FeaturedListing extends PublicListing {
   readonly position: number;
+  /** The listing's OWN city — a listing featured on another town's page still links home. */
+  readonly citySlug: string;
 }
 
 /**
@@ -830,10 +852,11 @@ export async function featuredForScope(
       return [];
   }
   const rows = await tx
-    .select({ ...publicListingColumns, position: featuredBids.position })
+    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug })
     .from(featuredBids)
     .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
     .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
     .where(
       and(
         keyWhere(key),
@@ -975,4 +998,99 @@ export async function listingBidsForSystem(
     .from(featuredBids)
     .where(and(eq(featuredBids.listingId, listingId), ne(featuredBids.status, "cancelled")));
   return rows.map((r) => ({ ...toBid(r), spotId: r.spotId }));
+}
+
+/* ------------------------------------------------ appended: re-review fixes */
+
+/**
+ * Row lock on the listing for the length of a bid transaction (I8). Two
+ * first bids on two spots serialise here, so the second sees the first's
+ * subscription instead of creating a second one; the partial unique index
+ * `featured_subscriptions_live_key` is the backstop.
+ */
+export async function lockListing(tx: TestDb, viewer: Viewer, listingId: string): Promise<void> {
+  assertSignedIn(viewer);
+  if (!UUID.test(listingId)) return;
+  await tx.execute(sql`select id from ${listings} where ${listings.id} = ${listingId} for update`);
+}
+
+/** "Cancel my raise": the pending amount goes, the current bid stands. */
+export async function clearPendingRaise(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { bidId: string; ip: string | null },
+): Promise<void> {
+  assertSignedIn(viewer);
+  await tx
+    .update(featuredBids)
+    .set({ pendingAmountCents: null, updatedAt: now() })
+    .where(eq(featuredBids.id, input.bidId));
+  await writeAuditAs(tx, await actorFor(tx, viewer), {
+    entityType: "featured_bid",
+    action: "spots.raise_withdrawn",
+    entityId: input.bidId,
+    ip: input.ip,
+  });
+}
+
+export const RAISE_EXPIRED_ACTION = "spots.raise_expired";
+
+/**
+ * An unapproved raise or pending bid has waited long enough (I6): pending
+ * bids are cancelled, pending raises dropped. One audit row per bid, so the
+ * owner page can say what happened. Returns the spots touched.
+ */
+export async function expirePendingBids(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+  meta: { reason: string },
+): Promise<string[]> {
+  assertWorker(viewer);
+  const at = now();
+  const dropped = await tx
+    .update(featuredBids)
+    .set({ pendingAmountCents: null, updatedAt: at })
+    .where(and(eq(featuredBids.listingId, listingId), isNotNull(featuredBids.pendingAmountCents)))
+    .returning({ id: featuredBids.id, spotId: featuredBids.spotId, amountCents: featuredBids.amountCents });
+  const cancelled = await tx
+    .update(featuredBids)
+    .set({ status: "cancelled", position: null, cancelledAt: at, updatedAt: at })
+    .where(and(eq(featuredBids.listingId, listingId), eq(featuredBids.status, "pending")))
+    .returning({ id: featuredBids.id, spotId: featuredBids.spotId, amountCents: featuredBids.amountCents });
+  for (const row of [...dropped, ...cancelled]) {
+    await writeAuditAs(tx, null, {
+      entityType: "featured_bid",
+      action: RAISE_EXPIRED_ACTION,
+      entityId: row.id,
+      meta: { listingId, spotId: row.spotId, ...meta },
+    });
+  }
+  return [...new Set([...dropped, ...cancelled].map((r) => r.spotId))];
+}
+
+/** Whether an expiry happened recently, so the owner page can say so. Owner-gated. */
+export async function recentRaiseExpiry(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string; withinDays: number },
+): Promise<Date | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return null;
+  const since = new Date(now().getTime() - input.withinDays * 86_400_000);
+  const [row] = await tx
+    .select({ at: auditLog.createdAt })
+    .from(auditLog)
+    .innerJoin(listings, eq(listings.id, sql`(${auditLog.meta}->>'listingId')::uuid`))
+    .where(
+      and(
+        eq(auditLog.action, RAISE_EXPIRED_ACTION),
+        eq(listings.id, input.listingId),
+        eq(listings.ownerId, input.profileId),
+        gte(auditLog.createdAt, since),
+      ),
+    )
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  return row?.at ?? null;
 }

@@ -19,7 +19,8 @@ export interface RankableBid {
   readonly id: string;
   readonly listingId: string;
   readonly amountCents: number;
-  readonly createdAt: Date;
+  /** When the amount was last set. A raise resets it: no jumping the queue on an old date. */
+  readonly amountSetAt: Date;
   readonly status: BidStatus;
 }
 
@@ -49,8 +50,10 @@ export const ENTER_STEP_CENTS = 1 * UNIT_CENTS;
 const RANKS: readonly BidStatus[] = ["active", "outbid"];
 
 /**
- * `amount DESC, created_at ASC` — and then id, so two rows created in the
- * same transaction with the same amount still sort the same way every time.
+ * `amount DESC, amount_set_at ASC` — and then id, so two rows set in the
+ * same transaction to the same amount still sort the same way every time.
+ * `amount_set_at` rather than `created_at`: a bid raised to match the leader
+ * was set AFTER the leader's, and lands behind it.
  * The top `positions` are featured; the rest are outbid and, by
  * `quantityFor` below, charged nothing.
  */
@@ -58,7 +61,7 @@ export function rankBids(bids: readonly RankableBid[], positions: number): Ranke
   const live = bids.filter((b) => RANKS.includes(b.status));
   live.sort((a, b) => {
     if (a.amountCents !== b.amountCents) return b.amountCents - a.amountCents;
-    const t = a.createdAt.getTime() - b.createdAt.getTime();
+    const t = a.amountSetAt.getTime() - b.amountSetAt.getTime();
     if (t !== 0) return t;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });

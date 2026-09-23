@@ -104,6 +104,13 @@ export interface PayPalClient {
    * treats its absence as "not configured".
    */
   reviseSubscription?(id: string, input: ReviseSubscriptionInput): Promise<RevisedSubscription>;
+  /**
+   * `/suspend` and `/activate` need no buyer consent. Featured spots use them
+   * to stop billing a listing whose every bid is outbid and to resume it
+   * when a bid re-enters, without a new approval or a fresh first cycle.
+   */
+  suspendSubscription?(id: string, reason: string): Promise<void>;
+  activateSubscription?(id: string, reason: string): Promise<void>;
 }
 
 type Env = Record<string, string | undefined>;
@@ -343,6 +350,23 @@ export function createPayPalClient(opts: { env?: Env; http?: PayPalHttp } = {}):
       );
       if (!ok) throw fail("revise subscription", status, json);
       return { approveUrl: linkHref(json.links, "approve") };
+    },
+
+    async suspendSubscription(id, reason) {
+      const { ok, status, json } = await call(
+        `/v1/billing/subscriptions/${encodeURIComponent(id)}/suspend`,
+        { method: "POST", body: JSON.stringify({ reason }) },
+      );
+      // 422: already suspended — the state the caller wanted.
+      if (!ok && status !== 422) throw fail("suspend subscription", status, json);
+    },
+
+    async activateSubscription(id, reason) {
+      const { ok, status, json } = await call(
+        `/v1/billing/subscriptions/${encodeURIComponent(id)}/activate`,
+        { method: "POST", body: JSON.stringify({ reason }) },
+      );
+      if (!ok && status !== 422) throw fail("activate subscription", status, json);
     },
 
     async manageUrl(id) {
