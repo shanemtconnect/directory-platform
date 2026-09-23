@@ -1,7 +1,8 @@
 node_modules/
 .next/
 .next-pristine/
-out/
+# Next `next export` output — root only, so app/out/ (the sponsor click route) is tracked.
+/out/
 build/
 .env
 .env.local

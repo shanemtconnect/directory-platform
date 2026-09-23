@@ -318,7 +318,12 @@ finish
 
 # --- 6. the suite ------------------------------------------------------------
 begin "playwright e2e against the clone"
+# Throwaway storage values: the photo suite's client flow is intercepted by
+# Playwright and never reaches a bucket, but the page only renders the upload
+# form when storage looks configured.
 E2E_PORT="$PORT" DATABASE_URL="$DB_URL" REDIS_URL="$REDIS_URL" SITE_ENV=production \
+  R2_ACCOUNT_ID=e2e-account R2_ACCESS_KEY_ID=e2e-not-a-real-key \
+  R2_SECRET_ACCESS_KEY=e2e-not-a-real-secret R2_BUCKET_MEDIA=e2e-media \
   corepack pnpm test:e2e 2>&1 | tee "$PROOF_DIR/e2e.log" | tail -25 \
   || fail "the Playwright suite failed against the clone — see $PROOF_DIR/e2e.log"
 grep -qE "[1-9][0-9]* passed" "$PROOF_DIR/e2e.log" || fail "the suite reported no passing tests"
