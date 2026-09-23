@@ -99,10 +99,11 @@ describe("notifyOutbid through rerankSpots", () => {
       const d = await activeBid(tx, ctx, spot.id, 9000);
       await rerankSpots(tx, [spot.id]);
       const jobs = await outbidJobs(tx);
+      // a needs max(90+10%, 90+5) = 99 to retake first; c needs the lowest featured (70) + 1.
       expect(jobs.map((j) => j.payload)).toEqual(
         expect.arrayContaining([
-          { bidId: a.bidId, kind: "lost-first" },
-          { bidId: c.bidId, kind: "dropped-out" },
+          { bidId: a.bidId, kind: "lost-first", amountCents: 9900 },
+          { bidId: c.bidId, kind: "dropped-out", amountCents: 7100 },
         ]),
       );
       expect(jobs).toHaveLength(2);
@@ -117,9 +118,10 @@ describe("notifyOutbid through rerankSpots", () => {
       await rerankSpots(tx, [spot.id]);
       const afterEF = await outbidJobs(tx);
       expect(afterEF).toHaveLength(4);
-      expect(afterEF.map((j) => j.payload)).toContainEqual({ bidId: d.bidId, kind: "lost-first" });
-      expect(afterEF.map((j) => j.payload)).toContainEqual({ bidId: b.bidId, kind: "dropped-out" });
-      expect(afterEF.map((j) => j.payload)).not.toContainEqual({ bidId: a.bidId, kind: "dropped-out" });
+      const payloads = afterEF.map((j) => j.payload as { bidId: string; kind: string });
+      expect(payloads).toContainEqual(expect.objectContaining({ bidId: d.bidId, kind: "lost-first" }));
+      expect(payloads).toContainEqual(expect.objectContaining({ bidId: b.bidId, kind: "dropped-out" }));
+      expect(payloads.some((p) => p.bidId === a.bidId && p.kind === "dropped-out")).toBe(false);
       void f;
 
       // Half an hour on: a seventh bidder takes first. e is told (fresh); d
@@ -129,7 +131,7 @@ describe("notifyOutbid through rerankSpots", () => {
       await rerankSpots(tx, [spot.id]);
       const later = await outbidJobs(tx);
       expect(later).toHaveLength(5);
-      expect(later.map((j) => j.payload)).toContainEqual({ bidId: e.bidId, kind: "lost-first" });
+      expect(later.map((j) => j.payload)).toContainEqual(expect.objectContaining({ bidId: e.bidId, kind: "lost-first" }));
       const rows = await spotBids(tx, ADMIN, spot.id);
       expect(rows.find((r) => r.id === d.bidId)?.position).toBeNull();
       expect(rows.find((r) => r.id === e.bidId)?.position).toBe(2);
@@ -146,12 +148,12 @@ describe("notifyOutbid through rerankSpots", () => {
       const held = bids.map((b) => ({ ...b, position: 1 }));
       const lost = bids.map((b) => ({ ...b, position: null }));
 
-      const first = await notifyOutbid(tx, spot.id, held, lost);
+      const first = await notifyOutbid(tx, spot, held, lost);
       expect(first.map((c) => c.bidId)).toEqual([a.bidId]);
       setClock(new Date(Date.parse("2026-09-23T09:00:00Z") + OUTBID_DEBOUNCE_MS - 1));
-      expect(await notifyOutbid(tx, spot.id, held, lost)).toEqual([]);
+      expect(await notifyOutbid(tx, spot, held, lost)).toEqual([]);
       setClock(new Date(Date.parse("2026-09-23T09:00:00Z") + OUTBID_DEBOUNCE_MS + 1));
-      expect((await notifyOutbid(tx, spot.id, held, lost)).map((c) => c.bidId)).toEqual([a.bidId]);
+      expect((await notifyOutbid(tx, spot, held, lost)).map((c) => c.bidId)).toEqual([a.bidId]);
       expect(await tx.select().from(jobQueue).where(and(eq(jobQueue.kind, NOTIFY_SPOT_OUTBID)))).toHaveLength(2);
     });
   });

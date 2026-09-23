@@ -57,7 +57,7 @@ describe("notify.spot.outbid", () => {
       await rerankSpots(tx, [spot.id]);
 
       const queued = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_SPOT_OUTBID));
-      expect(queued.map((j) => j.payload)).toEqual([{ bidId: alpha.bidId, kind: "lost-first" }]);
+      expect(queued.map((j) => j.payload)).toEqual([{ bidId: alpha.bidId, kind: "lost-first", amountCents: 8800 }]);
 
       expect(await processNotifications(tx)).toBe(1);
       expect(sentTo()).toEqual([alpha.email]);
@@ -98,7 +98,7 @@ describe("notify.spot.outbid", () => {
       // at #1 by then — sends nothing; Golf (lost first) and Echo (pushed
       // out by Delta's return) are told.
       sendEmail.mockClear();
-      await notifySpotOutbid(tx, { role: "admin", userId: "w" }, { bidId: delta.bidId, kind: "dropped-out" });
+      await notifySpotOutbid(tx, { role: "admin", userId: "w" }, { bidId: delta.bidId, kind: "dropped-out", amountCents: 6100 });
       await tx.update(featuredBids).set({ amountCents: 10000 }).where(eq(featuredBids.id, delta.bidId));
       await rerankSpots(tx, [spot.id]);
       expect(await processNotifications(tx)).toBe(3);

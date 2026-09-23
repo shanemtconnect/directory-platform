@@ -2,7 +2,7 @@ import { notifySpotOutbid, type SpotOutbidJobPayload } from "@/lib/email/notify"
 import { markOutbidNotified } from "@/lib/db/queries/spots";
 import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
-import type { BidStatus, RankedBid } from "./rank";
+import { minimumToEnter, minimumToTakeFirst, type BidStatus, type RankedBid } from "./rank";
 
 /**
  * Who to tell after a re-rank (Task 45, requirement 1).
@@ -19,9 +19,11 @@ import type { BidStatus, RankedBid } from "./rank";
  * the bid (`outbid_notified_at`) and the claim is one UPDATE, so the same
  * change re-ranked twice in one transaction queues one job.
  *
- * The payload names the event, not the amount: the worker recomputes the
- * amount when it sends, so a bid that regained its place in the meantime
- * gets no email at all.
+ * The payload names the event and the amount it took to get back AT THE
+ * TIME (the queue row is the record of what the owner was told about); the
+ * worker recomputes the amount when it sends, so a bid that regained its
+ * place in the meantime gets no email at all and a later change is not
+ * quoted stale.
  */
 
 export type OutbidKind = SpotOutbidJobPayload["kind"];
@@ -69,13 +71,32 @@ export function positionChanges(
   return out;
 }
 
+export interface SpotStandingInput {
+  readonly id: string;
+  readonly floorCents: number;
+  readonly positions: number;
+}
+
+/** What the changed bid's owner needs now: to retake first, or to re-enter. */
+export function amountToRetake(
+  spot: SpotStandingInput,
+  after: readonly RankedBid[],
+  change: OutbidChange,
+): number {
+  const featured = after
+    .filter((r) => r.position !== null && r.listingId !== change.listingId)
+    .map((r) => r.amountCents);
+  const standing = { floorCents: spot.floorCents, positions: spot.positions, featured };
+  return change.kind === "lost-first" ? minimumToTakeFirst(standing) : minimumToEnter(standing);
+}
+
 /**
  * Queues the emails for a spot's re-rank, inside the transaction that wrote
  * it. Returns the changes that were queued (the rest were debounced).
  */
 export async function notifyOutbid(
   tx: TestDb,
-  _spotId: string,
+  spot: SpotStandingInput,
   before: readonly HeldBid[],
   after: readonly RankedBid[],
 ): Promise<OutbidChange[]> {
@@ -83,7 +104,11 @@ export async function notifyOutbid(
   for (const change of positionChanges(before, after)) {
     const fresh = await markOutbidNotified(tx, SYSTEM, change.bidId, OUTBID_DEBOUNCE_MS);
     if (!fresh) continue;
-    await notifySpotOutbid(tx, SYSTEM, { bidId: change.bidId, kind: change.kind });
+    await notifySpotOutbid(tx, SYSTEM, {
+      bidId: change.bidId,
+      kind: change.kind,
+      amountCents: amountToRetake(spot, after, change),
+    });
     queued.push(change);
   }
   return queued;

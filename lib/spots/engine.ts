@@ -62,7 +62,7 @@ export async function rerankSpots(tx: TestDb, spotIds: readonly string[]): Promi
     const ranked = rankBids(bids, spot.positions);
     await applyRanking(tx, viewer, spotId, ranked);
     // Task 45: the owners who lost ground hear about it (debounced).
-    await notifyOutbid(tx, spotId, bids, ranked);
+    await notifyOutbid(tx, spot, bids, ranked);
     for (const path of await spotPaths(tx, viewer, spotId)) paths.add(path);
   }
   return { listingIds: await listingsInSpots(tx, viewer, unique), paths: [...paths] };

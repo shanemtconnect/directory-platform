@@ -456,10 +456,11 @@ export async function notifySponsorDecided(
 
 /**
  * A bid lost first place or dropped out of the featured positions. The
- * payload is the bid id and the EVENT (lost first, dropped out): the worker
- * re-reads the bid and the spot's standing when it runs, so the amount in
- * the email is what it would take NOW, and a bid that has since regained
- * its place is not written to at all.
+ * payload is the bid id, the EVENT (lost first, dropped out) and the amount
+ * it took to get back at that moment; the worker re-reads the bid and the
+ * spot's standing when it runs, so the amount in the email is what it would
+ * take NOW, and a bid that has since regained its place is not written to
+ * at all.
  */
 export const NOTIFY_SPOT_OUTBID = "notify.spot.outbid";
 /**
@@ -471,7 +472,12 @@ export const NOTIFY_SPOT_OUTBID = "notify.spot.outbid";
 export const NOTIFY_SPOT_DIGEST = "notify.spot.digest";
 NOTIFY_KINDS.push(NOTIFY_SPOT_OUTBID, NOTIFY_SPOT_DIGEST);
 
-export type SpotOutbidJobPayload = { bidId: string; kind: "lost-first" | "dropped-out" };
+export type SpotOutbidJobPayload = {
+  bidId: string;
+  kind: "lost-first" | "dropped-out";
+  /** What it took to get back when the change happened, in minor units. The worker recomputes before sending. */
+  amountCents: number;
+};
 export type SpotDigestJobPayload = { listingId: string } | { admin: true };
 
 export async function notifySpotOutbid(
