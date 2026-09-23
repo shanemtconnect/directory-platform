@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { siteConfig } from "@/config/site.config";
 import { computeAwardsAction, revokeAwardAction, type AwardsActionState } from "@/lib/actions/admin-awards";
-import type { AdminAward, AdminAwardYear } from "@/lib/db/queries/awards";
+import { AWARDS_MIN_RATED_LISTINGS, type AdminAward, type AdminAwardYear } from "@/lib/db/queries/awards";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SubmitButton } from "@/components/ui/SubmitButton";
@@ -42,9 +42,9 @@ export function ComputeAwardsForm({ defaultYear }: { defaultYear: number }) {
     <section aria-labelledby="compute" className="card">
       <h2 id="compute" className="mt-0">Compute a year</h2>
       <p className="text-sm text-muted">
-        Runs the method for the year you give: one winner per town and category with at least
-        three rated {siteConfig.entity.plural}. Safe to press twice — a decided slot is left alone.
-        The worker does this itself on 1 January.
+        Runs the method for the year you give: one winner per town and category with at least{" "}
+        {AWARDS_MIN_RATED_LISTINGS} rated {siteConfig.entity.plural}. Safe to press twice — a decided
+        slot is left alone. The worker does this itself on 1 January.
       </p>
       <Outcome state={state} testId="compute" />
       <form action={action} className="form-actions">

@@ -40,7 +40,7 @@ export default async function AdminAwardYearPage({ params }: Props) {
         lede={
           rows.length === 0
             ? `Nothing was awarded for ${year}.`
-            : `${active} standing, ${rows.length - active} revoked. Revoking takes the award off the listing and the winners page and does not re-award the slot.`
+            : `${active} standing, ${rows.length - active} revoked. Revoking takes the award off the listing and the winners page; the slot stays empty for the year — pressing Compute again does not promote a runner-up.`
         }
       />
       <p className="text-sm text-muted">

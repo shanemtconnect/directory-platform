@@ -30,7 +30,11 @@ export const awardBadgeStyle = (year: number): AwardBadgeStyle => `award-${year}
 /** The year an award style names, or null for any other style. */
 export function awardYearOfStyle(style: string): number | null {
   const m = AWARD_STYLE.exec(style);
-  return m ? Number(m[1]) : null;
+  if (!m) return null;
+  const year = Number(m[1]);
+  // The same window parseAwardYear (lib/db/queries/awards.ts) accepts in a
+  // URL, so "award-0999" is not quietly reshaped into a style nothing serves.
+  return year >= 2000 && year < 2200 ? year : null;
 }
 
 /** Unknown or absent style falls back to the default rather than 400ing. */
