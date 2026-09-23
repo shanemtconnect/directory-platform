@@ -1,7 +1,7 @@
 import { pgEnum } from "drizzle-orm/pg-core";
 
 export const slugKind = pgEnum("slug_kind", [
-  "static", "city", "vertical", "area", "category", "listing",
+  "static", "city", "vertical", "area", "category", "listing", "region",
 ]);
 export const cityCreatedBy = pgEnum("city_created_by", ["seed", "admin", "auto"]);
 export const userRole = pgEnum("user_role", ["user", "owner", "admin"]);
@@ -46,3 +46,6 @@ export const reviewStatus = pgEnum("review_status", [
 ]);
 export const jobStatus = pgEnum("job_status", ["pending", "published", "expired", "removed"]);
 export const campaignChannel = pgEnum("campaign_channel", ["email", "sms"]);
+
+/** What became of a broadcast quote request at one recipient. Owner-set. */
+export const quoteOutcome = pgEnum("quote_outcome", ["open", "won", "lost"]);

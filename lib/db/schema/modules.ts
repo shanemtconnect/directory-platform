@@ -3,7 +3,7 @@ import {
   uniqueIndex, index,
 } from "drizzle-orm/pg-core";
 import { base } from "./_base";
-import { reviewStatus, jobStatus, campaignChannel } from "./enums";
+import { reviewStatus, jobStatus, campaignChannel, quoteOutcome } from "./enums";
 import { listings } from "./listings";
 import { cities, categories } from "./geo";
 
@@ -98,7 +98,11 @@ export const quoteRequests = pgTable("quote_requests", {
   cityId: uuid("city_id").references(() => cities.id),
   categoryId: uuid("category_id").references(() => categories.id),
   ip: text("ip"),
-});
+  /** When the requester ticked the consent box. The form refuses without it. */
+  consentAt: timestamp("consent_at", { withTimezone: true }),
+  /** Admin's flag. A spam request drops off every owner's leads page. */
+  isSpam: boolean("is_spam").notNull().default(false),
+}, (t) => [index("quote_requests_created_idx").on(t.createdAt)]);
 
 export const quoteRecipients = pgTable("quote_recipients", {
   ...base,
@@ -108,7 +112,13 @@ export const quoteRecipients = pgTable("quote_recipients", {
   contactMasked: boolean("contact_masked").notNull().default(true),
   openedAt: timestamp("opened_at", { withTimezone: true }),
   repliedAt: timestamp("replied_at", { withTimezone: true }),
-}, (t) => [uniqueIndex("quote_recipients_key").on(t.quoteRequestId, t.listingId)]);
+  /** Won or lost, as the owner records it. The honest conversion figure. */
+  outcome: quoteOutcome("outcome").notNull().default("open"),
+  outcomeAt: timestamp("outcome_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("quote_recipients_key").on(t.quoteRequestId, t.listingId),
+  index("quote_recipients_listing_idx").on(t.listingId),
+]);
 
 export const jobs = pgTable("jobs", {
   ...base,
@@ -122,7 +132,37 @@ export const jobs = pgTable("jobs", {
   status: jobStatus("status").notNull().default("pending"),
   /** Expired jobs 410 rather than 404, so dead pages do not accumulate. */
   expiresAt: timestamp("expires_at", { withTimezone: true }),
-}, (t) => [index("jobs_status_idx").on(t.status, t.expiresAt)]);
+  // ---- Task 49 (migration 0015). Everything below is additive. ----
+  /** The Verified listing a free post is made on behalf of. Null for a paid post. */
+  listingId: uuid("listing_id").references(() => listings.id, { onDelete: "set null" }),
+  /** profiles.id of the poster when signed in (constraint 21). Null for a stranger. */
+  posterProfileId: uuid("poster_profile_id"),
+  posterName: text("poster_name"),
+  /** Who is hiring, as rendered and as `hiringOrganization`. */
+  companyName: text("company_name"),
+  /** 'email' → a mailto button; 'url' → an external link. Never both stored blank. */
+  applyMethod: text("apply_method"),
+  applyEmail: text("apply_email"),
+  applyUrl: text("apply_url"),
+  /** The only thing kept about applications: how many times Apply was pressed. */
+  applyCount: integer("apply_count").notNull().default(0),
+  /** `datePosted` in the markup. Set once, on approval. */
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  /** 'free' (verified owner or a zero price), 'pending' (awaiting capture) or 'paid'. */
+  paymentStatus: text("payment_status").notNull().default("free"),
+  /** Provider-neutral, like subscriptions: PayPal's order id today. */
+  providerOrderId: text("provider_order_id"),
+  providerCaptureId: text("provider_capture_id"),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  /** The expiry reminder is sent once; this is the once. */
+  reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+  rejectedReason: text("rejected_reason"),
+  ip: text("ip"),
+}, (t) => [
+  index("jobs_status_idx").on(t.status, t.expiresAt),
+  index("jobs_listing_idx").on(t.listingId),
+  uniqueIndex("jobs_provider_order_key").on(t.providerOrderId),
+]);
 
 export const jobApplications = pgTable("job_applications", {
   ...base,
@@ -141,7 +181,21 @@ export const awards = pgTable("awards", {
   rank: integer("rank"),
   methodologyVersion: text("methodology_version"),
   publishedAt: timestamp("published_at", { withTimezone: true }),
-}, (t) => [index("awards_year_idx").on(t.year, t.cityId, t.categoryId)]);
+  /**
+   * An admin took it back. The row stays — a revoked award is a fact about the
+   * year, and the unique index below means the slot is not re-awarded on the
+   * next run — but nothing public reads a row with this set.
+   */
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokeReason: text("revoke_reason"),
+}, (t) => [
+  // One winner per city × category × year, and the reason the compute job is
+  // idempotent at the database rather than only in its own NOT EXISTS. It
+  // also serves every lookup by year, so the plain index on the same three
+  // columns that shipped with the table is gone (migration 0016).
+  uniqueIndex("awards_year_city_category_key").on(t.year, t.cityId, t.categoryId),
+  index("awards_listing_idx").on(t.listingId),
+]);
 
 export const affiliates = pgTable("affiliates", {
   ...base,
@@ -185,7 +239,15 @@ export const campaignMessages = pgTable("campaign_messages", {
   clickedAt: timestamp("clicked_at", { withTimezone: true }),
   bouncedAt: timestamp("bounced_at", { withTimezone: true }),
   unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
-}, (t) => [index("campaign_messages_campaign_idx").on(t.campaignId)]);
+}, (t) => [
+  index("campaign_messages_campaign_idx").on(t.campaignId),
+  // The magic token is a BEARER CREDENTIAL — whoever holds it can open a claim
+  // on the listing it names. A collision would hand one recipient another
+  // business's listing, and 32 bytes of CSPRNG is a reason to expect that
+  // never to happen, not a guarantee that it cannot. Nullable, so a channel
+  // with no magic link is unaffected: Postgres does not compare NULLs.
+  uniqueIndex("campaign_messages_magic_token_key").on(t.magicToken),
+]);
 
 /** One unsubscribe means one unsubscribe forever, across every campaign. */
 export const unsubscribes = pgTable("unsubscribes", {

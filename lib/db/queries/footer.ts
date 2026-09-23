@@ -1,8 +1,9 @@
 import { sql, eq, and, lte, asc } from "drizzle-orm";
 import { cities, categories, listings, slugs } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
-import type { TestDb } from "@/test/db";
+import { publishedListings } from "@/lib/db/queries/listings";
+import type { Viewer } from "@/lib/db/viewer";
+import type { TestDb } from "@/lib/db/types";
 
 export interface FooterCityLink {
   /** Display name only — the URL is already built. */
@@ -95,7 +96,7 @@ export async function getFooterMatrix(
         eq(cities.isPublished, true),
         eq(cities.isIndexable, true),
         eq(categories.isActive, true),
-        isAdmin(viewer) ? sql`true` : eq(listings.status, "published"),
+        publishedListings(viewer),
       ),
     )
     // categories.id and cities.id are primary keys, so every other selected

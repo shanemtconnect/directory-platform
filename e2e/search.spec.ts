@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { narrowingKeyword, paginatingCity } from "./fixtures";
 
 async function resultCount(page: Page): Promise<number> {
   const text = (await page.locator('[data-testid="result-count"]').textContent()) ?? "";
@@ -6,6 +7,13 @@ async function resultCount(page: Page): Promise<number> {
   expect(match, `result count not found in "${text}"`).toBeTruthy();
   return Number(match![0]);
 }
+
+let CITY: string;
+let KEYWORD: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).slug;
+  KEYWORD = await narrowingKeyword();
+});
 
 test.describe("search", () => {
   test("unfiltered search shows a result count", async ({ page }) => {
@@ -23,11 +31,11 @@ test.describe("search", () => {
     await page.goto("/search");
     const all = await resultCount(page);
 
-    await page.goto("/search?q=barn");
+    await page.goto(`/search?q=${encodeURIComponent(KEYWORD)}`);
     const filtered = await resultCount(page);
 
     expect(filtered, "the keyword must match something").toBeGreaterThan(0);
-    expect(filtered, "?q=barn must return fewer results than an unfiltered search").toBeLessThan(all);
+    expect(filtered, `?q=${KEYWORD} must return fewer results than an unfiltered search`).toBeLessThan(all);
 
     // The count has to agree with what is on the page, not just be a number.
     const shown = await page.locator('[data-testid="search-results"] > li').count();
@@ -39,7 +47,7 @@ test.describe("search", () => {
     await page.goto("/search");
     const all = await resultCount(page);
 
-    await page.goto("/search?city=richmond-north-yorkshire");
+    await page.goto(`/search?city=${CITY}`);
     const inCity = await resultCount(page);
 
     expect(inCity).toBeGreaterThan(0);
@@ -51,7 +59,7 @@ test.describe("search", () => {
     );
     expect(links.length).toBeGreaterThan(0);
     for (const href of links) {
-      expect(href).toMatch(/^\/richmond-north-yorkshire\//);
+      expect(href).toMatch(new RegExp(`^/${CITY}/`));
     }
   });
 

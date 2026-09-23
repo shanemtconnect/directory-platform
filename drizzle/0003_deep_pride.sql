@@ -1,0 +1,1 @@
+ALTER TABLE "redirects" ADD CONSTRAINT "redirects_status_code_check" CHECK ("redirects"."status_code" in (301, 302, 307, 308, 410));

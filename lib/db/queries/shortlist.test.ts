@@ -411,3 +411,54 @@ describe("rename and share are scoped by cookie", () => {
     });
   });
 });
+
+
+/**
+ * A shortlist entry is read by an anonymous visitor and, on a public list, by
+ * anyone holding the share link. Nothing private may ride along in the RSC
+ * payload behind it.
+ */
+describe("shortlist entries carry no private listing data", () => {
+  const PRIVATE = {
+    submittedByEmail: "submitter@example.test",
+    verificationChecks: { companiesHouse: "passed" },
+    rejectedReason: "moderator note nobody outside may read",
+    customFields: {
+      capacity: 120,
+      submission: { email: "submitter@example.test", ip: "203.0.113.9" },
+    },
+  } as const;
+
+  it("omits submittedByEmail, verificationChecks, rejectedReason and the submission blob", async () => {
+    await withTestDb(async (tx) => {
+      const { ctx, shortlistId } = await setup(tx);
+      const listingId = await makeListing(tx, ctx, { ...PRIVATE });
+      expect(await addListingToShortlist(tx, PUBLIC_VIEWER, shortlistId, listingId)).toEqual({ ok: true });
+
+      const [entry] = await listShortlistEntries(tx, PUBLIC_VIEWER, shortlistId);
+      expect(entry).toBeDefined();
+      if (!entry) return;
+
+      const keys = Object.keys(entry);
+      expect(keys).not.toContain("submittedByEmail");
+      expect(keys).not.toContain("verificationChecks");
+      expect(keys).not.toContain("rejectedReason");
+
+      // The niche fields survive; the submission blob inside them does not.
+      expect(entry.customFields).toEqual({ capacity: 120 });
+      expect(JSON.stringify(entry)).not.toContain("203.0.113.9");
+      expect(JSON.stringify(entry)).not.toContain("submitter@example.test");
+    });
+  });
+
+  it("keeps the same gate for an admin — the projection is not viewer-dependent", async () => {
+    await withTestDb(async (tx) => {
+      const { ctx, shortlistId } = await setup(tx);
+      const listingId = await makeListing(tx, ctx, { ...PRIVATE });
+      await addListingToShortlist(tx, ADMIN, shortlistId, listingId);
+
+      const [entry] = await listShortlistEntries(tx, ADMIN, shortlistId);
+      expect(entry?.customFields).toEqual({ capacity: 120 });
+    });
+  });
+});

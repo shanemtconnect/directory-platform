@@ -1,0 +1,4 @@
+name,region,country,lat,lng,population
+Example City One,Example {{RegionLabel}} A,{{country}},,,
+Example City Two,Example {{RegionLabel}} B,{{country}},,,
+Example City Three,Example {{RegionLabel}} C,{{country}},,,

@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+let CITY_NAME: string;
+test.beforeAll(async () => {
+  const city = await paginatingCity();
+  CITY = city.path;
+  CITY_NAME = city.name;
+});
 
 test.describe("city pillar page", () => {
   test("renders the heading, the listing grid and the internal-linking blocks", async ({ page }) => {
@@ -10,7 +17,7 @@ test.describe("city pillar page", () => {
     // One h1, and it names the place.
     const h1 = page.locator("h1");
     await expect(h1).toHaveCount(1);
-    await expect(h1).toContainText(/Richmond/i);
+    await expect(h1).toContainText(new RegExp(CITY_NAME, "i"));
 
     // The grid is the page. An empty grid is a dead pillar page.
     const cards = page.locator('[data-testid="listing-grid"] > li');

@@ -2,14 +2,15 @@ import { and, eq } from "drizzle-orm";
 import { cities, listings } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
-import { isAdmin, type Viewer } from "@/lib/db/viewer";
+import type { Viewer } from "@/lib/db/viewer";
+import { publishedListings } from "@/lib/db/queries/listings";
 import {
   listCities,
   listCategories,
   type CityIndexRow,
   type CategoryIndexRow,
 } from "@/lib/db/queries/indexes";
-import type { TestDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
 
 /**
  * Homepage blocks. Nothing here is new policy — the homepage is the most
@@ -30,7 +31,7 @@ export const FEATURED_LIMIT = 6;
  * the admin bypass come with it for free.
  */
 export async function topCities(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   limit = TOP_CITIES,
 ): Promise<CityIndexRow[]> {
@@ -43,7 +44,7 @@ export async function topCities(
  * no published listings, so an empty type is never linked from here.
  */
 export async function topCategories(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   limit = TOP_CATEGORIES,
 ): Promise<CategoryIndexRow[]> {
@@ -76,14 +77,13 @@ export interface FeaturedListingRow {
  * so the same six paid listings do not sit on the homepage forever.
  */
 export async function featuredListings(
-  tx: TestDb,
+  tx: Db,
   viewer: Viewer,
   limit = FEATURED_LIMIT,
 ): Promise<FeaturedListingRow[]> {
   if (limit <= 0) return [];
 
-  const conditions = [eq(listings.tier, "premium")];
-  if (!isAdmin(viewer)) conditions.push(eq(listings.status, "published"));
+  const conditions = [eq(listings.tier, "premium"), publishedListings(viewer)];
 
   return tx
     .select({

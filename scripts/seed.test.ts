@@ -1,11 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { withTestDb } from "@/test/db";
-import { runSeed } from "./seed";
+import { runSeed, DEFAULT_NICHE } from "./seed";
 import { cities, categories, listings, slugs } from "@/lib/db/schema";
 import { resolveSlug, ROOT_SCOPE } from "@/lib/routing/slugs";
+import { siteConfig } from "@/config/site.config";
 import { eq, and } from "drizzle-orm";
+import { decideIndexability } from "@/lib/db/queries/indexing";
 
-const NICHE = "wedding-venues";
+/**
+ * The seed directory is named after the entity, not the niche, so a clone
+ * renames one folder and `pnpm seed` keeps working with no argument.
+ */
+const NICHE = DEFAULT_NICHE;
+
+/** A two-city set where one city genuinely has no region. */
+const FIXTURE = "__fixture__";
 
 describe("runSeed", () => {
   it("loads 50 cities, 20 categories and 200 listings", async () => {
@@ -42,10 +51,31 @@ describe("runSeed", () => {
     });
   }, 60000);
 
-  it("leaves every city non-indexable until it earns it", async () => {
+  it("sets is_indexable from the gate, never by hand", async () => {
     await withTestDb(async (tx) => {
       await runSeed(tx, NICHE);
-      expect((await tx.select().from(cities)).every((c) => c.isIndexable === false)).toBe(true);
+      const rows = await tx.select().from(cities);
+      expect(rows.length).toBeGreaterThan(0);
+
+      // The flag on every row is exactly what the rule says it should be for
+      // that row's own count and intro copy — not a constant either way. This
+      // used to pass because the seed recomputed the gate BEFORE writing the
+      // intro copy, so it judged every city on copy it had not written yet and
+      // left the whole site noindexed.
+      for (const city of rows) {
+        expect(city.isIndexable, city.slug)
+          .toBe(decideIndexability(city.listingCount, city.introHtml).isIndexable);
+      }
+    });
+  }, 60000);
+
+  it("gives a seeded city enough listings and copy to earn indexing", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      // The seed exists to produce a site worth looking at. If none of its
+      // cities clears the gate, every pillar page it built is noindexed.
+      expect(rows.some((c) => c.isIndexable)).toBe(true);
     });
   }, 60000);
 
@@ -93,6 +123,166 @@ describe("runSeed", () => {
       await runSeed(tx, NICHE);
       expect((await resolveSlug(tx, ROOT_SCOPE, "pricing"))?.kind).toBe("static");
       expect((await resolveSlug(tx, ROOT_SCOPE, "add-listing"))?.kind).toBe("static");
+    });
+  }, 60000);
+});
+
+describe("region", () => {
+  it("stores a missing region as NULL, never an empty string", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, FIXTURE);
+      const rows = await tx.select().from(cities);
+      expect(rows).toHaveLength(2);
+
+      const singapore = rows.find((c) => c.name === "Singapore");
+      // An empty string here renders an empty <h2> on /cities and makes the
+      // "City, Region" heading read "Singapore, ".
+      expect(singapore?.region).toBeNull();
+      expect(rows.find((c) => c.name === "Orchard")?.region).toBe("Central");
+    });
+  }, 60000);
+
+  it("does not re-insert a region-less city on a second run", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, FIXTURE);
+      const second = await runSeed(tx, FIXTURE);
+      expect(second.cities).toBe(0);
+      expect(await tx.select().from(cities)).toHaveLength(2);
+    });
+  }, 60000);
+
+  it("keeps same-named cities in different regions apart when placing listings", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const both = await tx.select().from(cities).where(eq(cities.name, "Richmond"));
+      expect(both).toHaveLength(2);
+      // The listings CSV carries a region column precisely so neither Richmond
+      // swallows the other's rows.
+      for (const city of both) {
+        expect(city.listingCount, `${city.slug} has no listings`).toBeGreaterThan(0);
+      }
+    });
+  }, 60000);
+});
+
+describe("listing descriptions", () => {
+  it("name the listing's own city and its own category", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx
+        .select({
+          description: listings.shortDescription,
+          city: cities.name,
+          category: categories.singular,
+        })
+        .from(listings)
+        .innerJoin(cities, eq(cities.id, listings.cityId))
+        .innerJoin(categories, eq(categories.id, listings.primaryCategoryId));
+
+      expect(rows).toHaveLength(200);
+      for (const row of rows) {
+        expect(row.description, "every listing needs a description").toBeTruthy();
+        expect(
+          row.description,
+          `${row.description} does not mention its own city ${row.city}`,
+        ).toContain(row.city);
+        expect(
+          row.description,
+          `${row.description} does not mention its own category ${row.category}`,
+        ).toContain(row.category);
+      }
+    });
+  }, 60000);
+});
+
+describe("city intro copy", () => {
+  it("writes real copy for every city, built from that city's own facts", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+
+      for (const city of rows) {
+        const intro = city.introHtml;
+        expect(intro, `${city.name} has no intro copy`).toBeTruthy();
+        expect(intro).toContain(city.name);
+        if (city.region) expect(intro).toContain(city.region);
+        // Two paragraphs, not a placeholder. The indexing gate only checks for
+        // NOT NULL, so filler here is how a thin site talks itself into being
+        // indexed.
+        expect((intro!.match(/<p>/g) ?? []).length).toBeGreaterThanOrEqual(2);
+        expect(intro!.length).toBeGreaterThan(120);
+      }
+    });
+  }, 60000);
+
+  it("uses the nouns from siteConfig.entity, so a clone reads correctly", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const [city] = await tx.select().from(cities).where(eq(cities.slug, "leeds"));
+      const intro = city!.introHtml!;
+      expect(intro).toContain(siteConfig.entity.plural);
+      expect(intro).toContain(siteConfig.name);
+    });
+  }, 60000);
+
+  it("escapes ampersands so a category name cannot break the markup", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      for (const city of rows) {
+        expect(city.introHtml, `${city.name} has a bare & in its intro copy`)
+          .not.toMatch(/&(?!amp;|lt;|gt;|quot;|#39;)/);
+      }
+    });
+  }, 60000);
+
+  it("never claims a listing count, which writeIntroCopy cannot keep current", async () => {
+    // writeIntroCopy only ever fills intro_html where it is NULL (see the test
+    // above), so a number baked in here is true at seed time and false the
+    // first time a listing is added or unpublished afterwards — on a page
+    // that is also the meta description.
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      for (const city of rows) {
+        expect(city.introHtml, `${city.name} intro asserts a digit count`)
+          .not.toMatch(/\d/);
+      }
+    });
+  }, 60000);
+
+  it("never overwrites intro copy an editor has already written", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      await tx.update(cities).set({ introHtml: "<p>Hand written.</p>" })
+        .where(eq(cities.slug, "leeds"));
+      await runSeed(tx, NICHE);
+      const [leeds] = await tx.select().from(cities).where(eq(cities.slug, "leeds"));
+      expect(leeds!.introHtml).toBe("<p>Hand written.</p>");
+    });
+  }, 90000);
+});
+
+describe("the indexing gate has something to bite on", () => {
+  it("gives all but three cities enough listings to clear the threshold", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      const thin = rows.filter((c) => c.listingCount < siteConfig.seo.minListingsToIndex);
+
+      // Three, deliberately: a seed where every city passes proves nothing
+      // about the gate, and a seed where a dozen fail is just bad data.
+      expect(thin.map((c) => c.slug).sort()).toHaveLength(3);
+      expect(rows.every((c) => c.listingCount > 0)).toBe(true);
+    });
+  }, 60000);
+
+  it("leaves the thin cities blocked on the count alone, not on missing copy", async () => {
+    await withTestDb(async (tx) => {
+      await runSeed(tx, NICHE);
+      const rows = await tx.select().from(cities);
+      const thin = rows.filter((c) => c.listingCount < siteConfig.seo.minListingsToIndex);
+      expect(thin.every((c) => c.introHtml !== null)).toBe(true);
     });
   }, 60000);
 });

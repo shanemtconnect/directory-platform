@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { isEnabled } from "@/lib/features/flags";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { rateLimit } from "@/lib/spam/rate-limit";
+import {
+  SHORTLIST_RATE_LIMIT,
+  limitPublicWrite,
+  retryMessage,
+} from "@/lib/spam/write-limit";
 import {
   MAX_SHORTLIST_ITEMS,
   SHORTLIST_COOKIE,
@@ -66,9 +70,18 @@ async function mintCookieId(): Promise<string> {
   return id;
 }
 
-async function clientIp(): Promise<string> {
-  const h = await headers();
-  return (h.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || "unknown";
+/**
+ * Every shortlist mutation passes through here, sharing one bucket per client.
+ *
+ * All four are public writes: add and remove create and delete rows, rename
+ * stores text the visitor typed, and setPublic decides whether a list is
+ * readable by anyone holding its link. Only `addToShortlist` used to count
+ * anything, which meant the write that stores attacker-controlled text was the
+ * unmetered one. Returns null when the request is within its budget.
+ */
+async function overLimit(): Promise<ShortlistState | null> {
+  const limit = await limitPublicWrite("shortlist", await headers(), SHORTLIST_RATE_LIMIT);
+  return limit.allowed ? null : { ok: false, message: retryMessage(limit) };
 }
 
 /**
@@ -82,16 +95,8 @@ export async function addToShortlist(listingId: string): Promise<ShortlistState>
   if (!isEnabled("shortlist")) return OFF;
   if (typeof listingId !== "string" || listingId.length === 0) return BROKEN;
 
-  const limit = await rateLimit(`shortlist:${await clientIp()}`, {
-    limit: 120,
-    windowSeconds: 3600,
-  });
-  if (!limit.allowed) {
-    return {
-      ok: false,
-      message: `Too many changes from this connection. Please try again in ${Math.ceil(limit.retryAfterSeconds / 60)} minutes.`,
-    };
-  }
+  const blocked = await overLimit();
+  if (blocked) return blocked;
 
   try {
     const cookieId = (await readCookieId()) ?? (await mintCookieId());
@@ -128,6 +133,9 @@ export async function removeFromShortlist(listingId: string): Promise<ShortlistS
   if (!isEnabled("shortlist")) return OFF;
   if (typeof listingId !== "string" || listingId.length === 0) return BROKEN;
 
+  const blocked = await overLimit();
+  if (blocked) return blocked;
+
   try {
     const cookieId = await readCookieId();
     // No cookie means no list, which means it is already not on it.
@@ -146,6 +154,9 @@ export async function removeFromShortlist(listingId: string): Promise<ShortlistS
 export async function renameShortlist(name: string): Promise<ShortlistState> {
   if (!isEnabled("shortlist")) return OFF;
   if (typeof name !== "string") return BROKEN;
+
+  const blocked = await overLimit();
+  if (blocked) return blocked;
 
   try {
     const cookieId = await readCookieId();
@@ -172,6 +183,9 @@ export async function renameShortlist(name: string): Promise<ShortlistState> {
 export async function setPublic(isPublic: boolean): Promise<ShortlistState> {
   if (!isEnabled("shortlist")) return OFF;
   if (typeof isPublic !== "boolean") return BROKEN;
+
+  const blocked = await overLimit();
+  if (blocked) return blocked;
 
   try {
     const cookieId = await readCookieId();

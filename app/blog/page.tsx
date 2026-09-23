@@ -1,14 +1,19 @@
 import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
+import { contentSectionLabel } from "@/lib/features/navigation";
 import { getAllPosts } from "@/lib/blog/posts";
 import { PostCard } from "@/components/blog/PostCard";
-import { JsonLd } from "@/components/seo/JsonLd";
-import { breadcrumbSchema } from "@/lib/schema/builders";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { SponsorRails } from "@/components/ads/SponsorRails";
 
 export const revalidate = 3600;
 
+// One label for the section, from the contentHub flag, so the nav link, the
+// breadcrumb, the H1 and the title cannot drift apart.
+const SECTION = contentSectionLabel();
+
 export const metadata: Metadata = {
-  title: "Guides",
+  title: SECTION,
   description: `Practical guides from ${siteConfig.name} on choosing, comparing and booking.`,
   alternates: { canonical: "/blog" },
 };
@@ -23,15 +28,18 @@ export default function BlogIndex() {
 
   return (
     <>
-      <JsonLd data={breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Guides", path: "/blog" }])} />
-      <main>
-        <h1>Guides</h1>
-        {posts.length === 0 ? (
-          <p>There are no guides published yet.</p>
-        ) : (
-          posts.map((post) => <PostCard key={post.slug} post={post} />)
-        )}
-      </main>
+    <SponsorRails placement="blog" />
+    <main>
+      <Breadcrumbs trail={[{ name: "Home", path: "/" }, { name: SECTION, path: "/blog" }]} />
+      <h1>{SECTION}</h1>
+      {posts.length === 0 ? (
+        <p>Nothing has been published here yet.</p>
+      ) : (
+        <div className="mt-6 grid gap-4">
+          {posts.map((post) => <PostCard key={post.slug} post={post} />)}
+        </div>
+      )}
+    </main>
     </>
   );
 }

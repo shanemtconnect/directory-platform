@@ -33,7 +33,6 @@ export function SaveButton({
         data-testid="shortlist-save"
         data-listing-id={listingId}
         disabled={pending}
-        aria-label={`Save ${listingName} to your shortlist`}
         onClick={() => {
           setError(null);
           start(async () => {
@@ -47,7 +46,21 @@ export function SaveButton({
           });
         }}
       >
-        {pending ? "Saving…" : `Save this ${e.singular}`}
+        {/*
+          The accessible name is built from the visible text plus a hidden
+          suffix, not an aria-label. An aria-label that does not begin with
+          the words on the button ("Save The Mill to your shortlist" over
+          "Save this …") fails WCAG 2.5.3 label-in-name: voice-control
+          users say what they can see, and the name has to start with it.
+        */}
+        {pending ? (
+          "Saving…"
+        ) : (
+          <>
+            Save this {e.singular}
+            <span className="sr-only">, {listingName}, to your shortlist</span>
+          </>
+        )}
       </button>
       {error && <span role="alert" data-testid="shortlist-save-error">{error}</span>}
     </>

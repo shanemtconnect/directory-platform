@@ -1,7 +1,12 @@
-import type { SiteConfig } from "./types";
+import type { CustomField, SiteConfig } from "./types";
 
 /**
  * THE ONLY FILE A CLONE EDITS.
+ *
+ * @template-config: replaced by `pnpm new-site` — this is the demo niche the
+ * repository ships with. The wizard writes over it without --overwrite; the
+ * config it writes does not carry this line, so a real clone's config is
+ * never replaced by accident.
  *
  * Every value here is niche-specific. If a string in a component would need to
  * change when this repo is cloned for a different niche, it belongs in here or
@@ -194,4 +199,80 @@ export const siteConfig = {
     requireIntroCopyToIndex: true,
     footerCitiesPerCategory: 18,
   },
+
+  quotes: {
+    maxRecipients: 5,
+  },
+
+  stats: {
+    // A year and a bit: covers the 365-day paid window with room for an
+    // owner to compare this month against the same month last year.
+    retentionDays: 400,
+  },
+
+  ads: {
+    // Sponsor rails: house ads plus self-serve sponsors, never an ad network.
+    // Off until the site has the traffic to sell; `pnpm new-site` asks.
+    enabled: false,
+    monthlyPrice: 49,
+    placements: {
+      home: "never",
+      cityPillar: "always",
+      categoryPillar: "always",
+      listingDetail: "unpaid-only",
+      search: "always",
+      blog: "always",
+      other: "never",
+    },
+  },
+
+  legal: {
+    privacyLastUpdated: "2026-09-08",
+    termsLastUpdated: "2026-09-08",
+    dataController: "TBC",
+  },
+
+  // Awards: one computed winner per town and category a year. A listing needs
+  // this many published reviews to be in the running (see lib/db/queries/awards.ts).
+  awards: {
+    minReviews: 5,
+  },
+  // Featured spots. Three positions per pillar page; the floor is the lowest
+  // monthly bid a spot accepts. Region spots cover every city in a county, so
+  // they start higher.
+  featured: {
+    positions: 3,
+    floors: {
+      city: 50,
+      region: 100,
+    },
+  },
+  // The jobs board. Verified-tier owners post free; everyone else pays this
+  // once per post through PayPal Orders. Approval, expiry and the reminder are
+  // driven by the two day counts.
+  jobs: {
+    price: 29,
+    durationDays: 30,
+    reminderDays: 7,
+  },
 } as const satisfies SiteConfig;
+
+/**
+ * Widened accessors.
+ *
+ * `as const satisfies SiteConfig` is load-bearing — it keeps the literal types
+ * the feature-flag tree-shaking depends on. The cost is that it narrows
+ * `customFields` to a union of exact object shapes, so an optional key like
+ * `searchable` or `showInCard` does not exist on members that omit it, and
+ * `.filter(f => f.showInCard)` is a compile error rather than a false.
+ *
+ * That has now caught three separate pieces of work. Read fields through here
+ * instead of reaching into the const.
+ */
+export const customFields: readonly CustomField[] = siteConfig.customFields;
+
+export const searchableFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.searchable === true);
+
+export const cardFields = (): readonly CustomField[] =>
+  customFields.filter((f) => f.showInCard === true);

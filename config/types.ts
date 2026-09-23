@@ -2,6 +2,21 @@ export type TierName = "free" | "essential" | "premium";
 
 export type CustomFieldType = "number" | "boolean" | "text" | "select" | "currency";
 
+/**
+ * The families the theme layer ships webfonts for.
+ *
+ * ONE list, here. A clone's font is chosen by the wizard (lib/clone/questions.ts)
+ * and read by lib/theme.ts, and a second copy of the union in either place is a
+ * font that can be written into a config nothing knows how to load.
+ */
+export type FontFamily =
+  | "Fraunces"
+  | "Inter"
+  | "Playfair Display"
+  | "Source Sans 3"
+  | "DM Sans"
+  | "Lora";
+
 export interface CustomField {
   readonly key: string;
   readonly label: string;
@@ -91,6 +106,32 @@ export type FeatureMap = { readonly [K in FeatureFlag]: boolean };
 
 export type SiteMode = "niche-national" | "local-multi-vertical";
 
+/**
+ * Where a sponsor rail may be mounted. Every page that mounts `<SponsorRails>`
+ * names one of these; the policy in `lib/ads/policy.ts` decides per placement.
+ */
+export const AD_PLACEMENTS = [
+  "home",
+  "cityPillar",
+  "categoryPillar",
+  "listingDetail",
+  "search",
+  "blog",
+  "other",
+] as const;
+export type AdPlacement = (typeof AD_PLACEMENTS)[number];
+
+/** `unpaid-only` = the page's listing is tier `free` AND not verified. */
+export type AdPlacementRule = "never" | "always" | "unpaid-only";
+
+export interface AdsConfig {
+  /** Master switch. Off, nothing renders anywhere; the env kill switch is on top. */
+  readonly enabled: boolean;
+  /** What a self-serve sponsor pays per month, in `currency`. */
+  readonly monthlyPrice: number;
+  readonly placements: { readonly [K in AdPlacement]: AdPlacementRule };
+}
+
 export interface SiteConfig {
   readonly name: string;
   readonly shortName: string;
@@ -126,8 +167,8 @@ export interface SiteConfig {
   readonly theme: {
     readonly primary: string;
     readonly accent: string;
-    readonly fontHeading: string;
-    readonly fontBody: string;
+    readonly fontHeading: FontFamily;
+    readonly fontBody: FontFamily;
     readonly radius: string;
   };
 
@@ -153,5 +194,90 @@ export interface SiteConfig {
     readonly minListingsToIndex: number;
     readonly requireIntroCopyToIndex: boolean;
     readonly footerCitiesPerCategory: number;
+  };
+
+  /** The get-quotes broadcast (feature flag `quoteBroadcast`). */
+  readonly quotes: {
+    /** How many listings one request is sent to, at most. */
+    readonly maxRecipients: number;
+  };
+
+  readonly stats: {
+    /**
+     * How many days of `listing_stats_daily` the worker keeps; older rows are
+     * deleted nightly. At least 30, and at least the longest tier
+     * `statsWindowDays` — anything shorter would purge days an owner is still
+     * shown. `config/validate.ts` refuses the build otherwise.
+     */
+    readonly retentionDays: number;
+  };
+
+  /** Sponsor rails — house ads and self-serve sponsors. See lib/ads/policy.ts. */
+  readonly ads: AdsConfig;
+
+  /**
+   * The facts /privacy and /terms state about themselves.
+   *
+   * Those two pages are templates with the boilerplate written out and every
+   * clone-specific claim marked "[Confirm with counsel]". These are the fields
+   * that are safe to fill in from config — who the controller is, and when each
+   * document was last revised. A stale "last updated" is worse than none, so it
+   * is a value here rather than a build date.
+   */
+  readonly legal: {
+    /** ISO date, e.g. "2026-09-08". Bump it whenever the policy text changes. */
+    readonly privacyLastUpdated: string;
+    readonly termsLastUpdated: string;
+    /**
+     * The entity that decides how personal data is used. Usually the same as
+     * `legalEntity`, but not always — a site operated by one company on behalf
+     * of another has two different answers, and only one of them is right.
+     */
+    readonly dataController: string;
+  };
+
+  /**
+   * The awards module (flag `awards`, requires `reviews`). Awards are computed,
+   * never voted or sold: a city × category with at least three rated listings
+   * gets one winner a year, the highest-rated listing with at least
+   * `minReviews` published reviews. Optional so a config scaffolded before the
+   * module existed still type-checks; `awardsMinReviews()` in
+   * lib/db/queries/awards.ts supplies the default of 5.
+   */
+  readonly awards?: {
+    readonly minReviews: number;
+  };
+
+  /**
+   * Featured spots — the three paid positions above the organic grid on every
+   * city and city × category pillar page (and, once region pages exist, on
+   * region pages). Owners of verified, paying listings bid a monthly amount
+   * per spot; the top `positions` bids are shown and charged, the rest are
+   * "outbid" and pay nothing. Floors are in major units of `currency` and set
+   * the lowest bid a spot will take; a clone prices its own market here.
+   */
+  readonly featured: {
+    readonly positions: number;
+    readonly floors: {
+      readonly city: number;
+      readonly region: number;
+    };
+  };
+
+  /**
+   * The jobs board (flag `jobBoard`). Every number a clone would change lives
+   * here; the pages and the worker read them and never carry their own.
+   */
+  readonly jobs: {
+    /**
+     * What a poster without a Verified listing pays, one-off, in the site
+     * currency. A verified-tier owner posts free — that is the upsell.
+     * 0 makes every post free (the payment step is skipped, not charged £0).
+     */
+    readonly price: number;
+    /** How long a job stays open after it is approved. */
+    readonly durationDays: number;
+    /** How many days before expiry the poster is reminded. Less than durationDays. */
+    readonly reminderDays: number;
   };
 }

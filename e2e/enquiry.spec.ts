@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { paginatingCity, uniquePhone } from "./fixtures";
 
-const CITY = "/richmond-north-yorkshire";
+let CITY: string;
+test.beforeAll(async () => {
+  CITY = (await paginatingCity()).path;
+});
 
 /**
  * The enquiry form is the only revenue-relevant action on the site: if it
@@ -28,7 +32,7 @@ test.describe("enquiry submission", () => {
     const stamp = Date.now();
     await form.locator("#enq-name").fill("Playwright Smoke");
     await form.locator("#enq-email").fill(`e2e+${stamp}@example.com`);
-    await form.locator("#enq-phone").fill("01748 000000");
+    await form.locator("#enq-phone").fill(uniquePhone());
     await form
       .locator("#enq-message")
       .fill(`Automated end-to-end smoke test enquiry (${stamp}). Please ignore.`);
@@ -36,6 +40,12 @@ test.describe("enquiry submission", () => {
     // The honeypot must stay empty — filling it returns a silent fake success,
     // which would make this test pass for the wrong reason.
     await expect(form.locator("#company_website")).toHaveValue("");
+
+    // Turnstile issues its token asynchronously. Submitting before it lands
+    // sends an empty one, which the action now rejects rather than waving
+    // through — so wait for it, exactly as a person would.
+    await expect(form.locator('input[name="cf-turnstile-response"]'))
+      .not.toHaveValue("", { timeout: 15_000 });
 
     await form.locator('button[type="submit"]').click();
 

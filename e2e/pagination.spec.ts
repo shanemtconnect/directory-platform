@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { paginatingCity } from "./fixtures";
 
 /**
  * Non-negotiable project requirement: pagination must be crawlable.
@@ -7,20 +8,33 @@ import { expect, test, type Page } from "@playwright/test";
  * listing set invisible to crawlers. Every paginated link on this site has to
  * be a real <a href> pointing at a real, server-rendered URL that returns 200.
  *
- * Note on the seed data: no seeded city exceeds PER_PAGE (24) — the largest is
- * Richmond with 11 — so the pillar pages legitimately render no pagination nav.
- * The link-level assertions therefore run against /search, which has all 200
- * listings and does paginate, while the path-pagination assertion hits
- * /<city>/page/2 directly to prove it is a real server route and not a JS one.
+ * Note on the seed data: `fixtures.ts`'s `paginatingCity()` guarantees at
+ * least one seeded city exceeds PER_PAGE, so that city's pillar page
+ * legitimately renders a pagination nav. The link-level assertions also run
+ * against /search, which holds every listing and does paginate, while the
+ * path-pagination assertion hits /<city>/page/2 directly to prove it is a
+ * real server route and not a JS one.
  */
 
 const CRAWLED = [
   "/",
-  "/richmond-north-yorkshire",
   "/cities",
   "/categories",
   "/search",
 ];
+
+let CITY: string;
+let CITY_NAME: string;
+test.beforeAll(async () => {
+  const city = await paginatingCity();
+  CITY = city.path;
+  CITY_NAME = city.name;
+});
+
+/** The static crawl set plus the city the fixtures found to paginate. */
+async function crawledPaths(): Promise<string[]> {
+  return [...CRAWLED, CITY];
+}
 
 async function hrefsOnPage(page: Page): Promise<string[]> {
   return page.$$eval("a[href]", (as) => as.map((a) => a.getAttribute("href") ?? ""));
@@ -49,13 +63,33 @@ test.describe("pagination is crawlable", () => {
     });
   }
 
+  test("no javascript: hrefs on the paginating city", async ({ page }) => {
+    const response = await page.goto(CITY);
+    expect(response?.status(), `${CITY} must return 200`).toBe(200);
+
+    const hrefs = await hrefsOnPage(page);
+    expect(hrefs.length, `${CITY} should contain links at all`).toBeGreaterThan(0);
+
+    const bad = hrefs.filter((h) => /^\s*javascript:/i.test(h));
+    expect(bad, `javascript: hrefs found on ${CITY}`).toEqual([]);
+
+    // A bare "#" href on a pagination control is the same disease wearing a
+    // different coat: it moves the navigation into JavaScript.
+    const paginationHrefs = await page.$$eval(
+      '[data-testid="pagination"] a[href]',
+      (as) => as.map((a) => a.getAttribute("href") ?? ""),
+    );
+    const inert = paginationHrefs.filter((h) => h.trim() === "" || h.trim() === "#");
+    expect(inert, `inert pagination hrefs on ${CITY}`).toEqual([]);
+  });
+
   test("search pagination links are real anchors that resolve", async ({ page, request }) => {
     await page.goto("/search");
 
     const nav = page.locator('[data-testid="pagination"]');
     await expect(
       nav,
-      "unfiltered /search holds all 200 listings and must paginate",
+      "unfiltered /search holds every listing and must paginate",
     ).toBeVisible();
 
     const links = nav.locator("a[href]");
@@ -92,18 +126,18 @@ test.describe("pagination is crawlable", () => {
   });
 
   test("path pagination /<city>/page/2 is a real server-rendered URL", async ({ request }) => {
-    const res = await request.get("/richmond-north-yorkshire/page/2");
+    const res = await request.get(`${CITY}/page/2`);
     expect(res.status(), "/<city>/page/2 must be served, not routed in JS").toBe(200);
 
     const html = await res.text();
     expect(html).toContain("<h1");
-    expect(html, "page 2 must be server-rendered HTML").toMatch(/Richmond/i);
+    expect(html, "page 2 must be server-rendered HTML").toMatch(new RegExp(CITY_NAME, "i"));
   });
 
   test("every /page/N anchor found while crawling resolves to 200", async ({ page, request }) => {
     const found = new Set<string>();
 
-    for (const path of CRAWLED) {
+    for (const path of await crawledPaths()) {
       await page.goto(path);
       for (const href of await hrefsOnPage(page)) {
         if (/\/page\/\d+$/.test(href)) found.add(href);

@@ -1,0 +1,283 @@
+import { randomUUID } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { auditLog, featuredSubscriptions, listings, subscriptions, unsubscribes, user } from "@/lib/db/schema";
+import type { PayPalClient } from "@/lib/billing/paypal";
+import { placeBid } from "@/lib/spots/bidding";
+import { withTestDb, type TestDb } from "@/test/db";
+import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
+import { ensureProfile } from "@/lib/auth/profile";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { createPendingSubscription } from "@/lib/db/queries/billing";
+import { rerankSpots, settleSpots } from "@/lib/spots/engine";
+import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availability";
+import {
+  attachFeaturedProvider,
+  citySpotKey,
+  closeSpot,
+  createFeaturedSubscription,
+  currentFeaturedSubscription,
+  eligibleListingIds,
+  ensureSpot,
+  featuredForSpotKey,
+  insertBid,
+  listingForSystem,
+  openSpot,
+  regionSpotKey,
+  setSpotFloor,
+  spotBids,
+  spotById,
+  spotLeaderboard,
+  spotsForKeys,
+  upsellCandidate,
+} from "./spots";
+
+const ADMIN = { role: "admin" as const, userId: "worker" };
+
+async function bidder(tx: TestDb, ctx: ListingCtx, name: string, opts: { sub?: boolean; claim?: "verified" | "claimed" } = {}) {
+  const userId = `u_${randomUUID()}`;
+  await tx.insert(user).values({ id: userId, name, email: `${userId}@example.test` });
+  const viewer = { role: "user" as const, userId };
+  const { id: profileId } = await ensureProfile(tx, viewer);
+  const listingId = await makeListing(tx, ctx, { name, ownerId: profileId, claimStatus: opts.claim ?? "verified", tier: "premium" });
+  if (opts.sub !== false) {
+    const id = await createPendingSubscription(tx, viewer, { listingId, profileId, tier: "premium", interval: "monthly", providerPlanId: "P-1", ip: null });
+    await tx.update(subscriptions).set({ status: "active" }).where(eq(subscriptions.id, id));
+  }
+  return { viewer, profileId, listingId, email: `${userId}@example.test` };
+}
+
+async function activeBid(tx: TestDb, b: Awaited<ReturnType<typeof bidder>>, spotId: string, amountCents: number) {
+  const sub = await createFeaturedSubscription(tx, b.viewer, { listingId: b.listingId, profileId: b.profileId, planId: "P-F", quantity: 1, ip: null });
+  return insertBid(tx, b.viewer, { spotId, listingId: b.listingId, subscriptionId: sub, amountCents, status: "active", ip: null });
+}
+
+describe("featuredForSpotKey / spotLeaderboard", () => {
+  it("answers the region spot in position order with the spot id, and the leaderboard carries names but no amounts", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const b = await bidder(tx, ctx, "Bravo");
+      const spot = await ensureSpot(tx, a.viewer, regionSpotKey("West Yorkshire", null));
+      await activeBid(tx, a, spot.id, 12000);
+      await activeBid(tx, b, spot.id, 15000);
+      await rerankSpots(tx, [spot.id]);
+
+      const row = await featuredForSpotKey(tx, PUBLIC_VIEWER, { areaKind: "region", areaId: "west-yorkshire", categoryId: null });
+      expect(row.map((r) => [r.name, r.position, r.spotId])).toEqual([["Bravo", 1, spot.id], ["Alpha", 2, spot.id]]);
+
+      const board = (await spotLeaderboard(tx, PUBLIC_VIEWER, spot.id))!;
+      expect(board.areaName).toBe("West Yorkshire");
+      expect(board.path).toBe("/areas/west-yorkshire");
+      expect(board.featured.map((f) => f.name)).toEqual(["Bravo", "Alpha"]);
+      expect(JSON.stringify(board)).not.toContain("15000");
+      expect(JSON.stringify(board)).not.toContain("12000");
+
+      // An unpublished holder is not shown.
+      await tx.update(listings).set({ status: "draft" }).where(eq(listings.id, b.listingId));
+      expect((await spotLeaderboard(tx, PUBLIC_VIEWER, spot.id))!.featured.map((f) => f.name)).toEqual(["Alpha"]);
+      expect(await spotLeaderboard(tx, PUBLIC_VIEWER, randomUUID())).toBeNull();
+    });
+  });
+});
+
+describe("availability", () => {
+  it("counts the spots on a listing's pages with room it does not hold, priced at the cheapest entry", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const b = await bidder(tx, ctx, "Bravo");
+      const c = await bidder(tx, ctx, "Charlie");
+      const d = await bidder(tx, ctx, "Delta");
+      // Town spot full at 60/70/80 without Alpha: the only way in is 61.
+      const town = await ensureSpot(tx, a.viewer, citySpotKey(ctx.cityId, null));
+      await activeBid(tx, b, town.id, 6000);
+      await activeBid(tx, c, town.id, 7000);
+      await activeBid(tx, d, town.id, 8000);
+      // Alpha holds the category spot.
+      const cat = await ensureSpot(tx, a.viewer, citySpotKey(ctx.cityId, ctx.primaryCategoryId));
+      await activeBid(tx, a, cat.id, 5000);
+      await rerankSpots(tx, [town.id, cat.id]);
+
+      const alpha = (await availabilityForListing(tx, ADMIN, a.listingId))!;
+      // Region and region × category (no rows yet) at the region floor; the town is full.
+      expect(alpha.emptyCount).toBe(2);
+      expect(alpha.fromCents).toBe(10000);
+      expect(alpha.ownerEmail).toBe(a.email);
+      expect(alpha.unsubscribed).toBe(false);
+
+      const bravo = (await availabilityForListing(tx, ADMIN, b.listingId))!;
+      // Bravo holds the town spot; category (Alpha alone, 2 free at the floor), region, region × category.
+      expect(bravo.emptyCount).toBe(3);
+      expect(bravo.fromCents).toBe(5000);
+
+      await tx.insert(unsubscribes).values({ addressNormalised: b.email, reason: "t" });
+      expect((await availabilityForListing(tx, ADMIN, b.listingId))!.unsubscribed).toBe(true);
+
+      const ineligible = await bidder(tx, ctx, "Echo", { sub: false });
+      expect(await availabilityForListing(tx, ADMIN, ineligible.listingId)).toBeNull();
+      const claimed = await bidder(tx, ctx, "Foxtrot", { claim: "claimed" });
+      expect(await listingForSystem(tx, ADMIN, claimed.listingId)).toMatchObject({ eligible: false, reason: "not-verified" });
+
+      const ids = await eligibleListingIds(tx, ADMIN);
+      for (const id of [a.listingId, b.listingId, c.listingId, d.listingId]) expect(ids).toContain(id);
+      expect(ids).not.toContain(ineligible.listingId);
+      expect(ids).not.toContain(claimed.listingId);
+    });
+  });
+
+  it("the site-wide report lists every spot row and a virtual row per published city and region", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const cat = await ensureSpot(tx, a.viewer, citySpotKey(ctx.cityId, ctx.primaryCategoryId));
+      await activeBid(tx, a, cat.id, 5000);
+      await rerankSpots(tx, [cat.id]);
+
+      const report = await emptySpotsReport(tx, ADMIN);
+      const leeds = report.filter((r) => r.areaName === "Leeds");
+      expect(leeds.map((r) => [r.categoryName, r.spotId === null, r.filled, r.topCents])).toEqual(
+        expect.arrayContaining([
+          [null, true, 0, null],
+          [expect.any(String), false, 1, 5000],
+        ]),
+      );
+      const region = report.find((r) => r.key.areaKind === "region" && r.areaName === "West Yorkshire")!;
+      expect(region).toMatchObject({ spotId: null, filled: 0, floorCents: 10000, path: "/areas/west-yorkshire" });
+      expect(leeds.find((r) => r.categoryName === null)?.path).toMatch(/^\/leeds/);
+    });
+  });
+});
+
+describe("upsellCandidate", () => {
+  it("is the owner's eligible listing in the area (and category) that holds no position on the spot, priced to enter", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const key = citySpotKey(ctx.cityId, null);
+      // No spot row yet: the floor.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, key)).toEqual({ listingId: a.listingId, listingName: "Alpha", fromCents: 5000 });
+      // Region page too.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, regionSpotKey("West Yorkshire", null))).toMatchObject({ fromCents: 10000 });
+      // Another town: nothing.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, citySpotKey(randomUUID(), null))).toBeNull();
+      // A category the listing is not in: nothing.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, citySpotKey(ctx.cityId, randomUUID()))).toBeNull();
+      // Its own category: yes.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, citySpotKey(ctx.cityId, ctx.primaryCategoryId))).not.toBeNull();
+
+      // A full spot prices the entry at lowest + 1; once Alpha holds a place there is nothing to sell.
+      const b = await bidder(tx, ctx, "Bravo");
+      const c = await bidder(tx, ctx, "Charlie");
+      const d = await bidder(tx, ctx, "Delta");
+      const spot = await ensureSpot(tx, a.viewer, key);
+      await activeBid(tx, b, spot.id, 6000);
+      await activeBid(tx, c, spot.id, 7000);
+      await activeBid(tx, d, spot.id, 8000);
+      await rerankSpots(tx, [spot.id]);
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, key)).toMatchObject({ fromCents: 6100 });
+      expect(await upsellCandidate(tx, b.viewer, b.profileId, key)).toBeNull();
+
+      // A profile that owns nothing here, and an owner whose plan lapsed: nothing.
+      expect(await upsellCandidate(tx, a.viewer, randomUUID(), citySpotKey(ctx.cityId, ctx.primaryCategoryId))).toBeNull();
+      const unpaid = await bidder(tx, ctx, "Echo", { sub: false });
+      expect(await upsellCandidate(tx, unpaid.viewer, unpaid.profileId, key)).toBeNull();
+    });
+  });
+});
+
+describe("admin: close, open, floor", () => {
+  it("close cancels every bid with an audit row and the ip, open flips it back, the floor binds new bids only", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const b = await bidder(tx, ctx, "Bravo");
+      const key = citySpotKey(ctx.cityId, null);
+      const spot = await ensureSpot(tx, a.viewer, key);
+      await activeBid(tx, a, spot.id, 6000);
+      await activeBid(tx, b, spot.id, 7000);
+      await rerankSpots(tx, [spot.id]);
+
+      expect(await closeSpot(tx, a.viewer, key, { ip: "203.0.113.9" })).toEqual({ outcome: "not-allowed" });
+
+      const closed = await closeSpot(tx, ADMIN, key, { ip: "203.0.113.9" });
+      expect(closed).toMatchObject({ outcome: "done", spotId: spot.id, paths: [expect.stringMatching(/^\/leeds/)] });
+      expect((closed as { listingIds: string[] }).listingIds.sort()).toEqual([a.listingId, b.listingId].sort());
+      expect((await spotById(tx, ADMIN, spot.id))?.status).toBe("closed");
+      expect(await spotBids(tx, ADMIN, spot.id)).toEqual([]);
+      const audits = await tx.select({ action: auditLog.action, ip: auditLog.ip, meta: auditLog.meta }).from(auditLog).where(eq(auditLog.ip, "203.0.113.9"));
+      expect(audits.filter((r) => r.action === "spots.bid_cancelled")).toHaveLength(2);
+      expect(audits.find((r) => r.action === "spots.spot_closed")?.meta).toMatchObject({ bidsCancelled: 2 });
+      expect(await featuredForSpotKey(tx, PUBLIC_VIEWER, key)).toEqual([]);
+
+      await openSpot(tx, ADMIN, key, { ip: null });
+      expect((await spotById(tx, ADMIN, spot.id))?.status).toBe("open");
+
+      await setSpotFloor(tx, ADMIN, key, { floorCents: 9000, ip: null });
+      expect((await spotById(tx, ADMIN, spot.id))?.floorCents).toBe(9000);
+      expect(await setSpotFloor(tx, ADMIN, key, { floorCents: 0, ip: null })).toEqual({ outcome: "not-allowed" });
+
+      // A page nobody has bid on: the first admin edit creates the row.
+      const catKey = citySpotKey(ctx.cityId, ctx.primaryCategoryId);
+      const made = await setSpotFloor(tx, ADMIN, catKey, { floorCents: 2000, ip: null });
+      expect(made.outcome).toBe("done");
+      expect((await spotsForKeys(tx, ADMIN, [catKey])).size).toBe(1);
+    });
+  });
+});
+
+describe("I3: close settles the money — no bids left means cancelled at PayPal now, not paused", () => {
+  it("cancels the subscription of a listing with nothing left, revises the one that still holds another spot, never a silent DB-only cancel", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const b = await bidder(tx, ctx, "Bravo");
+      const town = citySpotKey(ctx.cityId, null);
+      const cat = citySpotKey(ctx.cityId, ctx.primaryCategoryId);
+      const townSpot = await ensureSpot(tx, a.viewer, town);
+      const catSpot = await ensureSpot(tx, a.viewer, cat);
+      // Alpha: town only. Bravo: town and category.
+      const aSub = await createFeaturedSubscription(tx, a.viewer, { listingId: a.listingId, profileId: a.profileId, planId: "P-F", quantity: 60, ip: null });
+      await insertBid(tx, a.viewer, { spotId: townSpot.id, listingId: a.listingId, subscriptionId: aSub, amountCents: 6000, status: "active", ip: null });
+      const bSub = await createFeaturedSubscription(tx, b.viewer, { listingId: b.listingId, profileId: b.profileId, planId: "P-F", quantity: 120, ip: null });
+      await insertBid(tx, b.viewer, { spotId: townSpot.id, listingId: b.listingId, subscriptionId: bSub, amountCents: 7000, status: "active", ip: null });
+      await insertBid(tx, b.viewer, { spotId: catSpot.id, listingId: b.listingId, subscriptionId: bSub, amountCents: 5000, status: "active", ip: null });
+      for (const [id, sub, q] of [[aSub, "I-A", 60], [bSub, "I-B", 120]] as const) {
+        await attachFeaturedProvider(tx, ADMIN, id, { providerSubscriptionId: sub, approveUrl: null });
+        await tx.update(featuredSubscriptions).set({ status: "active", quantity: q, requestedQuantity: q }).where(eq(featuredSubscriptions.id, id));
+      }
+      await rerankSpots(tx, [townSpot.id, catSpot.id]);
+
+      const cancelled: string[] = [];
+      const suspended: string[] = [];
+      const revised: { id: string; quantity: number }[] = [];
+      const client: PayPalClient = {
+        createSubscription: async () => ({ id: "I-X", status: "APPROVAL_PENDING", approveUrl: "https://paypal.test/a" }),
+        getSubscription: async () => null,
+        cancelSubscription: async (id) => { cancelled.push(id); },
+        suspendSubscription: async (id) => { suspended.push(id); },
+        activateSubscription: async () => {},
+        manageUrl: async () => null,
+        verifyWebhookSignature: async () => true,
+        reviseSubscription: async (id, input) => { revised.push({ id, quantity: input.quantity }); return { approveUrl: "https://paypal.test/r" }; },
+      };
+      const closed = await closeSpot(tx, ADMIN, town, { ip: null });
+      if (closed.outcome !== "done") throw new Error("close failed");
+      const settled = await settleSpots(tx, [closed.spotId], { client }, closed.listingIds);
+      expect(cancelled).toEqual(["I-A"]);
+      expect(suspended).toEqual([]);
+      expect(revised).toEqual([{ id: "I-B", quantity: 50 }]);
+      expect(settled.changes.find((c) => c.listingId === a.listingId)?.action).toBe("cancelled");
+      expect(settled.changes.find((c) => c.listingId === b.listingId)?.action).toBe("revised");
+      expect((await currentFeaturedSubscription(tx, ADMIN, a.listingId))).toBeNull();
+      const [aRow] = await tx.select({ status: featuredSubscriptions.status }).from(featuredSubscriptions).where(eq(featuredSubscriptions.id, aSub));
+      expect(aRow?.status).toBe("cancelled");
+      expect((await currentFeaturedSubscription(tx, ADMIN, b.listingId))?.status).toBe("active");
+
+      // Alpha bidding again starts a fresh subscription rather than reviving the cancelled one.
+      await openSpot(tx, ADMIN, town, { ip: null });
+      const again = await placeBid(tx, { client, env: { PAYPAL_PLAN_FEATURED: "P-F" }, viewer: a.viewer, profileId: a.profileId, listingId: a.listingId, spot: town, amountCents: 6000, ip: null });
+      expect(again.outcome).toBe("approval");
+    });
+  });
+});

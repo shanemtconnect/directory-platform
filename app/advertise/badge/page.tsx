@@ -1,38 +1,28 @@
 import type { Metadata } from "next";
-import { and, eq } from "drizzle-orm";
 import { siteConfig } from "@/config/site.config";
-import { db } from "@/lib/db/client";
-import { categories, cities, listings } from "@/lib/db/schema";
 import { BadgeGallery } from "@/components/advertise/BadgeGallery";
 import type { SnippetInput } from "@/lib/badge/snippets";
 
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
-  title: `Get your ${siteConfig.name} badge`,
+  // No site name: the root layout's title template appends it, and hardcoding
+  // it here doubled up as "Get your X badge | X".
+  title: "Get your badge",
   description: `Four free badge styles for your own website. Pick one, copy a line of HTML, done.`,
   alternates: { canonical: "/advertise/badge" },
 };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-type Resolved = {
-  base: Omit<SnippetInput, "style">;
-  verified: boolean;
-  ratingAvg: string | null;
-  ratingCount: number;
-  real: boolean;
-};
-
 /**
- * With ?id= we render the owner's own badge, ready to paste. Without it the
- * page still has to be useful to someone deciding whether to bother, so it
- * falls back to a worked example rather than an empty state.
+ * The worked example. This page is static (ISR, hourly) and takes no request
+ * input — reading `searchParams` makes a route dynamic in Next 16, and the
+ * `revalidate` above was a dead export for as long as it did. The owner's own
+ * snippet, and the form that asks where they put it, live at
+ * /advertise/badge/mine behind a session.
  */
-async function resolve(id: string | undefined): Promise<Resolved> {
+function example(): { base: Omit<SnippetInput, "style"> } {
   const e = siteConfig.entity;
-
-  const example: Resolved = {
+  return {
     base: {
       listingId: "00000000-0000-4000-8000-000000000000",
       listingName: `Your ${e.Singular}`,
@@ -40,47 +30,12 @@ async function resolve(id: string | undefined): Promise<Resolved> {
       cityName: "Your town",
       categoryName: e.Singular,
     },
-    verified: true,
-    ratingAvg: "4.8",
-    ratingCount: 27,
-    real: false,
-  };
-
-  if (!id || !UUID.test(id)) return example;
-
-  const [row] = await db
-    .select({ listing: listings, city: cities, category: categories })
-    .from(listings)
-    .innerJoin(cities, eq(cities.id, listings.cityId))
-    .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))
-    .where(and(eq(listings.id, id), eq(listings.status, "published")))
-    .limit(1);
-
-  if (!row) return example;
-
-  return {
-    base: {
-      listingId: row.listing.id,
-      listingName: row.listing.name,
-      listingPath: `/${row.city.slug}/${row.listing.slug}`,
-      cityName: row.city.name,
-      categoryName: row.category?.name ?? e.Singular,
-    },
-    verified: row.listing.claimStatus === "verified",
-    ratingAvg: row.listing.ratingAvg,
-    ratingCount: row.listing.ratingCount,
-    real: true,
   };
 }
 
-export default async function BadgePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ id?: string }>;
-}) {
+export default async function BadgePage() {
   const e = siteConfig.entity;
-  const { id } = await searchParams;
-  const r = await resolve(id);
+  const r = example();
 
   return (
     <main>
@@ -92,25 +47,23 @@ export default async function BadgePage({
         marks you carry.
       </p>
 
-      {r.real ? (
-        <p>
-          <strong>Showing the badge for {r.base.listingName}.</strong> The code below is yours —
-          it already points at your listing.
-        </p>
-      ) : (
-        <p>
-          <strong>This is a worked example.</strong> Open this page from your listing in the
-          owner portal and the code below will point at your own page instead of a placeholder.
-        </p>
-      )}
+      <p>
+        <strong>This is a worked example.</strong> If you own a listing here,{" "}
+        <a href="/advertise/badge/mine" data-testid="my-badge-link">
+          sign in for your own code
+        </a>
+        , which points at your page instead of a placeholder — and tell us where you put it, so
+        we can find the link.
+      </p>
 
       <h2>The four styles</h2>
-      <BadgeGallery
-        base={r.base}
-        verified={r.verified}
-        ratingAvg={r.ratingAvg}
-        ratingCount={r.ratingCount}
-      />
+      <p>
+        Each style comes with two versions of the same code: the plain one, whose badge links
+        straight to your listing, and a tracked one that routes the click through us so the
+        count is visible to you — at the cost of a <code>nofollow</code> on the link. The plain
+        one is the default because the link is the point.
+      </p>
+      <BadgeGallery base={r.base} verified={true} ratingAvg="4.8" ratingCount={27} />
 
       <h2>What the badge shows</h2>
       <ul>

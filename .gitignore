@@ -1,7 +1,8 @@
 node_modules/
 .next/
 .next-pristine/
-out/
+# Next `next export` output — root only, so app/out/ (the sponsor click route) is tracked.
+/out/
 build/
 .env
 .env.local
@@ -17,3 +18,11 @@ docs/superpowers/plans/*master*.md
 # Playwright
 test-results/
 playwright-report/
+
+# Agent worktrees — never part of the repo
+.claude/worktrees/
+# Local SDD scratch reports — never intended for the public repo
+.superpowers/
+
+# Lighthouse + axe audit output (corepack pnpm audit:pages)
+audit-report.json

@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { siteConfig } from "@/config/site.config";
+import { REMOVAL_SLA_WORKING_DAYS } from "@/lib/trust/working-days";
 
 export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "Where our listing information comes from",
   description: "How we compile listings, and how to correct or remove one.",
+  alternates: { canonical: "/data-sources" },
 };
 
 /**
@@ -46,15 +48,23 @@ export default function DataSourcesPage() {
 
       <h2>If a listing is wrong</h2>
       <p>
-        Every listing carries a link to report incorrect information. We&rsquo;d rather fix it
-        than leave it wrong, and corrections are free whether or not you have an account.
+        Every listing carries a &ldquo;Report incorrect information&rdquo; link. It opens a
+        short form that files the correction for someone to read — corrections are free,
+        whether or not you have an account, and you don&rsquo;t have to leave an email address.
+        We&rsquo;d rather fix a listing than leave it wrong.
       </p>
 
       <h2>If you want a listing removed</h2>
       <p>
-        Every unclaimed listing carries a &ldquo;Remove this listing&rdquo; link. We action
-        removal requests within five working days and record the details so a later update
-        cannot reinstate the listing. You do not need to give a reason.
+        Every listing carries a &ldquo;Request removal&rdquo; link, which opens a form asking
+        who you are and where to send the answer. We action removal requests within{" "}
+        {REMOVAL_SLA_WORKING_DAYS} working days and email you when it is done. You do not need
+        to give a reason.
+      </p>
+      <p>
+        When we remove a listing we record enough about it — the name, the postcode and the
+        contact details we held — to stop a later update from reinstating it. That record
+        exists so you never have to ask twice, and it is not used for anything else.
       </p>
 
       <h2>Claiming a listing</h2>

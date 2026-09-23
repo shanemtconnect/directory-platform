@@ -1,6 +1,8 @@
 export type SniffedMime = "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
 
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+/** What an alt attribute can usefully hold; longer is a caption, not alt text. */
+export const LISTING_PHOTO_ALT_MAX = 250;
 export const LISTING_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export const CLAIM_DOCUMENT_TYPES = ["image/jpeg", "image/png", "application/pdf"] as const;
 

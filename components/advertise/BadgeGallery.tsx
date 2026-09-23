@@ -1,10 +1,10 @@
 import { siteConfig } from "@/config/site.config";
-import { BADGE_STYLES, type BadgeStyle } from "@/lib/badge/svg";
+import { awardBadgeStyle, BADGE_STYLES, type BadgeStyle, type StaticBadgeStyle } from "@/lib/badge/svg";
 import { badgeKit, type SnippetInput } from "@/lib/badge/snippets";
 import { BadgePreview } from "./BadgePreview";
 import { SnippetBlock } from "./SnippetBlock";
 
-const BLURB: Record<BadgeStyle, string> = {
+const BLURB: Record<StaticBadgeStyle, string> = {
   dark: "The default. Sits well on a light page and on a photo.",
   light: "For dark headers and footers, or anywhere the dark badge disappears.",
   compact: "One line, 40px tall. Made for a footer strip beside other marks.",
@@ -18,21 +18,35 @@ const BLURB: Record<BadgeStyle, string> = {
  * what is shown here cannot drift from what gets served.
  */
 export function BadgeGallery({
-  base, verified, ratingAvg, ratingCount,
+  base, verified, ratingAvg, ratingCount, awardYears = [],
 }: {
   base: Omit<SnippetInput, "style">;
   verified: boolean;
   ratingAvg?: string | number | null;
   ratingCount?: number | null;
+  /**
+   * The years this listing won an award (Task 50), newest first — read from
+   * the `awards` table by the page, never guessed. Each adds an `award-<year>`
+   * style after the four everyone gets. Empty for everyone else.
+   */
+  awardYears?: readonly number[];
 }) {
+  const styles: { style: BadgeStyle; title: string; blurb: string }[] = [
+    ...BADGE_STYLES.map((style) => ({ style, title: style, blurb: BLURB[style] })),
+    ...awardYears.map((year) => ({
+      style: awardBadgeStyle(year),
+      title: `Winner ${year}`,
+      blurb: `Your ${year} award, computed from published reviews. It only ever renders for a listing that won.`,
+    })),
+  ];
   return (
     <div>
-      {BADGE_STYLES.map((style) => {
+      {styles.map(({ style, title, blurb }) => {
         const kit = badgeKit({ ...base, style });
         return (
-          <section key={style} className="my-8 border-t border-neutral-200 pt-6">
-            <h3 className="capitalize">{style}</h3>
-            <p className="text-sm text-neutral-600">{BLURB[style]}</p>
+          <section key={style} className="my-8 border-t border-neutral-200 pt-6" data-badge-style={style}>
+            <h3 className="capitalize">{title}</h3>
+            <p className="text-sm text-neutral-600">{blurb}</p>
 
             <div
               className={
@@ -60,9 +74,27 @@ export function BadgeGallery({
 
             <SnippetBlock
               heading="Paste this into your page"
+              note="The badge links straight to your listing. Nothing counts the clicks."
               code={kit.embed}
               copyLabel="Copy embed"
             />
+
+            <details className="mt-2">
+              <summary className="cursor-pointer text-sm text-neutral-600">
+                Or use the version that counts clicks
+              </summary>
+              <p className="mt-2 text-sm text-neutral-600">
+                This one sends the visitor through us first, so we can show you how many people
+                clicked — but the link is marked <code>nofollow</code>, because a link routed
+                through a redirect is not a recommendation and we are not going to pretend
+                otherwise. The plain badge above is the better link; this one is the better
+                number. Pick whichever you actually want.
+              </p>
+              <SnippetBlock
+                code={kit.trackedEmbed}
+                copyLabel="Copy tracked embed"
+              />
+            </details>
           </section>
         );
       })}

@@ -1,0 +1,380 @@
+import { randomUUID } from "node:crypto";
+import { describe, it, expect } from "vitest";
+import { eq } from "drizzle-orm";
+import { withTestDb, type TestDb } from "@/test/db";
+import {
+  auditLog, categories, cities, listings, profiles, quoteRecipients, quoteRequests, unsubscribes, user,
+} from "@/lib/db/schema";
+import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
+import { makeCategoryInCity, makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
+import {
+  createQuoteRequest,
+  flagQuoteRequestSpam,
+  listQuoteRequests,
+  markQuoteOutcome,
+  ownerQuoteLeads,
+  quoteContactVisible,
+  quoteNotification,
+  selectQuoteRecipients,
+  type QuoteRequestInput,
+} from "./quotes";
+
+/** A real account: the audit row an admin write leaves resolves its profile. */
+async function makeAdmin(tx: TestDb): Promise<Viewer> {
+  const userId = `u_${randomUUID()}`;
+  await tx.insert(user).values({ id: userId, name: "Admin", email: `${userId}@example.com` });
+  await tx.insert(profiles).values({ userId, role: "admin" });
+  return { role: "admin", userId };
+}
+
+function input(ctx: ListingCtx, patch: Partial<QuoteRequestInput> = {}): QuoteRequestInput {
+  return {
+    cityId: ctx.cityId,
+    categoryId: ctx.primaryCategoryId,
+    name: "Sam Requester",
+    email: "sam@example.co.uk",
+    phone: "01632 960000",
+    message: "Looking for somewhere for about eighty people in June, with parking.",
+    ip: "198.51.100.4",
+    ...patch,
+  };
+}
+
+async function makeOwner(tx: TestDb, email = `${randomUUID()}@example.com`) {
+  const userId = `u_${randomUUID()}`;
+  await tx.insert(user).values({ id: userId, name: "Owner", email });
+  const [row] = await tx.insert(profiles).values({ userId }).returning({ id: profiles.id });
+  return { userId, profileId: row!.id, email, viewer: { role: "owner", userId } as Viewer };
+}
+
+async function recipientsOf(tx: TestDb, quoteRequestId: string): Promise<string[]> {
+  const rows = await tx
+    .select({ listingId: quoteRecipients.listingId })
+    .from(quoteRecipients)
+    .where(eq(quoteRecipients.quoteRequestId, quoteRequestId));
+  return rows.map((r) => r.listingId).sort();
+}
+
+describe("quoteContactVisible", () => {
+  it("hides the job and the contact from the free tier only", () => {
+    expect(quoteContactVisible("free")).toBe(false);
+    expect(quoteContactVisible("essential")).toBe(true);
+    expect(quoteContactVisible("premium")).toBe(true);
+  });
+});
+
+describe("selectQuoteRecipients", () => {
+  it("ranks paid and verified listings first and caps at the limit", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const free = await makeListing(tx, ctx, { email: "free@example.com" });
+      const verified = await makeListing(tx, ctx, { email: "verified@example.com", claimStatus: "verified" });
+      const premium = await makeListing(tx, ctx, { email: "premium@example.com", tier: "premium" });
+      const essential = await makeListing(tx, ctx, { email: "essential@example.com", tier: "essential" });
+
+      const chosen = await selectQuoteRecipients(tx, PUBLIC_VIEWER, {
+        cityId: ctx.cityId, categoryId: ctx.primaryCategoryId, limit: 3,
+      });
+
+      expect(chosen.map((c) => c.listingId)).toEqual([premium, essential, verified]);
+      expect(chosen.map((c) => c.listingId)).not.toContain(free);
+    });
+  });
+
+  it("skips listings with no address, unpublished ones, and other towns and categories", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const withEmail = await makeListing(tx, ctx, { email: "yes@example.com" });
+      await makeListing(tx, ctx, { email: null });
+      await makeListing(tx, ctx, { email: "   " });
+      await makeListing(tx, ctx, { email: "pending@example.com", status: "pending" });
+      const otherCategory = await makeCategoryInCity(tx, ctx.verticalId, ctx.cityId, "Other Halls");
+      await makeListing(tx, { ...ctx, primaryCategoryId: otherCategory }, { email: "other@example.com" });
+
+      const chosen = await selectQuoteRecipients(tx, PUBLIC_VIEWER, {
+        cityId: ctx.cityId, categoryId: ctx.primaryCategoryId, limit: 10,
+      });
+
+      expect(chosen.map((c) => c.listingId)).toEqual([withEmail]);
+    });
+  });
+
+  it("writes to a claimed listing at its owner's account address", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const owner = await makeOwner(tx, "account@example.com");
+      const claimed = await makeListing(tx, ctx, {
+        email: "scraped@example.com", claimStatus: "claimed", ownerId: owner.profileId,
+      });
+      // Claimed but the account has gone: falls back to the listing's own address.
+      const orphan = await makeListing(tx, ctx, { email: "orphan@example.com", claimStatus: "claimed" });
+
+      const chosen = await selectQuoteRecipients(tx, PUBLIC_VIEWER, {
+        cityId: ctx.cityId, categoryId: ctx.primaryCategoryId, limit: 10,
+      });
+
+      const byId = new Map(chosen.map((c) => [c.listingId, c.email]));
+      expect(byId.get(claimed)).toBe("account@example.com");
+      expect(byId.get(orphan)).toBe("orphan@example.com");
+    });
+  });
+
+  it("dedupes by address and honours unsubscribes", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const first = await makeListing(tx, ctx, { email: "Shared@Example.com", tier: "premium" });
+      await makeListing(tx, ctx, { email: "shared@example.com" });
+      await makeListing(tx, ctx, { email: "gone@example.com", tier: "premium" });
+      await tx.insert(unsubscribes).values({ addressNormalised: "gone@example.com" });
+      const other = await makeListing(tx, ctx, { email: "other@example.com" });
+
+      const chosen = await selectQuoteRecipients(tx, PUBLIC_VIEWER, {
+        cityId: ctx.cityId, categoryId: ctx.primaryCategoryId, limit: 10,
+      });
+
+      expect(chosen.map((c) => c.listingId)).toEqual([first, other]);
+    });
+  });
+});
+
+describe("createQuoteRequest", () => {
+  it("stores the request, its recipients, and an audit row carrying the ip", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await makeListing(tx, ctx, { email: "a@example.com", tier: "premium" });
+      const b = await makeListing(tx, ctx, { email: "b@example.com" });
+
+      const result = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      expect(result.outcome).toBe("created");
+      if (result.outcome !== "created") return;
+      expect(result.recipientCount).toBe(2);
+
+      const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, result.quoteRequestId));
+      expect(row).toMatchObject({
+        name: "Sam Requester", email: "sam@example.co.uk", ip: "198.51.100.4", isSpam: false,
+      });
+      expect(row!.consentAt).not.toBeNull();
+      expect(await recipientsOf(tx, result.quoteRequestId)).toEqual([a, b].sort());
+
+      const masks = await tx
+        .select({ listingId: quoteRecipients.listingId, masked: quoteRecipients.contactMasked })
+        .from(quoteRecipients)
+        .where(eq(quoteRecipients.quoteRequestId, result.quoteRequestId));
+      expect(new Map(masks.map((m) => [m.listingId, m.masked]))).toEqual(new Map([[a, false], [b, true]]));
+
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.entityId, result.quoteRequestId));
+      expect(audit).toMatchObject({ action: "quote.requested", entityType: "quote_request", ip: "198.51.100.4", actorId: null });
+      expect((audit!.meta as { recipients: string[] }).recipients.sort()).toEqual([a, b].sort());
+    });
+  });
+
+  it("caps recipients at siteConfig.quotes.maxRecipients", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      for (let i = 0; i < 8; i++) await makeListing(tx, ctx, { email: `l${i}@example.com` });
+
+      const result = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      expect(result.outcome).toBe("created");
+      if (result.outcome !== "created") return;
+      expect(result.recipientCount).toBe(5);
+      expect(await recipientsOf(tx, result.quoteRequestId)).toHaveLength(5);
+    });
+  });
+
+  it("writes nothing when no listing can receive it", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: null });
+
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx))).toEqual({ outcome: "no-recipients" });
+      expect(await tx.select().from(quoteRequests)).toHaveLength(0);
+    });
+  });
+
+  it("refuses an unknown or unpublished town and an inactive category", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { cityId: "nope" }))).toEqual({ outcome: "unknown-city" });
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { cityId: randomUUID() }))).toEqual({ outcome: "unknown-city" });
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { categoryId: randomUUID() }))).toEqual({ outcome: "unknown-category" });
+
+      await tx.update(categories).set({ isActive: false }).where(eq(categories.id, ctx.primaryCategoryId));
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx))).toEqual({ outcome: "unknown-category" });
+
+      await tx.update(categories).set({ isActive: true }).where(eq(categories.id, ctx.primaryCategoryId));
+      await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, ctx.cityId));
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx))).toEqual({ outcome: "unknown-city" });
+    });
+  });
+});
+
+describe("quoteNotification", () => {
+  it("resolves every recipient's address and flags an unsubscribe made since", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const owner = await makeOwner(tx, "account@example.com");
+      const claimed = await makeListing(tx, ctx, {
+        name: "Claimed Hall", email: "scraped@example.com", claimStatus: "claimed",
+        ownerId: owner.profileId, tier: "essential",
+      });
+      const unclaimed = await makeListing(tx, ctx, { name: "Unclaimed Hall", email: "listing@example.com" });
+
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      await tx.insert(unsubscribes).values({ addressNormalised: "listing@example.com" });
+
+      const data = await quoteNotification(tx, await makeAdmin(tx), created.quoteRequestId);
+      expect(data).not.toBeNull();
+      expect(data!.requester).toEqual({ name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 960000" });
+      expect(data!.message).toContain("eighty people");
+      const byId = new Map(data!.recipients.map((r) => [r.listingId, r]));
+      expect(byId.get(claimed)).toMatchObject({
+        email: "account@example.com", unsubscribed: false, contactVisible: true, listingName: "Claimed Hall",
+      });
+      expect(byId.get(unclaimed)).toMatchObject({
+        email: "listing@example.com", unsubscribed: true, contactVisible: false,
+      });
+      expect(byId.get(unclaimed)!.path).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
+    });
+  });
+
+  it("is worker-only and returns null for a flagged request", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      const ADMIN = await makeAdmin(tx);
+      await expect(quoteNotification(tx, PUBLIC_VIEWER, created.quoteRequestId)).rejects.toThrow("FORBIDDEN");
+      expect(await quoteNotification(tx, ADMIN, "not-a-uuid")).toBeNull();
+
+      await flagQuoteRequestSpam(tx, ADMIN, created.quoteRequestId, true, null);
+      expect(await quoteNotification(tx, ADMIN, created.quoteRequestId)).toBeNull();
+    });
+  });
+});
+
+describe("ownerQuoteLeads", () => {
+  it("shows a paid listing the job and the requester, and a free one neither", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const paid = await makeOwner(tx);
+      const free = await makeOwner(tx);
+      const paidListing = await makeListing(tx, ctx, { email: "p@example.com", tier: "essential", ownerId: paid.profileId, claimStatus: "claimed" });
+      const freeListing = await makeListing(tx, ctx, { email: "f@example.com", ownerId: free.profileId, claimStatus: "claimed" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      const [paidLead] = await ownerQuoteLeads(tx, paid.viewer, paidListing);
+      expect(paidLead).toMatchObject({
+        contactVisible: true,
+        outcome: "open",
+        job: input(ctx).message,
+        requester: { name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 960000" },
+      });
+
+      const [freeLead] = await ownerQuoteLeads(tx, free.viewer, freeListing);
+      expect(freeLead).toMatchObject({ contactVisible: false, job: null, requester: null });
+      expect(freeLead!.cityName).toBeTruthy();
+      expect(freeLead!.categoryName).toBeTruthy();
+
+      // Somebody else's listing: nothing, not an error.
+      expect(await ownerQuoteLeads(tx, free.viewer, paidListing)).toEqual([]);
+      await expect(ownerQuoteLeads(tx, PUBLIC_VIEWER, paidListing)).rejects.toThrow("FORBIDDEN");
+    });
+  });
+
+  it("reveals earlier requests once the listing is upgraded, and hides flagged ones", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const owner = await makeOwner(tx);
+      const listingId = await makeListing(tx, ctx, { email: "f@example.com", ownerId: owner.profileId, claimStatus: "claimed" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      expect((await ownerQuoteLeads(tx, owner.viewer, listingId))[0]!.job).toBeNull();
+
+      await tx.update(listings).set({ tier: "premium" }).where(eq(listings.id, listingId));
+      expect((await ownerQuoteLeads(tx, owner.viewer, listingId))[0]!.job).toContain("eighty people");
+
+      await flagQuoteRequestSpam(tx, await makeAdmin(tx), created.quoteRequestId, true, "203.0.113.9");
+      expect(await ownerQuoteLeads(tx, owner.viewer, listingId)).toEqual([]);
+    });
+  });
+});
+
+describe("markQuoteOutcome", () => {
+  it("records won or lost for the owner of a paid listing, with an audit row", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const owner = await makeOwner(tx);
+      const listingId = await makeListing(tx, ctx, { email: "p@example.com", tier: "premium", ownerId: owner.profileId, claimStatus: "claimed" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      const [lead] = await ownerQuoteLeads(tx, owner.viewer, listingId);
+
+      expect(await markQuoteOutcome(tx, owner.viewer, lead!.id, "won", "203.0.113.9")).toBe(true);
+      // A second identical click changes nothing and audits nothing.
+      expect(await markQuoteOutcome(tx, owner.viewer, lead!.id, "won", "203.0.113.9")).toBe(false);
+      expect(await markQuoteOutcome(tx, owner.viewer, lead!.id, "lost", "203.0.113.9")).toBe(true);
+
+      const [after] = await ownerQuoteLeads(tx, owner.viewer, listingId);
+      expect(after!.outcome).toBe("lost");
+      expect(after!.outcomeAt).not.toBeNull();
+
+      const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, lead!.id));
+      expect(audits.map((a) => a.action).sort()).toEqual(["quote.marked_lost", "quote.marked_won"]);
+      expect(audits[0]!.ip).toBe("203.0.113.9");
+    });
+  });
+
+  it("refuses another owner, the free tier, and a malformed id", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const owner = await makeOwner(tx);
+      const stranger = await makeOwner(tx);
+      const listingId = await makeListing(tx, ctx, { email: "f@example.com", ownerId: owner.profileId, claimStatus: "claimed" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      const [row] = await tx.select({ id: quoteRecipients.id }).from(quoteRecipients);
+
+      expect(await markQuoteOutcome(tx, owner.viewer, row!.id, "won", null)).toBe(false);
+      expect(await markQuoteOutcome(tx, stranger.viewer, row!.id, "won", null)).toBe(false);
+      expect(await markQuoteOutcome(tx, owner.viewer, "nope", "won", null)).toBe(false);
+      await expect(markQuoteOutcome(tx, PUBLIC_VIEWER, row!.id, "won", null)).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});
+
+describe("listQuoteRequests / flagQuoteRequestSpam", () => {
+  it("lists newest first with counts, admin only, and flags in place", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      await makeListing(tx, ctx, { email: "b@example.com" });
+      const first = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { name: "First" }));
+      const second = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { name: "Second" }));
+      if (first.outcome !== "created" || second.outcome !== "created") throw new Error("not created");
+      // Both rows share the transaction's now(); push the first one back so the order is real.
+      await tx.update(quoteRequests).set({ createdAt: new Date(Date.now() - 60_000) })
+        .where(eq(quoteRequests.id, first.quoteRequestId));
+      const ADMIN = await makeAdmin(tx);
+
+      await expect(listQuoteRequests(tx, PUBLIC_VIEWER)).rejects.toThrow("FORBIDDEN");
+      const rows = await listQuoteRequests(tx, ADMIN);
+      expect(rows.map((r) => r.name)).toEqual(["Second", "First"]);
+      expect(rows[0]).toMatchObject({ recipientCount: 2, wonCount: 0, isSpam: false });
+
+      expect(await flagQuoteRequestSpam(tx, ADMIN, first.quoteRequestId, true, "203.0.113.9")).toBe(true);
+      expect(await flagQuoteRequestSpam(tx, ADMIN, first.quoteRequestId, true, "203.0.113.9")).toBe(false);
+      expect((await listQuoteRequests(tx, ADMIN)).find((r) => r.id === first.quoteRequestId)!.isSpam).toBe(true);
+      await expect(flagQuoteRequestSpam(tx, PUBLIC_VIEWER, first.quoteRequestId, true, null)).rejects.toThrow("FORBIDDEN");
+
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.action, "quote.flagged_spam"));
+      expect(audit).toMatchObject({ entityId: first.quoteRequestId, ip: "203.0.113.9" });
+    });
+  });
+});

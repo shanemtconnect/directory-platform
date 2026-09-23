@@ -1,0 +1,2 @@
+ALTER TABLE "listings" ADD COLUMN "backlink_boost" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "campaign_messages_magic_token_key" ON "campaign_messages" USING btree ("magic_token");

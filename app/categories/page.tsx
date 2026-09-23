@@ -1,25 +1,37 @@
 import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
+import { prerenderingWithoutDatabase } from "@/lib/db/build-phase";
 import { siteConfig } from "@/config/site.config";
 import { listCategories } from "@/lib/db/queries/indexes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { JsonLd } from "@/components/seo/JsonLd";
-import { breadcrumbSchema, pillarSchema } from "@/lib/schema/builders";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { pillarSchema } from "@/lib/schema/builders";
 
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: `All ${siteConfig.entity.plural}`,
   description: `Browse every type of ${siteConfig.entity.singular}.`,
+  alternates: { canonical: "/categories" },
 };
 
+/**
+ * ISR, not force-dynamic and not force-static: `revalidate = 3600` above stays
+ * exactly as it was. `prerenderingWithoutDatabase()` covers the one case that
+ * used to make `next build` require a live database — the production build of
+ * a container image, where no DATABASE_URL is available — by prerendering the
+ * empty-state shell and letting ISR fill in the real page on the first request.
+ * See lib/db/build-phase.ts.
+ */
 export default async function CategoriesIndex() {
-  const categories = await listCategories(db as never, PUBLIC_VIEWER);
+  const categories = prerenderingWithoutDatabase()
+    ? []
+    : await listCategories(db as never, PUBLIC_VIEWER);
   const e = siteConfig.entity;
 
   return (
     <>
-      <JsonLd data={breadcrumbSchema([{ name: "Home", path: "/" }, { name: e.Plural, path: "/categories" }])} />
       <JsonLd
         data={pillarSchema({
           title: `All ${e.plural}`,
@@ -28,11 +40,12 @@ export default async function CategoriesIndex() {
         })}
       />
       <main>
+        <Breadcrumbs trail={[{ name: "Home", path: "/" }, { name: e.Plural, path: "/categories" }]} />
         <h1>All {e.plural}</h1>
         {categories.length === 0 ? (
           <p>No categories have listings yet.</p>
         ) : (
-          <ul>
+          <ul className="link-grid">
             {categories.map((c) => (
               <li key={c.id}>
                 <a href={`/categories/${c.slug}`}>{c.name}</a> <span>({c.listingCount})</span>
