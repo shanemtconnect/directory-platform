@@ -244,3 +244,22 @@ export const INTERNAL_REVALIDATE_RATE_LIMIT = { limit: 60, windowSeconds: 60 } a
  * `audit_log` with one row per second.
  */
 export const BADGE_BACKLINK_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as const;
+
+/**
+ * Three a day, checked after validation. (Jobs board, Task 49.)
+ *
+ * A business posting vacancies posts one, occasionally two; three in a day is
+ * the edge of normal and nothing like enough for a spam run. Sized as a DAY
+ * rather than an hour because the cost of each post is ours as much as the
+ * poster's — every one is a human decision in the admin queue, and a paid
+ * post is a PayPal order created on our account — so the budget is on what
+ * one connection can make us do, not on what it can type.
+ */
+export const JOB_POST_RATE_LIMIT = { limit: 3, windowSeconds: 86_400 } as const;
+
+/**
+ * Sixty an hour on the Apply counter. It is a fire-and-forget increment
+ * behind a link the visitor is following anyway; the cap stops one client
+ * inflating a poster's numbers, and costs a real applicant nothing.
+ */
+export const JOB_APPLY_RATE_LIMIT = { limit: 60, windowSeconds: 3600 } as const;
