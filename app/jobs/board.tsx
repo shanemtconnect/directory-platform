@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
+import { prerenderingWithoutDatabase } from "@/lib/db/build-phase";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import {
   JOBS_PER_PAGE,
@@ -28,8 +29,10 @@ export interface BoardRoute {
   readonly page: number;
 }
 
+const EMPTY_FILTERS = { city: null, category: null } as const;
+
 export async function jobsBoardMetadata(route: BoardRoute): Promise<Metadata> {
-  const filters = await resolveJobFilters(db, PUBLIC_VIEWER, route);
+  const filters = prerenderingWithoutDatabase() ? EMPTY_FILTERS : await resolveJobFilters(db, PUBLIC_VIEWER, route);
   if (filters === null) return { title: "Jobs" };
   const title = route.page > 1 ? `${boardTitle(filters)} — page ${route.page}` : boardTitle(filters);
   const path = jobsBoardPath(route, route.page);
@@ -43,6 +46,14 @@ export async function jobsBoardMetadata(route: BoardRoute): Promise<Metadata> {
 }
 
 export async function renderJobsBoard(route: BoardRoute): Promise<ReactNode> {
+  // A CI build has no database. /jobs is prerendered like /cities, so it
+  // renders the empty board here and ISR fills it on the first request.
+  if (prerenderingWithoutDatabase()) {
+    return (
+      <JobBoard jobs={[]} filters={EMPTY_FILTERS} options={{ cities: [], categories: [] }} page={1} totalPages={1} total={0} />
+    );
+  }
+
   const filters = await resolveJobFilters(db, PUBLIC_VIEWER, route);
   if (filters === null) notFound();
 

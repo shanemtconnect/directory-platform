@@ -21,6 +21,9 @@ import { MAX_PAGE_NUMBER } from "@/lib/routing/resolve";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PAGE_NUMBER = /^[1-9]\d*$/;
 
+/** Where a finished post lands. Lives here because a "use server" module may export only async functions. */
+export const JOB_THANKS_PATH = "/post-a-job/thanks";
+
 export type JobsRoute =
   | { kind: "board"; citySlug: string | null; categorySlug: string | null; page: number }
   | { kind: "job"; id: string }

@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/queries/job-board";
 import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { validateJobForm } from "@/lib/jobs/validate";
+import { JOB_THANKS_PATH } from "@/lib/jobs/routes";
 import { isUuid } from "@/lib/actions/validation";
 import type { TestDb } from "@/lib/db/types";
 
@@ -38,8 +39,6 @@ import type { TestDb } from "@/lib/db/types";
  * transaction that creates the row, so a failed create rolls the row back
  * with it, and the buyer is sent to PayPal only once both have committed.
  */
-
-export const JOB_THANKS_PATH = "/post-a-job/thanks";
 
 export interface PostJobState {
   status: "idle" | "error";
