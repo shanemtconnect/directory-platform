@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
-import { jobs, processedEvents } from "@/lib/db/schema";
+import { auditLog, jobs, processedEvents } from "@/lib/db/schema";
 import { makeScaffold } from "@/test/factories";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { attachJobOrder, createJob } from "@/lib/db/queries/job-board";
@@ -146,11 +146,11 @@ describe("createPayPalOrdersClient", () => {
     const { http } = stub({
       ...TOKEN,
       [`/v2/checkout/orders/${ORDER}/capture`]: {
-        body: { id: ORDER, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: CAPTURE, status: "COMPLETED" }] } }] },
+        body: { id: ORDER, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: CAPTURE, status: "COMPLETED", amount: { currency_code: "GBP", value: "29.00" } }] } }] },
       },
     });
     const client = createPayPalOrdersClient({ env: ENV, http });
-    expect(await client.captureOrder(ORDER)).toEqual({ id: ORDER, status: "COMPLETED", captureId: CAPTURE });
+    expect(await client.captureOrder(ORDER)).toEqual({ id: ORDER, status: "COMPLETED", captureId: CAPTURE, amount: { value: "29.00", currencyCode: "GBP" } });
   });
 
   it("treats ORDER_ALREADY_CAPTURED as done and reads the order back", async () => {
@@ -161,11 +161,11 @@ describe("createPayPalOrdersClient", () => {
         body: { name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_ALREADY_CAPTURED" }] },
       },
       [`/v2/checkout/orders/${ORDER}`]: {
-        body: { id: ORDER, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: CAPTURE }] } }] },
+        body: { id: ORDER, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: CAPTURE, amount: { currency_code: "GBP", value: "29.00" } }] } }] },
       },
     });
     const client = createPayPalOrdersClient({ env: ENV, http });
-    expect(await client.captureOrder(ORDER)).toEqual({ id: ORDER, status: "COMPLETED", captureId: CAPTURE });
+    expect(await client.captureOrder(ORDER)).toEqual({ id: ORDER, status: "COMPLETED", captureId: CAPTURE, amount: { value: "29.00", currencyCode: "GBP" } });
   });
 
   it("throws PayPal's own message on any other failure", async () => {
@@ -186,11 +186,11 @@ describe("createPayPalOrdersClient", () => {
 describe("captureFromEvent", () => {
   it("reads the capture, order and custom ids off a completed capture only", () => {
     const event = parseEvent(captureEvent())!;
-    expect(captureFromEvent(event)).toEqual({ captureId: CAPTURE, orderId: ORDER, customId: "row-1" });
+    expect(captureFromEvent(event)).toEqual({ captureId: CAPTURE, orderId: ORDER, customId: "row-1", amount: { value: "29.00", currencyCode: "GBP" } });
     expect(captureFromEvent(parseEvent(captureEvent({ status: "PENDING" }))!)).toBeNull();
     expect(captureFromEvent(parseEvent({ ...captureEvent(), event_type: "PAYMENT.CAPTURE.DENIED" })!)).toBeNull();
     expect(captureFromEvent(parseEvent(captureEvent({ supplementary_data: undefined }))!))
-      .toEqual({ captureId: CAPTURE, orderId: null, customId: "row-1" });
+      .toEqual({ captureId: CAPTURE, orderId: null, customId: "row-1", amount: { value: "29.00", currencyCode: "GBP" } });
   });
 });
 
@@ -198,7 +198,7 @@ describe("applyCaptureEvent", () => {
   it("settles the job by order id, and by custom_id when the order id is missing", async () => {
     await withTestDb(async (tx) => {
       const jobId = await pendingJob(tx);
-      const byOrder = await applyCaptureEvent(tx, BILLING_SYSTEM_VIEWER, parseEvent(captureEvent())!);
+      const byOrder = await applyCaptureEvent(tx, BILLING_SYSTEM_VIEWER, parseEvent(captureEvent({ custom_id: jobId }))!);
       expect(byOrder).toEqual({ outcome: "paid", jobId });
       expect(await paymentStatus(tx, jobId)).toBe("paid");
     });
@@ -206,6 +206,40 @@ describe("applyCaptureEvent", () => {
       const jobId = await pendingJob(tx);
       const event = parseEvent(captureEvent({ custom_id: jobId, supplementary_data: undefined }))!;
       expect(await applyCaptureEvent(tx, BILLING_SYSTEM_VIEWER, event)).toEqual({ outcome: "paid", jobId });
+    });
+  });
+
+  it("refuses the wrong amount, the wrong currency, and a custom_id that is not the order's job — writing nothing but an audit row", async () => {
+    const cases: [string, Record<string, unknown>][] = [
+      ["wrong amount", { amount: { currency_code: "GBP", value: "0.01" } }],
+      ["wrong currency", { amount: { currency_code: "USD", value: "29.00" } }],
+      ["no amount at all", { amount: undefined }],
+    ];
+    for (const [label, over] of cases) {
+      await withTestDb(async (tx) => {
+        const jobId = await pendingJob(tx);
+        const event = parseEvent(captureEvent({ custom_id: jobId, ...over }))!;
+        expect(await applyCaptureEvent(tx, BILLING_SYSTEM_VIEWER, event), label).toEqual({ outcome: "wrong-amount" });
+        expect(await paymentStatus(tx, jobId), label).toBe("pending");
+        const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, jobId));
+        expect(audits.map((a) => a.action), label).toEqual(["job.payment.mismatch"]);
+      });
+    }
+    // The custom_id road alone, for the wrong amount: the stranger's-order shape.
+    await withTestDb(async (tx) => {
+      const jobId = await pendingJob(tx);
+      const event = parseEvent(captureEvent({ custom_id: jobId, supplementary_data: undefined, amount: { currency_code: "GBP", value: "0.01" } }))!;
+      expect(await applyCaptureEvent(tx, BILLING_SYSTEM_VIEWER, event)).toEqual({ outcome: "wrong-amount" });
+      expect(await paymentStatus(tx, jobId)).toBe("pending");
+    });
+    // Both ids present and disagreeing.
+    await withTestDb(async (tx) => {
+      const jobId = await pendingJob(tx);
+      const event = parseEvent(captureEvent({ custom_id: randomUUID() }))!;
+      expect(await applyCaptureEvent(tx, BILLING_SYSTEM_VIEWER, event)).toEqual({ outcome: "job-mismatch", jobId });
+      expect(await paymentStatus(tx, jobId)).toBe("pending");
+      const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, jobId));
+      expect(audits.map((a) => a.action)).toEqual(["job.payment.mismatch"]);
     });
   });
 
@@ -221,7 +255,7 @@ describe("the webhook endpoint with a capture", () => {
   it("marks the job paid once, records the event, and shrugs at the redelivery", async () => {
     await withTestDb(async (tx) => {
       const jobId = await pendingJob(tx);
-      const req = { raw: JSON.stringify(captureEvent()), headers: HEADERS, client: fakeSubscriptionClient(), env: ENV };
+      const req = { raw: JSON.stringify(captureEvent({ custom_id: jobId })), headers: HEADERS, client: fakeSubscriptionClient(), env: ENV };
 
       const first = await processPayPalWebhook(tx, req);
       expect(first).toMatchObject({ status: 200, outcome: "applied", detail: "capture:paid" });
@@ -232,6 +266,16 @@ describe("the webhook endpoint with a capture", () => {
 
       const recorded = await tx.select().from(processedEvents).where(eq(processedEvents.eventId, "WH-CAPTURE-1"));
       expect(recorded).toHaveLength(1);
+    });
+  });
+
+  it("200s a capture for the wrong amount as ignored, so PayPal does not retry, and marks nothing paid", async () => {
+    await withTestDb(async (tx) => {
+      const jobId = await pendingJob(tx);
+      const event = captureEvent({ custom_id: jobId, amount: { currency_code: "GBP", value: "1.00" } }, "WH-CAPTURE-3");
+      const req = { raw: JSON.stringify(event), headers: HEADERS, client: fakeSubscriptionClient(), env: ENV };
+      expect(await processPayPalWebhook(tx, req)).toMatchObject({ status: 200, outcome: "ignored", detail: "capture:wrong-amount" });
+      expect(await paymentStatus(tx, jobId)).toBe("pending");
     });
   });
 
@@ -254,17 +298,33 @@ describe("the webhook endpoint with a capture", () => {
 });
 
 describe("settleJobOrder", () => {
-  function fakeOrders(status = "COMPLETED"): PayPalOrdersClient & { captured: string[] } {
+  function fakeOrders(
+    status = "COMPLETED",
+    amount: { value: string; currencyCode: string } | null = { value: "29.00", currencyCode: "GBP" },
+  ): PayPalOrdersClient & { captured: string[] } {
     const captured: string[] = [];
     return {
       captured,
       createOrder: async () => ({ id: ORDER, status: "CREATED", approveUrl: null }),
       captureOrder: async (id) => {
         captured.push(id);
-        return { id, status, captureId: CAPTURE };
+        return { id, status, captureId: CAPTURE, amount };
       },
     };
   }
+
+  it("refuses a completed capture for the wrong amount or currency, on the record", async () => {
+    for (const amount of [{ value: "0.01", currencyCode: "GBP" }, { value: "29.00", currencyCode: "USD" }, null]) {
+      await withTestDb(async (tx) => {
+        const jobId = await pendingJob(tx);
+        const out = await settleJobOrder(tx, { client: fakeOrders("COMPLETED", amount), viewer: BILLING_SYSTEM_VIEWER, orderId: ORDER });
+        expect(out).toEqual({ outcome: "not-completed", jobId, status: "AMOUNT_MISMATCH" });
+        expect(await paymentStatus(tx, jobId)).toBe("pending");
+        const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, jobId));
+        expect(audits.map((a) => a.action)).toEqual(["job.payment.mismatch"]);
+      });
+    }
+  });
 
   it("captures inside the transaction and marks the job paid", async () => {
     await withTestDb(async (tx) => {

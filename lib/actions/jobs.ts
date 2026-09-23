@@ -62,6 +62,15 @@ export async function postJob(_prev: PostJobState, form: FormData): Promise<Post
     return { status: "error", fieldErrors: errors, message: "Please check the fields marked below." };
   }
 
+  // A free post names a listing; only a signed-in owner can. Refused here,
+  // before the daily budget and the single-use Turnstile token are spent —
+  // the listing id is a hidden field anyone can set. Ownership and Verified
+  // are the query's to check.
+  const viewer = await currentViewer();
+  if (values.listingId !== null && viewer.role === "public") {
+    return { status: "error", fieldErrors: { listingId: "Please sign in to post on behalf of your listing." } };
+  }
+
   const requestHeaders = await headers();
   const ip = clientIp(requestHeaders);
 
@@ -81,18 +90,7 @@ export async function postJob(_prev: PostJobState, form: FormData): Promise<Post
     return { status: "error", message: "We couldn't verify that you're human. Please try again." };
   }
 
-  const viewer = await currentViewer();
-  let posterProfileId: string | null = null;
-  if (values.listingId !== null) {
-    // A free post names a listing; only a signed-in owner can. The query
-    // checks ownership and Verified — this only resolves who is asking.
-    if (viewer.role === "public") {
-      return { status: "error", fieldErrors: { listingId: "Please sign in to post on behalf of your listing." } };
-    }
-    posterProfileId = (await ensureProfile(db, viewer)).id;
-  } else if (viewer.role !== "public") {
-    posterProfileId = (await ensureProfile(db, viewer)).id;
-  }
+  const posterProfileId = viewer.role === "public" ? null : (await ensureProfile(db, viewer)).id;
 
   const client = getPayPalOrdersClient();
 

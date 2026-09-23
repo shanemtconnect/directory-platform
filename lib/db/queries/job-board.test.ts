@@ -267,6 +267,21 @@ describe("createJob", () => {
     });
   });
 
+  it("treats a lapsed verification as not Verified, in the free-post check and the picker alike", async () => {
+    await withTestDb(async (tx) => {
+      setClock(new Date("2026-09-22T10:00:00Z"));
+      const ctx = await makeScaffold(tx);
+      const { viewer, profileId } = await signedIn(tx);
+      const lapsed = await makeListing(tx, ctx, { ownerId: profileId, claimStatus: "verified", verifiedExpiresAt: new Date("2026-09-01T00:00:00Z") });
+      const live = await makeListing(tx, ctx, { ownerId: profileId, claimStatus: "verified", verifiedExpiresAt: new Date("2027-09-01T00:00:00Z") });
+      expect((await createJob(tx, viewer, input(ctx, { listingId: lapsed, posterProfileId: profileId }))).outcome).toBe("not-verified-listing");
+      expect((await createJob(tx, viewer, input(ctx, { listingId: live, posterProfileId: profileId }))).outcome).toBe("created");
+      const rows = await posterListings(tx, viewer, profileId);
+      expect(rows.find((r) => r.id === lapsed)?.verified).toBe(false);
+      expect(rows.find((r) => r.id === live)?.verified).toBe(true);
+    });
+  });
+
   it("refuses a town or category it does not hold", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
@@ -333,6 +348,32 @@ describe("payment", () => {
     });
   });
 
+  it("a capture landing on a row that is no longer pending grants nothing and is written down for a refund", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const removed = await makeJob(tx, ctx, { status: "removed", paymentStatus: "pending", providerOrderId: "LATE-1", publishedAt: null, expiresAt: null });
+      const out = await markJobPaid(tx, ADMIN, { providerOrderId: "LATE-1", captureId: "CAP-L", eventId: "WH-L" });
+      expect(out).toEqual({ outcome: "not-pending", jobId: removed, status: "removed" });
+      expect((await readJob(tx, removed))?.paymentStatus).toBe("pending");
+      const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, removed));
+      expect(audits.map((a) => a.action)).toEqual(["job.paid.late"]);
+      expect((audits[0]?.meta as { refundNeeded: boolean }).refundNeeded).toBe(true);
+      const queued = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_JOB_SUBMITTED));
+      expect(queued.filter((q) => (q.payload as { jobId: string }).jobId === removed)).toHaveLength(0);
+    });
+  });
+
+  it("refuses to settle when the event names a different job from the order's", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const job = await makeJob(tx, ctx, { status: "pending", paymentStatus: "pending", providerOrderId: "X-1", publishedAt: null, expiresAt: null });
+      const out = await markJobPaid(tx, ADMIN, { providerOrderId: "X-1", captureId: "c", eventId: "e", expectedJobId: randomUUID() });
+      expect(out).toEqual({ outcome: "job-mismatch", jobId: job });
+      expect((await readJob(tx, job))?.paymentStatus).toBe("pending");
+      expect(await markJobPaid(tx, ADMIN, { providerOrderId: "X-1", captureId: "c", eventId: "e", expectedJobId: job })).toEqual({ outcome: "paid", jobId: job });
+    });
+  });
+
   it("only the worker may read or settle payments", async () => {
     await withTestDb(async (tx) => {
       await expect(jobForOrder(tx, PUBLIC_VIEWER, "x")).rejects.toThrow("FORBIDDEN");
@@ -392,6 +433,16 @@ describe("admin queue and decisions", () => {
       const admin = await makeViewer(tx, "admin");
       const id = await makeJob(tx, ctx, { status: "pending", paymentStatus: "pending", publishedAt: null, expiresAt: null });
       expect(await approveJob(tx, admin, id, { ip: null })).toEqual({ outcome: "unpaid" });
+      expect((await readJob(tx, id))?.status).toBe("pending");
+    });
+  });
+
+  it("refuses to reject a post that has not been paid for — it was never in the queue", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const admin = await makeViewer(tx, "admin");
+      const id = await makeJob(tx, ctx, { status: "pending", paymentStatus: "pending", publishedAt: null, expiresAt: null });
+      expect(await rejectJob(tx, admin, id, { ip: null, reason: "Spam." })).toEqual({ outcome: "unpaid" });
       expect((await readJob(tx, id))?.status).toBe("pending");
     });
   });
@@ -456,7 +507,8 @@ describe("expiry and reminders", () => {
       const due = await jobsDueReminder(tx, ADMIN);
       expect(due.map((j) => j.id).sort()).toEqual([inside, edge].sort());
 
-      await markJobReminderSent(tx, ADMIN, inside);
+      expect(await markJobReminderSent(tx, ADMIN, inside)).toBe(true);
+      expect(await markJobReminderSent(tx, ADMIN, inside)).toBe(false);
       expect((await jobsDueReminder(tx, ADMIN)).map((j) => j.id)).toEqual([edge]);
     });
   });

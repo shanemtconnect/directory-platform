@@ -294,7 +294,9 @@ export async function posterListings(tx: TestDb, viewer: Viewer, profileId: stri
       name: listings.name,
       slug: listings.slug,
       citySlug: cities.slug,
-      claimStatus: listings.claimStatus,
+      // The same predicate the free-post check uses, so the picker cannot
+      // offer a listing createJob will refuse.
+      verified: sql<boolean>`(${verifiedNow()})`,
     })
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
@@ -304,8 +306,20 @@ export async function posterListings(tx: TestDb, viewer: Viewer, profileId: stri
     id: r.id,
     name: r.name,
     path: `/${r.citySlug}/${r.slug}`,
-    verified: r.claimStatus === "verified",
+    verified: r.verified === true,
   }));
+}
+
+/**
+ * Verified, and not lapsed. `claim_status` is dropped to 'claimed' by the
+ * billing webhook/sync when a subscription ends; a missed webhook would leave
+ * it standing, so the expiry column is honoured here as well.
+ */
+function verifiedNow() {
+  return and(
+    eq(listings.claimStatus, "verified"),
+    or(isNull(listings.verifiedExpiresAt), gt(listings.verifiedExpiresAt, now())),
+  );
 }
 
 /** Whether a price is charged at all. Zero means the payment step does not exist. */
@@ -338,8 +352,8 @@ export async function createJob(tx: TestDb, viewer: Viewer, input: CreateJobInpu
         and(
           eq(listings.id, input.listingId),
           eq(listings.ownerId, input.posterProfileId),
-          eq(listings.claimStatus, "verified"),
           eq(listings.status, "published"),
+          verifiedNow(),
         ),
       )
       .limit(1);
@@ -420,7 +434,44 @@ export async function providerOrderIdForJob(tx: TestDb, viewer: Viewer, jobId: s
 export type MarkPaidResult =
   | { outcome: "paid"; jobId: string }
   | { outcome: "already-paid"; jobId: string }
+  /** The row is no longer pending (rejected, or somehow published) — a late capture. */
+  | { outcome: "not-pending"; jobId: string; status: string }
+  /** The event's custom_id names a different job from the one the order belongs to. */
+  | { outcome: "job-mismatch"; jobId: string }
   | { outcome: "unknown-order" };
+
+/**
+ * A capture that must NOT settle anything: wrong amount, wrong currency, or a
+ * job id that does not match the order. Written down as an audit row so a
+ * real customer's odd payment can be found and refunded by hand; the money
+ * is PayPal's record, this is ours.
+ */
+export async function recordJobPaymentMismatch(
+  tx: TestDb,
+  viewer: Viewer,
+  input: {
+    jobId: string | null;
+    providerOrderId: string | null;
+    eventId: string | null;
+    captureId: string | null;
+    reason: "wrong-amount" | "job-mismatch";
+    amount: { value: string; currencyCode: string } | null;
+  },
+): Promise<void> {
+  assertAdmin(viewer);
+  await writeAuditAs(tx, null, {
+    action: "job.payment.mismatch",
+    entityType: "job",
+    entityId: input.jobId !== null && UUID.test(input.jobId) ? input.jobId : null,
+    meta: {
+      reason: input.reason,
+      providerOrderId: input.providerOrderId,
+      eventId: input.eventId,
+      captureId: input.captureId,
+      amount: input.amount,
+    },
+  });
+}
 
 /**
  * Settles the payment. Idempotent: `FOR UPDATE` on the row, and a row that is
@@ -430,18 +481,47 @@ export type MarkPaidResult =
 export async function markJobPaid(
   tx: TestDb,
   viewer: Viewer,
-  input: { providerOrderId: string; captureId: string | null; eventId: string | null },
+  input: {
+    providerOrderId: string;
+    captureId: string | null;
+    eventId: string | null;
+    /** The event's custom_id when it carried one: must be this row, or nothing is written. */
+    expectedJobId?: string | null;
+  },
 ): Promise<MarkPaidResult> {
   assertAdmin(viewer);
   const [row] = await tx
-    .select({ id: jobs.id, paymentStatus: jobs.paymentStatus })
+    .select({ id: jobs.id, paymentStatus: jobs.paymentStatus, status: jobs.status })
     .from(jobs)
     .where(eq(jobs.providerOrderId, input.providerOrderId))
     .limit(1)
     .for("update");
   if (!row) return { outcome: "unknown-order" };
+  if (input.expectedJobId !== undefined && input.expectedJobId !== null && input.expectedJobId !== row.id) {
+    await recordJobPaymentMismatch(tx, viewer, {
+      jobId: row.id,
+      providerOrderId: input.providerOrderId,
+      eventId: input.eventId,
+      captureId: input.captureId,
+      reason: "job-mismatch",
+      amount: null,
+    });
+    return { outcome: "job-mismatch", jobId: row.id };
+  }
   if (row.paymentStatus === "paid" || row.paymentStatus === "free") {
     return { outcome: "already-paid", jobId: row.id };
+  }
+  // A capture landing on a row an admin has already turned down (or that is
+  // no longer pending for any reason) must not resurrect it into the queue.
+  // The money did move, so it is written down for a manual refund.
+  if (row.status !== "pending") {
+    await writeAuditAs(tx, null, {
+      action: "job.paid.late",
+      entityType: "job",
+      entityId: row.id,
+      meta: { providerOrderId: input.providerOrderId, captureId: input.captureId, eventId: input.eventId, status: row.status, refundNeeded: true },
+    });
+    return { outcome: "not-pending", jobId: row.id, status: row.status };
   }
 
   await tx
@@ -579,6 +659,9 @@ export async function rejectJob(
   if (reason === "") return { outcome: "reason-required" };
   const claimed = await claimPending(tx, jobId);
   if ("outcome" in claimed) return claimed;
+  // Never shown in the queue, so never decided: a rejected-then-captured row
+  // would be a paid post nobody can see. It stays pending until paid or purged.
+  if (claimed.paymentStatus === "pending") return { outcome: "unpaid" };
 
   await tx
     .update(jobs)
@@ -647,9 +730,15 @@ export async function jobsDueReminder(tx: TestDb, viewer: Viewer): Promise<JobDu
   return rows.flatMap((r) => (r.expiresAt === null ? [] : [{ id: r.id, expiresAt: r.expiresAt }]));
 }
 
-export async function markJobReminderSent(tx: TestDb, viewer: Viewer, jobId: string): Promise<void> {
+/** True when this call set the marker; false when another already had. */
+export async function markJobReminderSent(tx: TestDb, viewer: Viewer, jobId: string): Promise<boolean> {
   assertAdmin(viewer);
-  await tx.update(jobs).set({ reminderSentAt: now() }).where(and(eq(jobs.id, jobId), isNull(jobs.reminderSentAt)));
+  const marked = await tx
+    .update(jobs)
+    .set({ reminderSentAt: now() })
+    .where(and(eq(jobs.id, jobId), isNull(jobs.reminderSentAt)))
+    .returning({ id: jobs.id });
+  return marked.length > 0;
 }
 
 export interface JobNotifyContext {

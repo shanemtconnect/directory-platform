@@ -81,10 +81,11 @@ export async function enqueueExpiryReminders(db: Db): Promise<number> {
     // The queue row and the marker together, or neither.
     await db.transaction(async (sp) => {
       const tx = sp as unknown as Db;
-      await markJobReminderSent(tx, ADMIN_VIEWER, target.id);
+      // The marker is the once: if another pass set it first, no queue row.
+      if (!(await markJobReminderSent(tx, ADMIN_VIEWER, target.id))) return;
       await notifyJobExpiring(tx, ADMIN_VIEWER, target.id);
+      queued++;
     });
-    queued++;
   }
   return queued;
 }

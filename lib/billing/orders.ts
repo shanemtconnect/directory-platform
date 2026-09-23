@@ -4,6 +4,7 @@ import {
   jobForOrder,
   markJobPaid,
   providerOrderIdForJob,
+  recordJobPaymentMismatch,
   type MarkPaidResult,
 } from "@/lib/db/queries/job-board";
 import type { TestDb } from "@/lib/db/types";
@@ -48,11 +49,41 @@ export interface CreatedOrder {
   readonly approveUrl: string | null;
 }
 
+export interface CaptureAmount {
+  readonly value: string;
+  readonly currencyCode: string;
+}
+
 export interface CapturedOrder {
   readonly id: string;
   /** 'COMPLETED' when the money moved. Anything else is not paid. */
   readonly status: string;
   readonly captureId: string | null;
+  /** What was actually taken. Null when PayPal did not say, which is not "the right amount". */
+  readonly amount: CaptureAmount | null;
+}
+
+/**
+ * Whether a capture is for exactly the configured price in the configured
+ * currency. Nothing is marked paid on any other amount: a capture we did not
+ * create can carry our row id in `custom_id`, and a price raised in config
+ * must not be settled by an order created at the old one.
+ */
+export function amountMatches(amount: CaptureAmount | null): boolean {
+  if (amount === null) return false;
+  const expected = jobPostingAmount();
+  return (
+    Number(amount.value) === Number(expected.value) &&
+    amount.currencyCode.toUpperCase() === expected.currency_code.toUpperCase()
+  );
+}
+
+function readAmount(node: unknown): CaptureAmount | null {
+  if (typeof node !== "object" || node === null) return null;
+  const o = node as Record<string, unknown>;
+  const value = str(o.value);
+  const currencyCode = str(o.currency_code);
+  return value !== null && currencyCode !== null ? { value, currencyCode } : null;
 }
 
 export interface PayPalOrdersClient {
@@ -78,15 +109,17 @@ function linkHref(links: unknown, rel: string): string | null {
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 
-/** The capture id off a capture response: purchase_units[0].payments.captures[0].id. */
-function firstCaptureId(json: Record<string, unknown>): string | null {
+/** The first capture off an order: purchase_units[0].payments.captures[0]. */
+function firstCapture(json: Record<string, unknown>): { id: string | null; amount: CaptureAmount | null } {
+  const none = { id: null, amount: null };
   const units = json.purchase_units;
-  if (!Array.isArray(units) || units.length === 0) return null;
+  if (!Array.isArray(units) || units.length === 0) return none;
   const payments = (units[0] as Record<string, unknown>).payments;
-  if (typeof payments !== "object" || payments === null) return null;
+  if (typeof payments !== "object" || payments === null) return none;
   const captures = (payments as Record<string, unknown>).captures;
-  if (!Array.isArray(captures) || captures.length === 0) return null;
-  return str((captures[0] as Record<string, unknown>).id);
+  if (!Array.isArray(captures) || captures.length === 0) return none;
+  const capture = captures[0] as Record<string, unknown>;
+  return { id: str(capture.id), amount: readAmount(capture.amount) };
 }
 
 export function createPayPalOrdersClient(opts: { env?: Env; http?: PayPalHttp } = {}): PayPalOrdersClient {
@@ -146,18 +179,22 @@ export function createPayPalOrdersClient(opts: { env?: Env; http?: PayPalHttp } 
         const details = Array.isArray(json.details) ? (json.details as Record<string, unknown>[]) : [];
         if (details.some((d) => d.issue === "ORDER_ALREADY_CAPTURED")) {
           const read = await call(`/v2/checkout/orders/${encodeURIComponent(orderId)}`);
+          const capture = firstCapture(read.json);
           return {
             id: orderId,
             status: typeof read.json.status === "string" ? read.json.status : "COMPLETED",
-            captureId: firstCaptureId(read.json),
+            captureId: capture.id,
+            amount: capture.amount,
           };
         }
       }
       if (!ok || typeof json.id !== "string") throw fail("capture order", status, json);
+      const capture = firstCapture(json);
       return {
         id: json.id,
         status: typeof json.status === "string" ? json.status : "UNKNOWN",
-        captureId: firstCaptureId(json),
+        captureId: capture.id,
+        amount: capture.amount,
       };
     },
   };
@@ -184,6 +221,7 @@ export interface CaptureEvent {
   readonly captureId: string;
   readonly orderId: string | null;
   readonly customId: string | null;
+  readonly amount: CaptureAmount | null;
 }
 
 /**
@@ -205,10 +243,10 @@ export function captureFromEvent(event: PayPalEvent): CaptureEvent | null {
     typeof related === "object" && related !== null
       ? str((related as Record<string, unknown>).order_id)
       : null;
-  return { captureId, orderId, customId: str(event.resource.custom_id) };
+  return { captureId, orderId, customId: str(event.resource.custom_id), amount: readAmount(event.resource.amount) };
 }
 
-export type CaptureOutcome = MarkPaidResult["outcome"] | "not-a-capture";
+export type CaptureOutcome = MarkPaidResult["outcome"] | "not-a-capture" | "wrong-amount";
 
 /**
  * Settles a job from its capture event. Runs inside the webhook's transaction,
@@ -230,10 +268,28 @@ export async function applyCaptureEvent(
   }
   if (orderId === null) return { outcome: "unknown-order" };
 
+  // The amount FIRST, before the row is touched. A capture for any other
+  // amount or currency is written down and refused, whichever road found
+  // the order — and the custom_id road is exactly the one a stranger's
+  // order could take.
+  if (!amountMatches(capture.amount)) {
+    await recordJobPaymentMismatch(tx, viewer, {
+      jobId: capture.customId,
+      providerOrderId: orderId,
+      eventId: event.id,
+      captureId: capture.captureId,
+      reason: "wrong-amount",
+      amount: capture.amount,
+    });
+    return { outcome: "wrong-amount" };
+  }
+
   return markJobPaid(tx, viewer, {
     providerOrderId: orderId,
     captureId: capture.captureId,
     eventId: event.id,
+    // Both ids present: they must agree. custom_id alone was resolved above.
+    expectedJobId: capture.orderId !== null ? capture.customId : null,
   });
 }
 
@@ -274,12 +330,31 @@ export async function settleJobOrder(
   if (captured.status !== "COMPLETED") {
     return { outcome: "not-completed", jobId: job.id, status: captured.status };
   }
+  if (!amountMatches(captured.amount)) {
+    // Money moved for the wrong amount. Nothing granted; on the record for a refund.
+    await recordJobPaymentMismatch(tx, input.viewer, {
+      jobId: job.id,
+      providerOrderId: input.orderId,
+      eventId: null,
+      captureId: captured.captureId,
+      reason: "wrong-amount",
+      amount: captured.amount,
+    });
+    return { outcome: "not-completed", jobId: job.id, status: "AMOUNT_MISMATCH" };
+  }
 
   const marked = await markJobPaid(tx, input.viewer, {
     providerOrderId: input.orderId,
     captureId: captured.captureId,
     eventId: null,
   });
-  if (marked.outcome === "unknown-order") return { outcome: "unknown-order" };
-  return marked;
+  switch (marked.outcome) {
+    case "unknown-order":
+      return { outcome: "unknown-order" };
+    case "not-pending":
+    case "job-mismatch":
+      return { outcome: "not-completed", jobId: marked.jobId, status: marked.outcome.toUpperCase() };
+    default:
+      return marked;
+  }
 }

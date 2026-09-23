@@ -185,9 +185,11 @@ describe("postJob", () => {
     expect(attachJobOrder).not.toHaveBeenCalled();
   });
 
-  it("refuses a free-on-listing post from a stranger without touching the database", async () => {
+  it("refuses a free-on-listing post from a stranger before the budget or the Turnstile token is spent", async () => {
     const state = await post({ listingId: LISTING });
     expect(state.fieldErrors).toHaveProperty("listingId");
+    expect(limitPublicWrite).not.toHaveBeenCalled();
+    expect(verifyTurnstile).not.toHaveBeenCalled();
     expect(createJob).not.toHaveBeenCalled();
   });
 

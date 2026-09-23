@@ -140,6 +140,14 @@ describe("drainJobBoardNotifications", () => {
     });
   });
 
+  it("its kinds are disjoint from the notify worker's and billing's — one consumer per kind", async () => {
+    const { NOTIFY_KINDS, BILLING_NOTIFY_KINDS } = await import("@/lib/email/notify");
+    for (const kind of JOB_BOARD_NOTIFY_KINDS) {
+      expect(NOTIFY_KINDS).not.toContain(kind);
+      expect(BILLING_NOTIFY_KINDS).not.toContain(kind);
+    }
+  });
+
   it("runJobBoard hands back the expired pages for revalidation", async () => {
     await withTestDb(async (tx) => {
       setClock(new Date("2026-09-22T10:00:00Z"));
