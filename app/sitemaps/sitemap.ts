@@ -19,6 +19,8 @@ import {
   SITEMAP_SHARD_SIZE,
   AWARDS_SHARD_ID,
   sitemapAwards,
+  JOBS_SHARD_ID,
+  sitemapJobs,
 } from "@/lib/db/queries/sitemap";
 import { sitemapRegions } from "@/lib/db/queries/areas";
 import { sitemapRoutes } from "@/lib/features/navigation";
@@ -133,6 +135,17 @@ export default async function sitemap({ id }: { id: Promise<string> }): Promise<
       lastModified: a.lastModified,
       changeFrequency: "yearly" as const,
       priority: 0.6,
+    }));
+  }
+
+  // Jobs board (Task 49). The id is only ever generated when the flag is on.
+  if (shard === JOBS_SHARD_ID) {
+    const entries = await sitemapJobs(db as never, PUBLIC_VIEWER);
+    return entries.map((j) => ({
+      url: siteUrl(j.path),
+      lastModified: j.lastModified,
+      changeFrequency: "daily" as const,
+      priority: 0.5,
     }));
   }
 

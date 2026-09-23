@@ -11,6 +11,7 @@ import type { PayPalClient } from "./paypal";
 import { processFeaturedEvent } from "@/lib/spots/webhook";
 import { customIdFor, decide, HANDLED_EVENTS, parseEvent, providerSubscriptionIdFor } from "./webhooks";
 import { applySponsorBillingEvent } from "@/lib/ads/billing";
+import { applyCaptureEvent, PAYMENT_CAPTURE_COMPLETED } from "./orders";
 
 /**
  * One PayPal delivery, from raw body to applied transition.
@@ -104,6 +105,20 @@ export async function processPayPalWebhook(
     payload: body,
   });
   if (!fresh) return { status: 200, outcome: "duplicate" };
+
+  // One-off payments (Task 49, lib/billing/orders.ts). A capture names an
+  // order, not a subscription, so it is settled here before the subscription
+  // machinery looks for a row it will not find. Nothing public changes when a
+  // post is paid for — it is still pending approval — so there is nothing to
+  // revalidate.
+  if (event.type === PAYMENT_CAPTURE_COMPLETED) {
+    const capture = await applyCaptureEvent(tx, WEBHOOK_VIEWER, event);
+    return {
+      status: 200,
+      outcome: capture.outcome === "paid" ? "applied" : "ignored",
+      detail: `capture:${capture.outcome}`,
+    };
+  }
 
   if (!HANDLED_EVENTS.includes(event.type)) {
     // Recorded above on purpose: a redelivery of something we ignore should

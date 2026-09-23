@@ -1,8 +1,11 @@
-import { and, eq, asc, isNull, sql } from "drizzle-orm";
+import { and, eq, asc, desc, gt, isNull, or, sql } from "drizzle-orm";
 import { awards, cities, categories, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
+import { features } from "@/lib/features/flags";
+import { jobs } from "@/lib/db/schema";
+import { now } from "@/lib/clock";
 
 export interface SitemapEntry {
   path: string;
@@ -61,8 +64,14 @@ export function sitemapShardIds(listingCount: number): string[] {
     CATEGORY_SHARD_ID,
     REGION_SHARD_ID,
     ...Array.from({ length: shards }, (_, i) => listingShardId(i)),
+    // Jobs board (Task 49). A build-time constant, so a flag-off site never
+    // advertises a shard whose every URL would 404.
+    ...(features.jobBoard ? [JOBS_SHARD_ID] : []),
   ];
 }
+
+/** Open jobs, in their own shard so Search Console reports them as a type. */
+export const JOBS_SHARD_ID = "jobs";
 
 /**
  * The one published gate, deliberately asked for the ANONYMOUS answer.
@@ -221,4 +230,43 @@ export async function sitemapAwards(tx: TestDb, viewer: Viewer): Promise<Sitemap
     path: `/awards/${year}`, lastModified,
   }));
   return [...yearEntries, ...out];
+}
+
+/* --------------------------------------------------------- jobs (Task 49) */
+
+/**
+ * Every open job, plus the board itself and its per-town and per-category
+ * pages. Viewer-blind like the rest of this file, and gated on exactly what
+ * the public board shows: published and not past `expires_at`. A closed job
+ * still renders (noindexed) but is not advertised.
+ */
+export async function sitemapJobs(tx: TestDb, _viewer: Viewer): Promise<SitemapEntry[]> {
+  const at = now();
+  const rows = await tx
+    .select({
+      id: jobs.id,
+      updatedAt: jobs.updatedAt,
+      citySlug: cities.slug,
+      categorySlug: categories.slug,
+    })
+    .from(jobs)
+    .leftJoin(cities, eq(cities.id, jobs.cityId))
+    .leftJoin(categories, eq(categories.id, jobs.categoryId))
+    .where(and(eq(jobs.status, "published"), or(isNull(jobs.expiresAt), gt(jobs.expiresAt, at))))
+    .orderBy(desc(jobs.publishedAt));
+
+  const entries: SitemapEntry[] = [];
+  const seen = new Set<string>();
+  const add = (path: string, lastModified: Date) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    entries.push({ path, lastModified });
+  };
+  for (const row of rows) {
+    add(`/jobs/${row.id}`, row.updatedAt ?? at);
+    if (row.citySlug) add(`/jobs/in/${row.citySlug}`, row.updatedAt ?? at);
+    if (row.citySlug && row.categorySlug) add(`/jobs/in/${row.citySlug}/${row.categorySlug}`, row.updatedAt ?? at);
+    if (row.categorySlug) add(`/jobs/category/${row.categorySlug}`, row.updatedAt ?? at);
+  }
+  return entries;
 }

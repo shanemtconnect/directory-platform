@@ -96,6 +96,15 @@ describe("buildRoutes", () => {
     expect(awards).toMatchObject({ label: "Awards", inNav: true, inFooter: true, inSitemap: true });
   });
 
+  it("emits the jobs board and the posting page only when jobBoard is on", () => {
+    const on = buildRoutes({ ...allOff, jobBoard: true }, "niche-national").map((r) => r.href);
+    expect(on).toContain("/jobs");
+    expect(on).toContain("/post-a-job");
+    const off = buildRoutes(allOff, "niche-national").map((r) => r.href);
+    expect(off).not.toContain("/jobs");
+    expect(off).not.toContain("/post-a-job");
+  });
+
   it("emits the shortlist route when its flag is on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
     expect(hrefs).toContain("/shortlist");
@@ -103,8 +112,8 @@ describe("buildRoutes", () => {
 
   it("does not advertise the unbuilt features even with every flag on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
-    // /get-quotes (Task 47) and /awards (Task 50) left this list when their pages shipped.
-    for (const unbuilt of ["/cost", "/jobs", "/affiliates", "/tools"]) {
+    // /get-quotes (Task 47), /awards (Task 50) and /jobs (Task 49) left this list when their pages shipped.
+    for (const unbuilt of ["/cost", "/affiliates", "/tools"]) {
       expect(hrefs).not.toContain(unbuilt);
     }
   });

@@ -1,5 +1,5 @@
-import type { NavCounts } from "./nav-counts";
 import { features } from "@/lib/features/flags";
+import type { NavCounts } from "./nav-counts";
 
 /**
  * The console's own navigation.
@@ -29,6 +29,8 @@ const LINKS: { href: string; label: string }[] = [
   ...(features.awards ? [{ href: "/admin/awards", label: "Awards" }] : []),
   { href: "/admin/sponsors", label: "Sponsors" },
   { href: "/admin/audit", label: "Audit log" },
+  // Jobs board (Task 49): a flag-off site has no /admin/jobs page to link to.
+  ...(features.jobBoard ? [{ href: "/admin/jobs", label: "Jobs" }] : []),
 ];
 
 export function AdminNav({ current, counts }: { current: string; counts?: NavCounts }) {
