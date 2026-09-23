@@ -37,7 +37,8 @@ export interface AwardsActionState {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A revoke reason has to say something, and does not need to be an essay. */
-export const MAX_REVOKE_REASON_CHARS = 500;
+// Not exported: a "use server" module may export async functions only.
+const MAX_REVOKE_REASON_CHARS = 500;
 
 function field(form: FormData, name: string): string {
   const value = form.get(name);
