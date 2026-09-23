@@ -1478,3 +1478,78 @@ export async function spotLeaderboard(
     featured: rows.map((r) => ({ position: r.position as number, name: r.name, slug: r.slug, citySlug: r.citySlug })),
   };
 }
+
+/* ----------------------------------------------- appended: Task 45 upsell */
+
+export interface UpsellCandidate {
+  readonly listingId: string;
+  readonly listingName: string;
+  /** The cheapest bid that would take a position now, in minor units. */
+  readonly fromCents: number;
+}
+
+/**
+ * The signed-in owner's listing that belongs on this page but is not
+ * featured on it: the first of the viewer's eligible listings in the area
+ * (and category, for a category spot) with no active positioned bid on the
+ * spot. Null for anybody with nothing to be upsold — which is what the
+ * public strip renders as nothing.
+ */
+export async function upsellCandidate(
+  tx: TestDb,
+  viewer: Viewer,
+  profileId: string,
+  key: SpotKey,
+): Promise<UpsellCandidate | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(profileId)) return null;
+  const rows = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      cityId: listings.cityId,
+      region: cities.region,
+      primaryCategoryId: listings.primaryCategoryId,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .innerJoin(subscriptions, eq(subscriptions.listingId, listings.id))
+    .where(
+      and(
+        eq(listings.ownerId, profileId),
+        eq(listings.status, "published"),
+        eq(listings.claimStatus, "verified"),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        inArray(subscriptions.tier, ["essential", "premium"]),
+      ),
+    )
+    .orderBy(asc(listings.createdAt));
+  const inArea = rows.filter((r) =>
+    key.areaKind === "city" ? r.cityId === key.areaId : r.region !== null && slugify(r.region) === key.areaId,
+  );
+  if (inArea.length === 0) return null;
+  const spot = await findSpot(tx, viewer, key);
+  const bids = spot === null ? [] : await spotBids(tx, viewer, spot.id);
+  const featured = bids.filter((b) => b.status === "active" && b.position !== null);
+  for (const r of inArea) {
+    if (key.categoryId !== null && r.primaryCategoryId !== key.categoryId) {
+      const [extra] = await tx
+        .select({ id: listingCategories.listingId })
+        .from(listingCategories)
+        .where(and(eq(listingCategories.listingId, r.id), eq(listingCategories.categoryId, key.categoryId)))
+        .limit(1);
+      if (extra === undefined) continue;
+    }
+    if (featured.some((b) => b.listingId === r.id)) continue;
+    const positions = spot?.positions ?? siteConfig.featured.positions;
+    const floorCents = spot?.floorCents ?? floorCentsFor(key.areaKind);
+    const lowest = featured.length === 0 ? null : Math.min(...featured.map((b) => b.amountCents));
+    const fromCents =
+      lowest === null || featured.length < positions ? floorCents : Math.max(floorCents, lowest + UNIT_CENTS_LOCAL);
+    return { listingId: r.id, listingName: r.name, fromCents };
+  }
+  return null;
+}
+
+/** One major unit; `lib/spots/rank.ts` owns the constant, repeated here to keep this module free of that import at load. */
+const UNIT_CENTS_LOCAL = 100;

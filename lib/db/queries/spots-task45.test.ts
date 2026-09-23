@@ -19,6 +19,7 @@ import {
   listingForSystem,
   regionSpotKey,
   spotLeaderboard,
+  upsellCandidate,
 } from "./spots";
 
 const ADMIN = { role: "admin" as const, userId: "worker" };
@@ -134,6 +135,43 @@ describe("availability", () => {
       const region = report.find((r) => r.key.areaKind === "region" && r.areaName === "West Yorkshire")!;
       expect(region).toMatchObject({ spotId: null, filled: 0, floorCents: 10000, path: "/areas/west-yorkshire" });
       expect(leeds.find((r) => r.categoryName === null)?.path).toMatch(/^\/leeds/);
+    });
+  });
+});
+
+describe("upsellCandidate", () => {
+  it("is the owner's eligible listing in the area (and category) that holds no position on the spot, priced to enter", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const key = citySpotKey(ctx.cityId, null);
+      // No spot row yet: the floor.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, key)).toEqual({ listingId: a.listingId, listingName: "Alpha", fromCents: 5000 });
+      // Region page too.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, regionSpotKey("West Yorkshire", null))).toMatchObject({ fromCents: 10000 });
+      // Another town: nothing.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, citySpotKey(randomUUID(), null))).toBeNull();
+      // A category the listing is not in: nothing.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, citySpotKey(ctx.cityId, randomUUID()))).toBeNull();
+      // Its own category: yes.
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, citySpotKey(ctx.cityId, ctx.primaryCategoryId))).not.toBeNull();
+
+      // A full spot prices the entry at lowest + 1; once Alpha holds a place there is nothing to sell.
+      const b = await bidder(tx, ctx, "Bravo");
+      const c = await bidder(tx, ctx, "Charlie");
+      const d = await bidder(tx, ctx, "Delta");
+      const spot = await ensureSpot(tx, a.viewer, key);
+      await activeBid(tx, b, spot.id, 6000);
+      await activeBid(tx, c, spot.id, 7000);
+      await activeBid(tx, d, spot.id, 8000);
+      await rerankSpots(tx, [spot.id]);
+      expect(await upsellCandidate(tx, a.viewer, a.profileId, key)).toMatchObject({ fromCents: 6100 });
+      expect(await upsellCandidate(tx, b.viewer, b.profileId, key)).toBeNull();
+
+      // A profile that owns nothing here, and an owner whose plan lapsed: nothing.
+      expect(await upsellCandidate(tx, a.viewer, randomUUID(), citySpotKey(ctx.cityId, ctx.primaryCategoryId))).toBeNull();
+      const unpaid = await bidder(tx, ctx, "Echo", { sub: false });
+      expect(await upsellCandidate(tx, unpaid.viewer, unpaid.profileId, key)).toBeNull();
     });
   });
 });

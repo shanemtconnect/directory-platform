@@ -3,6 +3,7 @@ import { siteConfig } from "@/config/site.config";
 import { Pagination } from "@/components/pillar/Pagination";
 import { Breadcrumbs, type Crumb } from "@/components/seo/Breadcrumbs";
 import { FeaturedRow } from "@/components/pillar/FeaturedRow";
+import { FeaturedUpsell } from "@/components/pillar/FeaturedUpsell";
 import type { FeaturedListing } from "@/lib/db/queries/spots";
 
 interface Props {
@@ -80,6 +81,14 @@ export function RegionPillar({
 
       {isFirstPage && featuredBids.length > 0 && (
         <FeaturedRow featured={featuredBids} nounPlural={e.plural} place={region.name} />
+      )}
+      {isFirstPage && (
+        <FeaturedUpsell
+          spotKey={`region:${region.slug}:-`}
+          nounSingular={e.singular}
+          locale={siteConfig.locale}
+          currency={siteConfig.currency}
+        />
       )}
 
       <section aria-labelledby="all">
