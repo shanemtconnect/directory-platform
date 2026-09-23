@@ -10,6 +10,7 @@ import {
   currentFeaturedSubscription,
   describeSpotKeys,
   listingForBidding,
+  recentRaiseExpiry,
   searchCities,
   spotBids,
   spotsForKeys,
@@ -65,6 +66,7 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
   const areas = await describeSpotKeys(db, viewer, keys.map((k) => k.key));
   const rows = buildSpotTable({ listing, keys, spots, bidsBySpot, areas, config: siteConfig.featured });
   const subscription = await currentFeaturedSubscription(db, viewer, listing.id, profile.id);
+  const expiredAt = await recentRaiseExpiry(db, viewer, { listingId: listing.id, profileId: profile.id, withinDays: 7 });
 
   const e = siteConfig.entity;
   const money = (cents: number) => formatMoney(cents / UNIT_CENTS, siteConfig.locale, siteConfig.currency);
@@ -82,14 +84,25 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
       >
         <p data-testid="monthly-total">
           Your monthly total: <strong>{money(total)}</strong>
-          {subscription !== null && subscription.status === "approval_pending" && subscription.approveUrl !== null && (
+          {subscription !== null && subscription.approveUrl !== null && (
             <>
               {" · "}
-              <a href={subscription.approveUrl} data-testid="finish-approval">Finish approving at PayPal</a>
+              <a href={subscription.approveUrl} data-testid="finish-approval">
+                {subscription.status === "approval_pending"
+                  ? "Finish approving at PayPal"
+                  : "Approve the changed monthly amount at PayPal"}
+              </a>
             </>
           )}
         </p>
       </PageHeader>
+
+      {expiredAt !== null && (
+        <Notice variant="status" testId="raise-expired">
+          A bid or raise you asked for was not approved at PayPal within a day, so it was dropped. Your
+          other bids are unchanged; bid again whenever you like.
+        </Notice>
+      )}
 
       {!configured && (
         <Notice variant="status" testId="spots-unavailable">
@@ -146,7 +159,7 @@ export default async function FeaturedSpotsPage({ params, searchParams }: Props)
       })}
 
       <p className="text-sm text-muted">
-        Bids are per month and billed by PayPal as one subscription for this {e.singular}, at exactly the total of the spots you hold. Raising a bid needs your approval at PayPal before it counts; lowering or cancelling takes effect at once. Ties go to the earlier bid.
+        Bids are per month and billed by PayPal as one subscription for this {e.singular}, at exactly the total of the spots you hold. Raising a bid needs your approval at PayPal before it counts (unapproved after a day, it is dropped); lowering or cancelling takes effect at once. Ties go to whoever set that amount first. If every one of your bids is outbid the subscription is paused, not cancelled — your bids keep their place and billing resumes only when one is featured again. A plan that is behind on payment may still bid while PayPal retries.
       </p>
     </main>
   );

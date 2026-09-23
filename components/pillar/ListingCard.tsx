@@ -26,8 +26,10 @@ export function ListingCard({
       data-position={position}
       className={`card card-hover flex flex-col gap-2 ${featured ? "border-primary" : ""}`}
     >
-      {/* The word, not the border: a paid placement is disclosed as one. */}
-      {featured && (
+      {/* The word, not the border: a PAID placement (a featured-spot bid,
+          which always carries a position) is disclosed as one. The premium
+          row's cards are `featured` for the border only and keep no pill. */}
+      {position !== undefined && (
         <span
           data-testid="featured-label"
           className="inline-flex w-fit items-center rounded-full bg-accent px-2 py-0.5 text-xs font-semibold text-ink"

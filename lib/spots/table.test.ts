@@ -11,7 +11,7 @@ const listing: BiddingListing = {
 const config = { positions: 3, floors: { city: 50, region: 100 } };
 
 function bid(listingId: string, amountCents: number, position: number | null, status: BidRow["status"] = "active"): BidRow {
-  return { id: `${listingId}-${amountCents}`, listingId, amountCents, pendingAmountCents: null, createdAt: new Date(), status, position, subscriptionId: null };
+  return { id: `${listingId}-${amountCents}`, listingId, amountCents, amountSetAt: new Date(), pendingAmountCents: null, createdAt: new Date(), status, position, subscriptionId: null };
 }
 
 describe("spotKeysFor", () => {

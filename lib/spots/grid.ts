@@ -16,3 +16,30 @@ export function excludeFeatured<T extends Pick<PublicListing, "id">>(
   const ids = new Set(featured.map((f) => f.id));
   return rows.filter((r) => !ids.has(r.id));
 }
+
+/** How many premium-tier cards the pre-existing row shows. */
+export const PREMIUM_ROW_SIZE = 3;
+
+export interface PageRows<T> {
+  /** The organic grid, featured bids removed. */
+  readonly grid: T[];
+  /**
+   * The premium-tier row — built from the GRID, so a premium listing that
+   * also holds a bid is not on the page twice, and empty whenever the paid
+   * row is showing: one Featured section per page (I3).
+   */
+  readonly premium: T[];
+}
+
+export function pageRows<T extends Pick<PublicListing, "id" | "tier">>(
+  rows: readonly T[],
+  featured: readonly Pick<PublicListing, "id">[],
+  premiumRowEnabled: boolean,
+): PageRows<T> {
+  const grid = excludeFeatured(rows, featured);
+  const premium =
+    featured.length > 0 || !premiumRowEnabled
+      ? []
+      : grid.filter((l) => l.tier === "premium").slice(0, PREMIUM_ROW_SIZE);
+  return { grid, premium };
+}

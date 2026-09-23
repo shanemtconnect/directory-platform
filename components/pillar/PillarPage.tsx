@@ -75,17 +75,19 @@ export function PillarPage({
         />
       )}
 
-      {/* Paid featured spots, above everything organic. Empty spot: no row. */}
-      {isFirstPage && (
+      {/* ONE Featured section: the paid spots when any bid holds a position
+          (lib/spots), otherwise the premium-tier row the page always had.
+          The route builds `featured` from the grid, so nothing is on the page
+          twice. Empty spot and no premium: no row, no placeholder. */}
+      {isFirstPage && featuredBids.length > 0 && (
         <FeaturedRow
           featured={featuredBids}
           nounPlural={heading.nounPlural}
           place={heading.place}
-          cityPath={cityPath}
         />
       )}
 
-      {isFirstPage && featured.length > 0 && (
+      {isFirstPage && featuredBids.length === 0 && featured.length > 0 && (
         <section aria-labelledby="featured" data-testid="featured">
           <h2 id="featured">Featured {heading.nounPlural} in {heading.place}</h2>
           <ul className="card-grid">

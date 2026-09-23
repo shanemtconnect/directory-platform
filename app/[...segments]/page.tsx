@@ -23,7 +23,7 @@ import {
 import { ReviewsPage } from "@/components/reviews/ReviewsPage";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
 import { featuredForScope } from "@/lib/db/queries/spots";
-import { excludeFeatured } from "@/lib/spots/grid";
+import { pageRows } from "@/lib/spots/grid";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
@@ -258,20 +258,22 @@ export default async function CatchAllPage({ params }: Props) {
         result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
       ]);
 
-      // A featured listing is not listed twice. The ItemList below keeps
-      // every row it is handed — the featured cards are on the page too.
-      const grid = excludeFeatured(rows, featuredBids);
+      // A featured listing is not listed twice, and the page has ONE
+      // Featured section: the paid row when any bid holds a position, the
+      // premium-tier row otherwise (from the grid, never from `rows`). The
+      // ItemList below keeps every row it is handed — the featured cards are
+      // on the page too.
+      const { grid, premium } = pageRows(
+        rows,
+        featuredBids,
+        result.page === 1 && siteConfig.tiers.premium.homepageSlot,
+      );
 
       const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
       // A page number past the end has nothing on it and must not be a soft 404
       // — /leeds/page/999 rendered an empty, indexable page.
       if (result.page > totalPages) notFound();
 
-      // Premium listings shown as a featured row on page 1. They also appear in
-      // the main grid — the row is prominence, not a separate inventory.
-      const featured = result.page === 1
-        ? rows.filter((l) => l.tier === "premium" && siteConfig.tiers.premium.homepageSlot).slice(0, 3)
-        : [];
 
       const faq = parseFaq(heading.faq);
 
@@ -305,7 +307,7 @@ export default async function CatchAllPage({ params }: Props) {
           {faq.length > 0 && <JsonLd data={faqSchema(faq)} />}
           <PillarPage
             heading={heading}
-            featured={featured}
+            featured={premium}
             featuredBids={featuredBids}
             listings={grid}
             categories={categories}

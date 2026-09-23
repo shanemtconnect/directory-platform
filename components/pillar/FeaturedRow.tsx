@@ -7,7 +7,6 @@ interface Props {
   /** The page's own noun and place, so the heading matches the h1 below it. */
   nounPlural: string;
   place: string;
-  cityPath: string;
 }
 
 /**
@@ -20,14 +19,16 @@ interface Props {
  * Server component inside the ISR tree. The row changes when a bid does,
  * and `spotPaths` in lib/db/queries/spots.ts is what busts this page then.
  */
-export function FeaturedRow({ featured, nounPlural, place, cityPath }: Props) {
+export function FeaturedRow({ featured, nounPlural, place }: Props) {
   if (featured.length === 0) return null;
   return (
     <section aria-labelledby="featured-row" data-testid="featured-row">
       <h2 id="featured-row">Featured {nounPlural} in {place}</h2>
       <ul className="card-grid">
+        {/* The listing's OWN city: a listing bidding on another town's page
+            still lives at /its-city/slug (I2). */}
         {featured.map((l) => (
-          <ListingCard key={l.id} listing={l} basePath={cityPath} featured position={l.position} />
+          <ListingCard key={l.id} listing={l} basePath={`/${l.citySlug}`} featured position={l.position} />
         ))}
       </ul>
     </section>

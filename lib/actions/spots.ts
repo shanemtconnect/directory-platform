@@ -113,11 +113,14 @@ export async function placeBidAction(_prev: BidState, form: FormData): Promise<B
       return { status: "error", keyString, message: bidRejectionMessage(result.reason, result.minimum, money) };
     case "unchanged":
       return { status: "applied", keyString, message: "That is already your bid." };
+    case "awaiting-approval":
+      if (result.approveUrl !== null) break;
+      return { status: "error", keyString, message: "Finish approving your featured subscription at PayPal first." };
     case "applied":
       revalidateListingPaths(result.paths);
       revalidatePath(`/account/listings/${listingId}/featured`);
       if (result.approveUrl !== null) break;
-      return { status: "applied", keyString, message: "Your bid has been lowered and the row re-ranked." };
+      return { status: "applied", keyString, message: "Done — the row has been re-ranked." };
     case "approval":
       if (result.approveUrl === null) {
         return { status: "error", keyString, message: "PayPal did not give us an approval link. Please try again." };
@@ -167,17 +170,22 @@ export async function cancelBidAction(_prev: CancelBidState, form: FormData): Pr
       return { status: "error", message: "That listing was not found." };
     case "no-bid":
       return { status: "error", message: "There is no bid on that spot to cancel." };
+    case "awaiting-approval":
+      if (result.approveUrl !== null) break;
+      return { status: "error", message: "Finish approving your featured subscription at PayPal first." };
     case "applied":
       revalidateListingPaths(result.paths);
       revalidatePath(`/account/listings/${listingId}/featured`);
+      if (result.approveUrl !== null) break;
       return {
         status: "cancelled",
-        message:
-          result.approveUrl === null
-            ? "Your bid is cancelled. You will not be charged for that spot again."
-            : "Your bid is cancelled. PayPal will ask you to approve the lower monthly amount.",
+        message: "Your bid is cancelled. You will not be charged for that spot again.",
       };
   }
+
+  // PayPal wants the lower monthly amount approved (I4): send the owner
+  // there, exactly as a bid does. Outside the try: `redirect` throws.
+  redirect(result.approveUrl!);
 }
 
 function eligibilityMessage(reason: "not-published" | "not-verified" | "no-subscription"): string {
