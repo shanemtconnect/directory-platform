@@ -848,34 +848,14 @@ export async function featuredForScope(
   viewer: Viewer,
   scope: PillarScope,
 ): Promise<FeaturedListing[]> {
-  let key: SpotKey;
   switch (scope.type) {
     case "city":
-      key = citySpotKey(scope.cityId, null);
-      break;
+      return featuredForSpotKey(tx, viewer, citySpotKey(scope.cityId, null));
     case "city-category":
-      key = citySpotKey(scope.cityId, scope.categoryId);
-      break;
+      return featuredForSpotKey(tx, viewer, citySpotKey(scope.cityId, scope.categoryId));
     default:
       return [];
   }
-  const rows = await tx
-    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug, spotId: featuredSpots.id })
-    .from(featuredBids)
-    .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
-    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
-    .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(
-      and(
-        keyWhere(key),
-        eq(featuredSpots.status, "open"),
-        eq(featuredBids.status, "active"),
-        isNotNull(featuredBids.position),
-        publishedListings(viewer),
-      ),
-    )
-    .orderBy(asc(featuredBids.position));
-  return rows.map((r) => ({ ...r, position: r.position as number }));
 }
 
 /**
@@ -1416,4 +1396,85 @@ export async function featuredClicksForListing(
     )
     .groupBy(featuredClicksDaily.spotId);
   return new Map(rows.map((r) => [r.spotId, r.clicks]));
+}
+
+/* ------------------------------------------ appended: Task 45 leaderboard */
+
+/** The featured row for any spot key — the region page's mount and the leaderboard share it. */
+export async function featuredForSpotKey(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+): Promise<FeaturedListing[]> {
+  const rows = await tx
+    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug, spotId: featuredSpots.id })
+    .from(featuredBids)
+    .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(
+      and(
+        keyWhere(key),
+        eq(featuredSpots.status, "open"),
+        eq(featuredBids.status, "active"),
+        isNotNull(featuredBids.position),
+        publishedListings(viewer),
+      ),
+    )
+    .orderBy(asc(featuredBids.position));
+  return rows.map((r) => ({ ...r, position: r.position as number }));
+}
+
+export interface LeaderboardEntry {
+  readonly position: number;
+  readonly name: string;
+  readonly slug: string;
+  readonly citySlug: string;
+}
+
+export interface SpotLeaderboard {
+  readonly spot: SpotRow;
+  readonly areaName: string;
+  readonly categoryName: string | null;
+  /** The public page the spot sits on, when it can be named. */
+  readonly path: string | null;
+  /** Position order; published listings only; NO amounts. */
+  readonly featured: LeaderboardEntry[];
+}
+
+/**
+ * The public leaderboard: positions and names, nothing about money. A
+ * closed spot still answers (the page says it is closed); a spot that does
+ * not exist is null.
+ */
+export async function spotLeaderboard(
+  tx: TestDb,
+  viewer: Viewer,
+  spotId: string,
+): Promise<SpotLeaderboard | null> {
+  const spot = await spotById(tx, viewer, spotId);
+  if (spot === null) return null;
+  const key: SpotKey = { areaKind: spot.areaKind, areaId: spot.areaId, categoryId: spot.categoryId };
+  const [area] = await describeSpotKeys(tx, viewer, [key]);
+  const rows = await tx
+    .select({ position: featuredBids.position, name: listings.name, slug: listings.slug, citySlug: cities.slug })
+    .from(featuredBids)
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(
+      and(
+        eq(featuredBids.spotId, spot.id),
+        eq(featuredBids.status, "active"),
+        isNotNull(featuredBids.position),
+        publishedListings(viewer),
+      ),
+    )
+    .orderBy(asc(featuredBids.position));
+  return {
+    spot,
+    areaName: area?.areaName ?? spot.areaId,
+    categoryName: area?.categoryName ?? null,
+    path: (await spotPaths(tx, viewer, spot.id))[0] ?? null,
+    featured: rows.map((r) => ({ position: r.position as number, name: r.name, slug: r.slug, citySlug: r.citySlug })),
+  };
 }
