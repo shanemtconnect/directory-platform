@@ -80,6 +80,20 @@ export async function processPendingDerivatives(
         .where(eq(listingImages.id, image.id));
       liveListingIds?.add(image.listingId);
       done++;
+
+      // The original goes once the row says the derivatives exist. It is the
+      // one object in the public bucket that still carries the phone's EXIF
+      // (GPS included); the WebPs above are what the page serves, and sharp
+      // has already stripped them. Best-effort and logged: a missing original
+      // is an orphan nobody can reach, and a failed delete must not undo a
+      // finished image. This runs inside the job's transaction, so a crash
+      // between here and the commit loses the original with no derivatives
+      // recorded — the row then fails out after its attempts and the owner
+      // deletes it, which is the acceptable side of that trade.
+      await deleteObject(bucket, image.storagePath).catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        console.warn(`[derivatives] ${image.id}: original not removed — ${message}`);
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const permanent = e instanceof UnprocessableUpload;

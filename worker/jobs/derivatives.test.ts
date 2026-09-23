@@ -9,12 +9,12 @@ import { listingPaths } from "@/lib/db/queries/paths";
 
 const getObject = vi.fn<(bucket: string, key: string) => Promise<Buffer>>();
 const putObject = vi.fn<() => Promise<void>>();
-const deleteObject = vi.fn<() => Promise<void>>();
+const deleteObject = vi.fn<(bucket: string, key: string) => Promise<void>>();
 
 vi.mock("@/lib/media/r2", () => ({
   getObject: (bucket: string, key: string) => getObject(bucket, key),
   putObject: () => putObject(),
-  deleteObject: () => deleteObject(),
+  deleteObject: (bucket: string, key: string) => deleteObject(bucket, key),
 }));
 
 const { processPendingDerivatives, derivativesJob, MAX_DERIVATIVE_ATTEMPTS } =
@@ -51,6 +51,48 @@ describe("processPendingDerivatives", () => {
       expect(Object.keys(row?.derivatives as object).sort())
         .toEqual(["card", "full", "hero", "thumb"]);
       expect(row?.derivativesError).toBeNull();
+    });
+  });
+
+  /**
+   * The original is the one object in the PUBLIC bucket that still carries
+   * the phone's EXIF, GPS included. Once the row records the stripped
+   * derivatives it is removed — exactly once per processed image — and a
+   * bucket that refuses does not undo a finished image.
+   */
+  it("removes the original from the bucket once the derivatives are recorded", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx);
+      await tx.insert(listingImages).values([
+        { listingId, storagePath: `listings/${listingId}/photo-0000000000000001.jpg` },
+        { listingId, storagePath: `listings/${listingId}/photo-0000000000000002.jpg` },
+      ]);
+      getObject.mockResolvedValue(realPng);
+
+      expect(await processPendingDerivatives(tx)).toBe(2);
+      expect(deleteObject).toHaveBeenCalledTimes(2);
+      expect(deleteObject).toHaveBeenCalledWith("media", `listings/${listingId}/photo-0000000000000001.jpg`);
+      expect(deleteObject).toHaveBeenCalledWith("media", `listings/${listingId}/photo-0000000000000002.jpg`);
+      // Only after that image's four sizes were written, never before.
+      const puts = putObject.mock.invocationCallOrder;
+      const dels = deleteObject.mock.invocationCallOrder;
+      expect(dels[0]).toBeGreaterThan(puts[3]!);
+      expect(dels[1]).toBeGreaterThan(puts[7]!);
+    });
+  });
+
+  it("keeps a finished image when the original cannot be removed", async () => {
+    await withTestDb(async (tx) => {
+      const id = await makeImage(tx);
+      getObject.mockResolvedValue(realPng);
+      deleteObject.mockRejectedValue(new Error("R2 timed out"));
+
+      expect(await processPendingDerivatives(tx)).toBe(1);
+      const [row] = await tx.select().from(listingImages).where(eq(listingImages.id, id));
+      expect(row?.derivatives).not.toBeNull();
+      expect(row?.derivativesError).toBeNull();
+      expect(row?.derivativesAttempts).toBe(0);
     });
   });
 
