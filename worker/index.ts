@@ -9,6 +9,7 @@ import { jobCounts } from "@/lib/db/queries/health";
 import { HEARTBEAT_CRON, pushUptime, runHeartbeat } from "@/lib/observability/heartbeat";
 import { revalidatePaths } from "@/lib/revalidate/client";
 import { features } from "@/lib/features/flags";
+import { AWARDS_CRON, awardsCronOptions } from "./jobs/awards";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -42,7 +43,18 @@ type JobOutcome = void | { readonly revalidate?: readonly string[] };
  * Jobs run inside this container via node-cron, not by system cron hitting HTTP
  * endpoints: that way they get logging, retries and no public attack surface.
  */
-function schedule(name: string, expr: string, fn: (tx: Db) => Promise<JobOutcome>): void {
+/**
+ * `options` goes straight to node-cron. The one that matters is `timezone`:
+ * an expression is read in the server's clock unless told otherwise, and a
+ * job whose meaning is "on 1 January" has to fire on the site's 1 January,
+ * not the container's.
+ */
+function schedule(
+  name: string,
+  expr: string,
+  fn: (tx: Db) => Promise<JobOutcome>,
+  options: { timezone?: string } = {},
+): void {
   cron.schedule(expr, async () => {
     const startedAt = now();
     try {
@@ -73,8 +85,8 @@ function schedule(name: string, expr: string, fn: (tx: Db) => Promise<JobOutcome
         jobName: name, startedAt, finishedAt: now(), status: "failed", error: message, lockKey: name,
       }).catch(() => {});
     }
-  });
-  console.log(`[worker] scheduled ${name} (${expr})`);
+  }, options);
+  console.log(`[worker] scheduled ${name} (${expr}${options.timezone ? ` ${options.timezone}` : ""})`);
 }
 
 schedule("derivatives", "*/1 * * * *", async (tx) => {
@@ -189,16 +201,18 @@ schedule("purge-stats", "0 4 * * *", async (tx) => {
   await purgeStats(tx);
 });
 
-// Awards (Task 50). Once a year, in the small hours of 1 January, in the
-// server's clock — the job itself reads the year in the site's timezone. Only
-// on a site with the module on: a clone without it must not accumulate award
-// rows nothing renders. Idempotent, so an admin who has already pressed
-// "compute" on /admin/awards for the year costs this run nothing. Off the
-// hour like the billing jobs, and after the nightly purges have finished.
+// Awards (Task 50). Once a year, in the small hours of 1 January IN THE
+// SITE'S TIMEZONE — the same zone the job reads the year in, so a US clone on
+// a UTC server decides "Winner 2031" on its own 1 January 2031 and not on the
+// evening of 31 December 2030. Only on a site with the module on: a clone
+// without it must not accumulate award rows nothing renders. Idempotent, so
+// an admin who has already pressed "compute" on /admin/awards for the year
+// costs this run nothing. Off the hour like the billing jobs, and after the
+// nightly purges have finished.
 if (features.awards) {
-  schedule("awards", "23 5 1 1 *", async (tx) => {
+  schedule("awards", AWARDS_CRON, async (tx) => {
     const { computeAwards } = await import("./jobs/awards");
     const { revalidate } = await computeAwards(tx);
     return { revalidate };
-  });
+  }, awardsCronOptions());
 }

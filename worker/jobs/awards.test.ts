@@ -7,7 +7,8 @@ import { resetClock, setClock } from "@/lib/clock";
 import { listingAwards } from "@/lib/db/queries/awards";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import type { Db } from "@/lib/db/client";
-import { awardYearFor, awardsRevalidatePaths, computeAwards } from "./awards";
+import { siteConfig } from "@/config/site.config";
+import { AWARDS_CRON, awardYearFor, awardsCronOptions, awardsRevalidatePaths, computeAwards } from "./awards";
 
 afterEach(() => resetClock());
 
@@ -20,11 +21,44 @@ async function contest(tx: TestDb, ctx: ListingCtx): Promise<string> {
 
 describe("awardYearFor", () => {
   it("is the calendar year of the run, in the site's timezone", () => {
-    // 1 January 00:30 in Europe/London is still 31 December in UTC-only
-    // reasoning during winter? No — London is UTC in January. Use a zone-safe
-    // instant instead: 1 Jan 2031 03:00 UTC is 1 Jan everywhere west of +21.
-    expect(awardYearFor(new Date("2031-01-01T03:00:00Z"))).toBe(2031);
+    // 1 Jan 2031 12:00 UTC is 1 January in every zone; noon on 31 December likewise.
+    expect(awardYearFor(new Date("2031-01-01T12:00:00Z"))).toBe(2031);
     expect(awardYearFor(new Date("2030-12-31T12:00:00Z"))).toBe(2030);
+  });
+});
+
+/**
+ * The cron and the year reading have to agree, and they only do because both
+ * are in the site's zone. With a UTC-negative site on a UTC server, the old
+ * server-clock schedule fired at 05:23 UTC on 1 January — 21:23 on 31 December
+ * locally — and computed the year that was ENDING.
+ */
+describe("AWARDS_CRON in the site timezone", () => {
+  /** The wall-clock fields of `at` in `tz`, as node-cron would match them. */
+  function wall(at: Date, tz: string): { minute: number; hour: number; day: number; month: number } {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz, hour12: false, minute: "2-digit", hour: "2-digit", day: "2-digit", month: "2-digit",
+    }).formatToParts(at);
+    const get = (type: string) => Number(parts.find((p) => p.type === type)!.value);
+    return { minute: get("minute"), hour: get("hour") % 24, day: get("day"), month: get("month") };
+  }
+
+  it("is read in the same zone awardYearFor reads the year in", () => {
+    expect(awardsCronOptions()).toEqual({ timezone: siteConfig.timezone });
+  });
+
+  it("fires on the site's 1 January and computes the year that has just begun, west of UTC too", () => {
+    const [minute, hour, day, month] = AWARDS_CRON.split(" ").map(Number);
+    const tz = "America/Los_Angeles";
+    // 05:23 on 1 January 2031 in Los Angeles is 13:23 UTC.
+    const fires = new Date("2031-01-01T13:23:00Z");
+    expect(wall(fires, tz)).toEqual({ minute, hour, day, month });
+    expect(awardYearFor(fires, tz)).toBe(2031);
+
+    // The server-clock reading of the same expression: still 2030 locally.
+    const serverClock = new Date("2031-01-01T05:23:00Z");
+    expect(awardYearFor(serverClock, tz)).toBe(2030);
+    expect(wall(serverClock, tz).day).toBe(31);
   });
 });
 

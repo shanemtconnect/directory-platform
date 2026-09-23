@@ -1,3 +1,4 @@
+import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";
 import { listingPaths } from "@/lib/db/queries/paths";
 import {
@@ -26,6 +27,18 @@ import type { Db } from "@/lib/db/client";
 
 /** Re-exported for the tests and the log line; the definition lives with the query module so the admin action shares it. */
 export { awardYearFor };
+
+/**
+ * 05:23 on 1 January. Read in `awardsCronOptions().timezone` — the SAME zone
+ * `awardYearFor` reads the year in, which is what makes the two agree: the
+ * job fires once the site's own new year has begun, so the year it computes
+ * is the one that has just started, on every server clock and in every zone.
+ */
+export const AWARDS_CRON = "23 5 1 1 *";
+
+export function awardsCronOptions(): { timezone: string } {
+  return { timezone: siteConfig.timezone };
+}
 
 /**
  * Everything a run left stale: the index, the year page, each town page that
