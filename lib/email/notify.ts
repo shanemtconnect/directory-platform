@@ -378,3 +378,29 @@ export async function notifyAuthEmail(
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind, payload });
 }
+
+/* ------------------------------------------------------ sponsor rails (Task 43) */
+export const NOTIFY_SPONSOR_SUBMITTED = "notify.sponsor.submitted";
+export const NOTIFY_SPONSOR_DECIDED = "notify.sponsor.decided";
+/** Drained by worker/jobs/notify-sponsors.ts, not by the main notify job. */
+export const SPONSOR_NOTIFY_KINDS: string[] = [NOTIFY_SPONSOR_SUBMITTED, NOTIFY_SPONSOR_DECIDED];
+
+export type SponsorJobPayload = { campaignId: string };
+
+export async function notifySponsorSubmitted(
+  tx: TestDb,
+  viewer: Viewer,
+  campaignId: string,
+): Promise<void> {
+  const payload: SponsorJobPayload = { campaignId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPONSOR_SUBMITTED, payload });
+}
+
+export async function notifySponsorDecided(
+  tx: TestDb,
+  viewer: Viewer,
+  campaignId: string,
+): Promise<void> {
+  const payload: SponsorJobPayload = { campaignId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPONSOR_DECIDED, payload });
+}
