@@ -11,7 +11,7 @@ import type { ComputeAwardsResult, RevokeAwardResult } from "@/lib/db/queries/aw
  */
 
 const requireAdmin = vi.fn<() => Promise<Viewer & { role: "admin" }>>();
-const computeAwardsForYear = vi.fn<(year: number) => Promise<ComputeAwardsResult>>();
+const computeAwardsForYear = vi.fn<(year: number, opts: { ip?: string | null }) => Promise<ComputeAwardsResult>>();
 const revokeAward = vi.fn<(awardId: string, input: { reason: string; ip: string | null }) => Promise<RevokeAwardResult>>();
 const listingPaths = vi.fn<(id: string) => Promise<string[]>>();
 const revalidatePath = vi.fn<(p: string) => void>();
@@ -24,7 +24,8 @@ vi.mock("@/lib/db/client", () => ({
 vi.mock("@/lib/auth/viewer", () => ({ requireAdmin: () => requireAdmin() }));
 vi.mock("@/lib/db/queries/awards", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/queries/awards")>()),
-  computeAwardsForYear: (_tx: unknown, _viewer: unknown, year: number) => computeAwardsForYear(year),
+  computeAwardsForYear: (_tx: unknown, _viewer: unknown, year: number, opts: { ip?: string | null }) =>
+    computeAwardsForYear(year, opts),
   revokeAward: (_tx: unknown, _viewer: unknown, awardId: string, input: { reason: string; ip: string | null }) =>
     revokeAward(awardId, input),
 }));
@@ -88,7 +89,8 @@ describe("computeAwardsAction", () => {
     const state = await computeAwardsAction(IDLE, form({ year: "2031" }));
     expect(state.status).toBe("done");
     expect(state.message).toContain("1 award decided for 2031");
-    expect(computeAwardsForYear).toHaveBeenCalledWith(2031);
+    // The admin's ip reaches the audit row (constraint 22).
+    expect(computeAwardsForYear).toHaveBeenCalledWith(2031, { ip: "203.0.113.9" });
     const busted = revalidatePath.mock.calls.map((c) => c[0]);
     for (const p of ["/admin/awards", "/awards", "/awards/2031", "/awards/2031/leeds", "/leeds/the-old-barn", "/leeds"]) {
       expect(busted).toContain(p);

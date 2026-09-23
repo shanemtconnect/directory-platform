@@ -77,9 +77,11 @@ export async function computeAwardsAction(
   const year = parseAwardYear(field(form, "year"));
   if (year === null) return { status: "error", message: "Enter a four-digit year." };
 
+  const ip = clientIp(await headers());
+
   const outcome = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
-    const result = await computeAwardsForYear(handle, viewer, year);
+    const result = await computeAwardsForYear(handle, viewer, year, { ip });
     const paths: string[] = [];
     for (const c of result.created) paths.push(...(await listingPaths(handle, viewer, c.listingId)));
     return { result, paths };
