@@ -146,6 +146,7 @@ config (`essential`, `premium`) that is the four below;
 | `PAYPAL_WEBHOOK_ID` | boot | `lib/billing/paypal.ts` — `verifyWebhookSignature`, which fails closed | Boot refuses when the switch is set. A *wrong* id is the dangerous case: every delivery is rejected 401 and nothing looks broken — see [Operating the site](#operating-the-site) |
 | `PAYPAL_PLAN_ESSENTIAL_MONTHLY` `PAYPAL_PLAN_ESSENTIAL_ANNUAL` `PAYPAL_PLAN_PREMIUM_MONTHLY` `PAYPAL_PLAN_PREMIUM_ANNUAL` | boot | `lib/billing/plans.ts` — maps a tier×interval to a PayPal plan id and back | Boot refuses when the switch is set. An id not in the environment never grants a tier |
 | `PAYPAL_ENV` | boot | `lib/billing/paypal.ts`, `scripts/paypal-setup.ts` | Sandbox. Only the literal `live` hits `api-m.paypal.com`; forgetting it takes test money, which is the recoverable mistake |
+| `PAYPAL_PLAN_SPONSOR_MONTHLY` | boot | `lib/ads/billing.ts` — the sponsor-rail plan `scripts/paypal-setup.ts` also creates | **Optional, not part of the boot group.** Unset: `/advertise/sponsor` still takes a campaign but sends nobody to PayPal; the page says payment is arranged by email |
 
 ### Optional — the feature degrades
 
@@ -169,6 +170,7 @@ config (`essential`, `premium`) that is the four below;
 | `MIGRATE_ON_BOOT` | boot | `docker-entrypoint.sh` — web role only | No migration at boot. Set `true` on the web service (see Deploy) |
 | `STATIC_ASSETS_DIR` | boot | `docker-entrypoint.sh` — web role only | No asset retention across deploys. Set but not writable: **refuses to boot** |
 | `PORT` `HOSTNAME` | boot | the standalone server; Dockerfile sets `3000` / `0.0.0.0` | Those defaults |
+| `ADS_ENABLED` | boot (read per request) | `lib/ads/policy.ts` — the sponsor rails kill switch | Follows `siteConfig.ads.enabled` (off in the template). The literal `false` hides every rail whatever the config says; the literal `true` shows them over a config that has them off — for checking a staging build, and for the e2e suite. Rails never appear on the home page, and never with real cards unless `SITE_ENV=production` (staging shows a labelled placeholder) |
 | `SITE_FLAGS_OVERRIDE` | **build** | `config/flag-variants.ts` | Features come from `site.config.ts`. `on`/`off` exist for the two CI builds (`build:flags-on`, `build:flags-off`); never set it in production |
 | `BETTER_AUTH_RATE_LIMIT` | boot | `lib/auth/server.ts` | Rate limiting on. Only the literal `off` disables it, and only `playwright.config.ts` sets that |
 | `STATS_SEEN_SALT` | boot | `lib/stats/counters.ts` — salts the `sha256(ip, day, salt)` digest that stands in for a visitor's address in the one-view-per-day mark (`stats:seen:<day>:<digest>:<listing>`) | `BETTER_AUTH_SECRET` is used instead. Redis never holds a raw address either way; set this only to rotate the two independently |
