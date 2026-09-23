@@ -1,5 +1,5 @@
-import { and, eq, asc, sql } from "drizzle-orm";
-import { cities, categories, listings } from "@/lib/db/schema";
+import { and, eq, asc, isNull, sql } from "drizzle-orm";
+import { awards, cities, categories, listings } from "@/lib/db/schema";
 import { publishedListings } from "@/lib/db/queries/listings";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
@@ -178,4 +178,44 @@ export async function sitemapCategories(tx: TestDb, _viewer: Viewer): Promise<Si
   return rows
     .filter((r) => categoryEarnsIndexing(r.published))
     .map((r) => ({ path: `/categories/${r.slug}`, lastModified: r.updatedAt }));
+}
+
+/* ------------------------------------------------------- awards (Task 50) */
+
+/**
+ * The awards shard: /awards/[year] and /awards/[year]/[city] for every year
+ * and town with at least one active winner on a published listing. /awards
+ * itself rides in the static shard via `sitemapRoutes()`. The shard id is
+ * advertised only when the flag is on — the route files gate it with the
+ * flag and a shard pointing at 404s would be the bug navigation.ts exists
+ * to prevent.
+ */
+export const AWARDS_SHARD_ID = "awards";
+
+export async function sitemapAwards(tx: TestDb, viewer: Viewer): Promise<SitemapEntry[]> {
+  const rows = await tx
+    .select({
+      year: awards.year,
+      citySlug: cities.slug,
+      lastModified: sql<Date>`max(greatest(${awards.updatedAt}, ${listings.updatedAt}))`,
+    })
+    .from(awards)
+    .innerJoin(listings, eq(listings.id, awards.listingId))
+    .innerJoin(cities, eq(cities.id, awards.cityId))
+    .where(and(isNull(awards.revokedAt), publishedListings(viewer)))
+    .groupBy(awards.year, cities.slug)
+    .orderBy(asc(awards.year), asc(cities.slug));
+
+  const years = new Map<number, Date>();
+  const out: SitemapEntry[] = [];
+  for (const r of rows) {
+    const lastModified = new Date(r.lastModified);
+    out.push({ path: `/awards/${r.year}/${r.citySlug}`, lastModified });
+    const seen = years.get(r.year);
+    if (seen === undefined || seen < lastModified) years.set(r.year, lastModified);
+  }
+  const yearEntries: SitemapEntry[] = [...years].map(([year, lastModified]) => ({
+    path: `/awards/${year}`, lastModified,
+  }));
+  return [...yearEntries, ...out];
 }

@@ -2,7 +2,8 @@ import { db } from "@/lib/db/client";
 import { siteUrl } from "@/lib/schema/builders";
 import { isStaging } from "@/lib/site-env";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { countSitemapListings, sitemapShardIds, shardPath } from "@/lib/db/queries/sitemap";
+import { AWARDS_SHARD_ID, countSitemapListings, sitemapShardIds, shardPath } from "@/lib/db/queries/sitemap";
+import { features } from "@/lib/features/flags";
 
 /**
  * The sitemap INDEX.
@@ -26,7 +27,11 @@ export async function GET(): Promise<Response> {
   // A staging site advertises nothing: an empty but valid index.
   const ids = isStaging()
     ? []
-    : sitemapShardIds(await countSitemapListings(db as never, PUBLIC_VIEWER));
+    : [
+        ...sitemapShardIds(await countSitemapListings(db as never, PUBLIC_VIEWER)),
+        // Awards (Task 50): a shard only where the routes exist.
+        ...(features.awards ? [AWARDS_SHARD_ID] : []),
+      ];
 
   const body =
     `<?xml version="1.0" encoding="UTF-8"?>\n`

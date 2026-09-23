@@ -15,8 +15,11 @@ import {
   STATIC_SHARD_ID,
   CATEGORY_SHARD_ID,
   SITEMAP_SHARD_SIZE,
+  AWARDS_SHARD_ID,
+  sitemapAwards,
 } from "@/lib/db/queries/sitemap";
 import { sitemapRoutes } from "@/lib/features/navigation";
+import { features } from "@/lib/features/flags";
 
 // Dynamic, not force-static: the set of indexable cities changes whenever a
 // city earns indexing, and a cached-forever sitemap would never show them.
@@ -48,7 +51,11 @@ export async function generateSitemaps(): Promise<{ id: string }[]> {
   const total = prerenderingWithoutDatabase()
     ? 0
     : await countSitemapListings(db as never, PUBLIC_VIEWER);
-  return sitemapShardIds(total).map((id) => ({ id }));
+  return [
+    ...sitemapShardIds(total),
+    // Awards (Task 50): a shard only where the routes exist.
+    ...(features.awards ? [AWARDS_SHARD_ID] : []),
+  ].map((id) => ({ id }));
 }
 
 export default async function sitemap({ id }: { id: Promise<string> }): Promise<MetadataRoute.Sitemap> {
@@ -97,6 +104,18 @@ export default async function sitemap({ id }: { id: Promise<string> }): Promise<
       url: siteUrl(c.path),
       lastModified: c.lastModified,
       changeFrequency: "weekly" as const,
+      priority: 0.6,
+    }));
+  }
+
+  // Awards (Task 50). Only a shard when the flag is on; otherwise the id is
+  // just another string nothing generated, and 404s like one.
+  if (features.awards && shard === AWARDS_SHARD_ID) {
+    const entries = await sitemapAwards(db as never, PUBLIC_VIEWER);
+    return entries.map((a) => ({
+      url: siteUrl(a.path),
+      lastModified: a.lastModified,
+      changeFrequency: "yearly" as const,
       priority: 0.6,
     }));
   }

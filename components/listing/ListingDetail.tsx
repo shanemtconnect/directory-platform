@@ -9,6 +9,9 @@ import { SaveButton } from "@/components/shortlist/SaveButton";
 import { ReviewSummary } from "@/components/reviews/ReviewSummary";
 import type { ReviewSummary as Summary } from "@/lib/db/queries/reviews";
 import { StatsBeacon } from "@/components/stats/StatsBeacon";
+import { ListingAwards } from "@/components/awards/ListingAwards";
+import { AwardPill } from "@/components/awards/AwardPill";
+import type { ListingAward } from "@/lib/db/queries/awards";
 
 interface Props {
   detail: Detail;
@@ -21,6 +24,11 @@ interface Props {
   reviews?: Summary | null;
   reviewsPath?: string;
   leaveReviewPath?: string;
+  /**
+   * The listing's active awards (Task 50), read from the `awards` table by the
+   * route, only with the flag on. Empty renders nothing.
+   */
+  awards?: readonly ListingAward[];
 }
 
 /**
@@ -29,7 +37,7 @@ interface Props {
  * contact details kills the traffic that makes a listing worth paying for.
  */
 export function ListingDetail({
-  detail, related, cityPath, reviews = null, reviewsPath = "", leaveReviewPath = "",
+  detail, related, cityPath, reviews = null, reviewsPath = "", leaveReviewPath = "", awards = [],
 }: Props) {
   const { listing, city, category } = detail;
   const tier = siteConfig.tiers[listing.tier];
@@ -54,6 +62,10 @@ export function ListingDetail({
         )}
         {listing.claimStatus === "claimed" && <span>Claimed by owner</span>}
         {listing.claimStatus === "unclaimed" && <span>Unverified</span>}
+        {/* Awards (Task 50): one pill per year won, beside the claim status. */}
+        {features.awards && awards.map((a) => (
+          <span key={a.awardId} className="ml-2"><AwardPill year={a.year} href={a.awardsPath} /></span>
+        ))}
       </p>
 
       {/* Two columns from lg up: everything about the listing on the left, the
@@ -91,6 +103,10 @@ export function ListingDetail({
             )}
             <p><a href={`#enquire`}>Send an enquiry</a></p>
           </section>
+
+          {/* Awards (Task 50). Renders nothing without an award; with one, the
+              exact text the JSON-LD `award` carries. */}
+          {features.awards && <ListingAwards awards={awards} />}
 
           {listing.claimStatus === "unclaimed" && (
             <section data-testid="claim-cta" className="card bg-raised">
