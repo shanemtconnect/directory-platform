@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL } from "./database";
-import { busiestCity, quietCity } from "./fixtures";
+import { quietCity, sideCity } from "./fixtures";
 
 /**
  * Featured spots, end to end, with no PayPal involved.
@@ -239,9 +239,10 @@ async function confirmedBid(
 
 test.describe("leaderboard, outbid email and the owner's tools (Task 45)", () => {
   test("the leaderboard shows the three positions; a re-rank queues the outbid emails with the amount to retake", async ({ page }) => {
-    // The busiest town, not the quiet one: the owner-page spec above asserts
-    // the quiet town's spot is empty, and this one fills a spot with bids.
-    const city = await busiestCity();
+    // A third town: the owner-page spec above asserts the quiet town's spot is
+    // empty, and the busiest town is where every other spec picks "the first
+    // listing" — a premium fixture there would become theirs and vanish.
+    const city = await sideCity();
     const email = await signUp(page);
     const sql = postgres(DATABASE_URL, { max: 1 });
     const ids: string[] = [];

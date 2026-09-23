@@ -108,6 +108,27 @@ export async function paginatingCity(): Promise<CityFixture> {
  * town against the region picked from a `<select>`, and a city with none
  * cannot be chosen there.
  */
+/**
+ * A town that is neither the busiest nor the quietest: the second-quietest
+ * with a region. Specs that create premium fixtures use it, because a premium,
+ * verified fixture sorts FIRST in its town's grid, and every spec that "clicks
+ * the first listing" derives its town from `busiestCity()` — a fixture there
+ * becomes their listing and vanishes under them when the fixture is cleaned up.
+ */
+export function sideCity(): Promise<CityFixture> {
+  return once("side", async () => {
+    const rows = await withE2eDb(
+      (sql) =>
+        sql.unsafe<CityRow[]>(
+          `${CITY_COUNTS} having c.region is not null order by listings asc, c.slug limit 2`,
+        ),
+    );
+    const row = rows[1] ?? rows[0];
+    if (!row) throw new Error("The e2e database has no published city with a region.");
+    return toFixture(row);
+  });
+}
+
 export function quietCity(): Promise<CityFixture> {
   return once("quiet", async () => {
     const [row] = await withE2eDb(
