@@ -13,6 +13,8 @@ const createSponsorCampaign = vi.fn<(...a: unknown[]) => Promise<CreateSponsorRe
 const notifySponsorSubmitted = vi.fn<(...a: unknown[]) => Promise<void>>();
 const startSponsorCheckout = vi.fn<(...a: unknown[]) => Promise<StartSponsorCheckoutResult>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
+const endSponsorCampaignByAdvertiser = vi.fn<(...a: unknown[]) => Promise<unknown>>();
+const cancelSponsorSubscription = vi.fn<(...a: unknown[]) => Promise<string>>();
 const revalidatePath = vi.fn<(p: string) => void>();
 const HANDLE = { marker: "tx" };
 
@@ -23,9 +25,13 @@ vi.mock("@/lib/db/client", () => ({ db: { transaction: async (fn: (tx: unknown) 
 vi.mock("@/lib/auth/viewer", () => ({ currentViewer: () => currentViewer() }));
 vi.mock("@/lib/auth/profile", () => ({ ensureProfile: async () => ({ id: "profile-1", role: "user" }) }));
 vi.mock("@/lib/billing/paypal", () => ({ getPayPalClient: () => null }));
-vi.mock("@/lib/ads/billing", () => ({ startSponsorCheckout: (...a: unknown[]) => startSponsorCheckout(...a) }));
+vi.mock("@/lib/ads/billing", () => ({
+  startSponsorCheckout: (...a: unknown[]) => startSponsorCheckout(...a),
+  cancelSponsorSubscription: (...a: unknown[]) => cancelSponsorSubscription(...a),
+}));
 vi.mock("@/lib/db/queries/ads", () => ({
   createSponsorCampaign: (...a: unknown[]) => createSponsorCampaign(...a),
+  endSponsorCampaignByAdvertiser: (...a: unknown[]) => endSponsorCampaignByAdvertiser(...a),
   setSponsorLogo: async () => true,
   updateSponsorCampaign: async () => "updated",
 }));
@@ -59,6 +65,10 @@ beforeEach(() => {
   startSponsorCheckout.mockReset().mockResolvedValue({ outcome: "not-configured" });
   limitPublicWrite.mockReset().mockResolvedValue({ allowed: true, remaining: 4, retryAfterSeconds: 0 });
   revalidatePath.mockReset();
+  endSponsorCampaignByAdvertiser.mockReset().mockResolvedValue({
+    outcome: "decided", auditId: "audit-9", from: "active", subscriptionId: "I-SUB", billingStatus: "active",
+  });
+  cancelSponsorSubscription.mockReset().mockResolvedValue("cancelled");
 });
 
 describe("createSponsorCampaignAction", () => {
@@ -114,5 +124,51 @@ describe("createSponsorCampaignAction", () => {
     const out = await createSponsorCampaignAction({ status: "idle" }, data);
     expect(out).toMatchObject({ status: "error", field: "logo" });
     expect(createSponsorCampaign).not.toHaveBeenCalled();
+  });
+});
+
+describe("endSponsorCampaignAction (C1)", () => {
+  it("ends the advertiser's own campaign, then cancels PayPal after the commit", async () => {
+    const { endSponsorCampaignAction } = await import("./sponsor");
+    const out = await endSponsorCampaignAction({ status: "idle" }, form({ campaignId: CAMPAIGN_ID }));
+    expect(out.status).toBe("done");
+    expect(out.message).toContain("cancelled");
+    expect(endSponsorCampaignByAdvertiser).toHaveBeenCalledWith(HANDLE, USER, { campaignId: CAMPAIGN_ID, profileId: "profile-1", ip: "203.0.113.9" });
+    expect(cancelSponsorSubscription.mock.calls[0]![2]).toEqual({
+      campaignId: CAMPAIGN_ID, subscriptionId: "I-SUB", billingStatus: "active",
+      reason: "Campaign ended by the advertiser", ref: "audit-9",
+    });
+  });
+
+  it("a PayPal failure still ends the campaign and says so", async () => {
+    cancelSponsorSubscription.mockResolvedValue("failed");
+    const { endSponsorCampaignAction } = await import("./sponsor");
+    const out = await endSponsorCampaignAction({ status: "idle" }, form({ campaignId: CAMPAIGN_ID }));
+    expect(out.status).toBe("done");
+    expect(out.message).toContain("could not reach PayPal");
+  });
+
+  it("somebody else's campaign is an error and PayPal is never called", async () => {
+    endSponsorCampaignByAdvertiser.mockResolvedValue({ outcome: "unknown" });
+    const { endSponsorCampaignAction } = await import("./sponsor");
+    expect((await endSponsorCampaignAction({ status: "idle" }, form({ campaignId: CAMPAIGN_ID }))).status).toBe("error");
+    expect(cancelSponsorSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe("startSponsorCheckoutAction — Pay now (I4)", () => {
+  it("redirects to PayPal for the advertiser's own unpaid campaign", async () => {
+    startSponsorCheckout.mockResolvedValue({ outcome: "approval", approveUrl: "https://paypal/approve" });
+    const { startSponsorCheckoutAction } = await import("./sponsor");
+    await expect(startSponsorCheckoutAction({ status: "idle" }, form({ campaignId: CAMPAIGN_ID }))).rejects.toMatchObject({ to: "https://paypal/approve" });
+    expect(startSponsorCheckout.mock.calls[0]![1]).toMatchObject({ campaignId: CAMPAIGN_ID, profileId: "profile-1" });
+  });
+
+  it("explains not-eligible and not-owner", async () => {
+    const { startSponsorCheckoutAction } = await import("./sponsor");
+    startSponsorCheckout.mockResolvedValue({ outcome: "not-eligible" });
+    expect((await startSponsorCheckoutAction({ status: "idle" }, form({ campaignId: CAMPAIGN_ID }))).message).toContain("already paid");
+    startSponsorCheckout.mockResolvedValue({ outcome: "not-owner" });
+    expect((await startSponsorCheckoutAction({ status: "idle" }, form({ campaignId: CAMPAIGN_ID }))).status).toBe("error");
   });
 });

@@ -18,6 +18,16 @@ import { SubmitButton } from "@/components/ui/SubmitButton";
 
 const INITIAL: SponsorQueueState = { status: "idle" };
 
+const BILLING_PILL: Record<AdminSponsorCampaign["billingStatus"], { label: string; paid: boolean }> = {
+  none: { label: "no card", paid: false },
+  approval_pending: { label: "NOT PAID", paid: false },
+  active: { label: "paid", paid: true },
+  past_due: { label: "payment overdue", paid: true },
+  cancelled: { label: "cancelled — runs out", paid: true },
+  suspended: { label: "suspended", paid: false },
+  expired: { label: "expired", paid: false },
+};
+
 function when(value: Date): string {
   return new Intl.DateTimeFormat(siteConfig.locale, { dateStyle: "medium", timeZone: siteConfig.timezone }).format(value);
 }
@@ -47,14 +57,23 @@ function SponsorRow({ c, logoUrl }: { c: AdminSponsorCampaign; logoUrl: string |
   const [ended, end, ending] = useActionState(endSponsorAction, INITIAL);
   const states = [approved, rejected, paused, resumed, ended];
   const failure = states.find((s) => s.status === "error")?.message ?? null;
+  const warning = states.find((s) => s.status === "done" && s.warning !== undefined)?.warning ?? null;
   const done = states.some((s) => s.status === "done");
+  const billing = BILLING_PILL[c.billingStatus];
   const titleId = `sponsor-${c.id}-title`;
   const hidden = <input type="hidden" name="campaignId" value={c.id} />;
 
   return (
     <li className="card mb-3" data-testid={`sponsor-${c.id}`} data-status={c.status}>
       <h2 className="mt-0 text-lg" id={titleId}>
-        {c.name} <span className="pill">{c.status}</span>
+        {c.name} <span className="pill">{c.status}</span>{" "}
+        <span
+          className={billing.paid ? "pill" : "pill pill-danger"}
+          data-testid="sponsor-billing-pill"
+          data-billing={c.billingStatus}
+        >
+          {billing.label}
+        </span>
       </h2>
       <p className="text-sm text-muted">
         Submitted {when(c.createdAt)} by{" "}
@@ -70,8 +89,16 @@ function SponsorRow({ c, logoUrl }: { c: AdminSponsorCampaign; logoUrl: string |
         <dd>{c.placements.join(", ")}</dd>
       </dl>
       {failure !== null && <Notice variant="error" testId="sponsor-decision-error">{failure}</Notice>}
-      {done && failure === null && (
+      {done && failure === null && warning !== null && (
+        <Notice variant="status" testId="sponsor-decision-warning" title="Done, with a catch">{warning}</Notice>
+      )}
+      {done && failure === null && warning === null && (
         <Notice variant="success" testId="sponsor-decision-done">Done — the queue updates on the next load.</Notice>
+      )}
+      {c.status === "pending" && c.billingStatus === "approval_pending" && (
+        <p className="text-sm text-muted" data-testid="sponsor-unpaid-note">
+          Not paid yet: approving it will not show it until PayPal confirms the subscription.
+        </p>
       )}
       {c.status === "pending" && (
         <details className="mt-2">

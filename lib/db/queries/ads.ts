@@ -350,9 +350,18 @@ export interface SponsorDecisionInput {
   readonly ip: string | null;
 }
 
-export type SponsorDecisionResult = {
-  outcome: "decided" | "unknown" | "not-allowed" | "reason-required";
-};
+export interface SponsorDecided {
+  readonly outcome: "decided";
+  readonly auditId: string;
+  readonly from: SponsorCampaignStatus;
+  /** What the caller needs to settle the money after the commit (C1). */
+  readonly subscriptionId: string | null;
+  readonly billingStatus: SponsorBillingStatus;
+}
+
+export type SponsorDecisionResult =
+  | SponsorDecided
+  | { readonly outcome: "unknown" | "not-allowed" | "reason-required" };
 
 export const SPONSOR_REJECTION_MIN_LENGTH = 10;
 
@@ -377,7 +386,12 @@ export async function decideSponsorCampaign(
     return { outcome: "reason-required" };
   }
   const [current] = await tx
-    .select({ status: sponsorCampaigns.status, startsAt: sponsorCampaigns.startsAt })
+    .select({
+      status: sponsorCampaigns.status,
+      startsAt: sponsorCampaigns.startsAt,
+      subscriptionId: sponsorCampaigns.subscriptionId,
+      billingStatus: sponsorCampaigns.billingStatus,
+    })
     .from(sponsorCampaigns)
     .where(eq(sponsorCampaigns.id, campaignId))
     .for("update")
@@ -418,14 +432,84 @@ export async function decideSponsorCampaign(
         .where(eq(sponsorCampaigns.id, campaignId));
       break;
   }
-  await writeAudit(tx, viewer, {
+  const auditId = await writeAudit(tx, viewer, {
     action: `sponsor.${input.decision}`,
     entityType: "sponsor_campaign",
     entityId: campaignId,
     meta: { from: current.status, ...(input.decision === "reject" ? { reason } : {}) },
     ip: input.ip,
   });
-  return { outcome: "decided" };
+  return {
+    outcome: "decided",
+    auditId,
+    from: current.status,
+    subscriptionId: current.subscriptionId,
+    billingStatus: current.billingStatus as SponsorBillingStatus,
+  };
+}
+
+/**
+ * The advertiser ends their own campaign (C1). Same shape as the admin's
+ * `end`, owner scoped, audited as theirs; the caller settles PayPal after the
+ * commit with `cancelSponsorSubscription`.
+ */
+export async function endSponsorCampaignByAdvertiser(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { campaignId: string; profileId: string; ip: string | null },
+): Promise<SponsorDecisionResult> {
+  assertSignedIn(viewer);
+  if (!isUuid(input.campaignId)) return { outcome: "unknown" };
+  const [current] = await tx
+    .select({
+      status: sponsorCampaigns.status,
+      subscriptionId: sponsorCampaigns.subscriptionId,
+      billingStatus: sponsorCampaigns.billingStatus,
+    })
+    .from(sponsorCampaigns)
+    .where(and(eq(sponsorCampaigns.id, input.campaignId), eq(sponsorCampaigns.advertiserId, input.profileId)))
+    .for("update")
+    .limit(1);
+  if (!current) return { outcome: "unknown" };
+  if (!ALLOWED_FROM.end.includes(current.status)) return { outcome: "not-allowed" };
+  const at = now();
+  await tx
+    .update(sponsorCampaigns)
+    .set({ status: "ended", endsAt: at, updatedAt: at })
+    .where(eq(sponsorCampaigns.id, input.campaignId));
+  const auditId = await writeAudit(tx, viewer, {
+    action: "sponsor.end",
+    entityType: "sponsor_campaign",
+    entityId: input.campaignId,
+    meta: { from: current.status, by: "advertiser" },
+    ip: input.ip,
+  });
+  return {
+    outcome: "decided",
+    auditId,
+    from: current.status,
+    subscriptionId: current.subscriptionId,
+    billingStatus: current.billingStatus as SponsorBillingStatus,
+  };
+}
+
+/** Billing states from which a checkout may (re)start: nothing paid yet. */
+export const CHECKOUT_BILLING: readonly SponsorBillingStatus[] = ["none", "approval_pending"];
+
+/** The advertiser's own campaign, for "Pay now" (I4): null when it is not theirs. */
+export async function advertiserCampaignForCheckout(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { campaignId: string; profileId: string },
+): Promise<{ id: string; status: SponsorCampaignStatus; billingStatus: SponsorBillingStatus } | null> {
+  assertSignedIn(viewer);
+  if (!isUuid(input.campaignId)) return null;
+  const [row] = await tx
+    .select({ id: sponsorCampaigns.id, status: sponsorCampaigns.status, billingStatus: sponsorCampaigns.billingStatus })
+    .from(sponsorCampaigns)
+    .where(and(eq(sponsorCampaigns.id, input.campaignId), eq(sponsorCampaigns.advertiserId, input.profileId)))
+    .limit(1);
+  return row ? { ...row, billingStatus: row.billingStatus as SponsorBillingStatus } : null;
 }
 
 /* --------------------------------------------------------------- the worker */
@@ -507,7 +591,8 @@ export async function sponsorCampaignForBilling(
 export interface SponsorBillingPatch {
   readonly action: string;
   readonly billingStatus: SponsorBillingStatus;
-  readonly currentPeriodEnd: Date | null;
+  /** `undefined` leaves current_period_end alone; a Date or null sets it. */
+  readonly currentPeriodEnd: Date | null | undefined;
   /** `undefined` leaves ends_at alone; a Date or null sets it. */
   readonly endsAt: Date | null | undefined;
   readonly eventId: string;
@@ -525,7 +610,7 @@ export async function applySponsorBillingEffect(
     .update(sponsorCampaigns)
     .set({
       billingStatus: patch.billingStatus,
-      currentPeriodEnd: patch.currentPeriodEnd,
+      ...(patch.currentPeriodEnd === undefined ? {} : { currentPeriodEnd: patch.currentPeriodEnd }),
       ...(patch.endsAt === undefined ? {} : { endsAt: patch.endsAt }),
       ...(patch.providerSubscriptionId === undefined || patch.providerSubscriptionId === null
         ? {}

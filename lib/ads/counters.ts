@@ -1,6 +1,6 @@
 import { now } from "@/lib/clock";
-import { COUNTER_TTL_SECONDS } from "@/lib/stats/counters";
-import { dayKey, isUuid } from "@/lib/stats/keys";
+import { COUNTER_TTL_SECONDS, SEEN_TTL_SECONDS, seenSalt } from "@/lib/stats/counters";
+import { dayKey, isUuid, seenSubject } from "@/lib/stats/keys";
 import { statsRedis } from "@/lib/stats/redis";
 import type { SponsorStatDelta } from "@/lib/db/queries/ads";
 import {
@@ -55,6 +55,33 @@ export async function recordSponsorStats(
     }),
   );
   return landed;
+}
+
+/**
+ * `sponsor:seen:<day>:<digest>:<campaignId>` — one click per address per
+ * campaign per day (I5). The same salted `sha256(ip, day, salt)` as
+ * `claimDailyView`: no raw address in Redis, a different string tomorrow,
+ * gone after a day. Four parts after the prefix, so the drain's parser
+ * refuses it as a count. True when this is the first click today, and true
+ * when Redis is away (counting is the honest default).
+ */
+export function sponsorSeenKey(day: string, ip: string, campaignId: string, salt: string): string {
+  return `${SPONSOR_KEY_PREFIX}seen:${day}:${seenSubject(ip, day, salt)}:${campaignId}`;
+}
+
+export async function claimDailyClick(ip: string, campaignId: string, at: Date = now()): Promise<boolean> {
+  if (!isUuid(campaignId)) return false;
+  const client = await statsRedis();
+  if (!client) return true;
+  try {
+    return await client.setIfAbsent(
+      sponsorSeenKey(dayKey(at), ip, campaignId.toLowerCase(), seenSalt()),
+      "1",
+      SEEN_TTL_SECONDS,
+    );
+  } catch {
+    return true;
+  }
 }
 
 export async function recordSponsorImpressions(

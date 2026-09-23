@@ -49,7 +49,7 @@ export function SponsorCard({ item, slot }: SponsorCardProps) {
       data-kind="sponsor"
       data-campaign={campaign.id}
     >
-      <a href={`/out/${campaign.id}`} rel="sponsored nofollow" className="sponsor-card-link">
+      <a href={`/out/${campaign.id}`} rel="sponsored nofollow" referrerPolicy="strict-origin" className="sponsor-card-link">
         <Logo name={campaign.name} logoPath={campaign.logoPath} />
         <span className="sponsor-label">Sponsored</span>
         <strong className="sponsor-title">{campaign.title}</strong>

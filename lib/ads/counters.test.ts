@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 process.env.REDIS_URL = "redis://localhost:6380/11";
 
 const { closeStatsRedis, statsRedis } = await import("@/lib/stats/redis");
-const { drainSponsorStats, recordSponsorImpressions, recordSponsorStat } = await import("./counters");
+const { claimDailyClick, drainSponsorStats, recordSponsorImpressions, recordSponsorStat, sponsorSeenKey } = await import("./counters");
 const { SPONSOR_KEY_PREFIX, parseSponsorStatsKey, sponsorStatsKey } = await import("./keys");
 const { dayKey, statsKey } = await import("@/lib/stats/keys");
 const { COUNTER_TTL_SECONDS } = await import("@/lib/stats/counters");
@@ -75,5 +75,29 @@ describe("drainSponsorStats", () => {
     expect(await drainSponsorStats()).toEqual([]);
     expect(await c!.get(statsKey(A, DAY, "view"))).toBe("9");
     expect(await c!.get(`${SPONSOR_KEY_PREFIX}garbage`)).toBe("5");
+  });
+});
+
+describe("claimDailyClick (I5)", () => {
+  it("is true once per address per campaign per day, holds no raw address, and is never drained as a count", async () => {
+    expect(await claimDailyClick("198.51.100.7", A, AT)).toBe(true);
+    expect(await claimDailyClick("198.51.100.7", A, AT)).toBe(false);
+    expect(await claimDailyClick("198.51.100.8", A, AT)).toBe(true);
+    expect(await claimDailyClick("198.51.100.7", B, AT)).toBe(true);
+    expect(await claimDailyClick("198.51.100.7", A, new Date(AT.getTime() + 86_400_000))).toBe(true);
+    expect(await claimDailyClick("198.51.100.7", "nope", AT)).toBe(false);
+    const key = sponsorSeenKey(DAY, "198.51.100.7", A, "salt");
+    expect(key).not.toContain("198.51.100.7");
+    expect(parseSponsorStatsKey(key)).toBeNull();
+    expect(await drainSponsorStats()).toEqual([]);
+    const c = await statsRedis();
+    let cursor = "0";
+    let marks = 0;
+    do {
+      const page = await c!.scan(cursor, "sponsor:seen:*", 100);
+      cursor = page.cursor;
+      marks += page.keys.length;
+    } while (cursor !== "0");
+    expect(marks).toBe(4);
   });
 });

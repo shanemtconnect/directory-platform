@@ -6,7 +6,9 @@ const requireAdmin = vi.fn<() => Promise<Viewer>>();
 const decideSponsorCampaign = vi.fn<(...a: unknown[]) => Promise<SponsorDecisionResult>>();
 const notifySponsorDecided = vi.fn<(...a: unknown[]) => Promise<void>>();
 const revalidatePath = vi.fn<(p: string) => void>();
+const cancelSponsorSubscription = vi.fn<(...a: unknown[]) => Promise<"not-needed" | "cancelled" | "failed" | "not-configured">>();
 const HANDLE = { marker: "tx" };
+const DECIDED = { outcome: "decided", auditId: "audit-1", from: "pending", subscriptionId: null, billingStatus: "none" } as const;
 
 vi.mock("next/headers", () => ({ headers: () => Promise.resolve(new Headers({ "x-forwarded-for": "203.0.113.9" })) }));
 vi.mock("next/cache", () => ({ revalidatePath: (p: string) => revalidatePath(p) }));
@@ -16,6 +18,8 @@ vi.mock("@/lib/db/queries/ads", () => ({
   decideSponsorCampaign: (...a: unknown[]) => decideSponsorCampaign(...a),
 }));
 vi.mock("@/lib/email/notify", () => ({ notifySponsorDecided: (...a: unknown[]) => notifySponsorDecided(...a) }));
+vi.mock("@/lib/billing/paypal", () => ({ getPayPalClient: () => ({ marker: "paypal" }) }));
+vi.mock("@/lib/ads/billing", () => ({ cancelSponsorSubscription: (...a: unknown[]) => cancelSponsorSubscription(...a) }));
 
 const ADMIN: Viewer = { role: "admin", userId: "u_admin" };
 const ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -29,7 +33,8 @@ function form(fields: Record<string, string>): FormData {
 beforeEach(() => {
   vi.resetModules();
   requireAdmin.mockReset().mockResolvedValue(ADMIN);
-  decideSponsorCampaign.mockReset().mockResolvedValue({ outcome: "decided" });
+  decideSponsorCampaign.mockReset().mockResolvedValue(DECIDED);
+  cancelSponsorSubscription.mockReset().mockResolvedValue("not-needed");
   notifySponsorDecided.mockReset().mockResolvedValue();
   revalidatePath.mockReset();
 });
@@ -75,5 +80,38 @@ describe("admin sponsor actions", () => {
     const { endSponsorAction } = await import("./admin-sponsors");
     expect((await endSponsorAction({ status: "idle" }, form({ campaignId: "nope" }))).status).toBe("error");
     expect(decideSponsorCampaign).not.toHaveBeenCalled();
+  });
+
+  it("end and reject settle PayPal after the commit, keyed on the decision's audit row (C1)", async () => {
+    decideSponsorCampaign.mockResolvedValue({ ...DECIDED, subscriptionId: "I-SUB", billingStatus: "active" });
+    cancelSponsorSubscription.mockResolvedValue("cancelled");
+    const { endSponsorAction, rejectSponsorAction } = await import("./admin-sponsors");
+    expect(await endSponsorAction({ status: "idle" }, form({ campaignId: ID }))).toEqual({ status: "done" });
+    expect(cancelSponsorSubscription).toHaveBeenCalledWith(expect.anything(), { marker: "paypal" }, {
+      campaignId: ID, subscriptionId: "I-SUB", billingStatus: "active", reason: "Campaign ended by the site", ref: "audit-1",
+    });
+    await rejectSponsorAction({ status: "idle" }, form({ campaignId: ID, reason: "Not for this site." }));
+    expect(cancelSponsorSubscription.mock.calls[1]![2]).toMatchObject({ reason: "Campaign not accepted by the site" });
+  });
+
+  it("a PayPal failure never undoes the decision — it comes back as a warning to act on", async () => {
+    decideSponsorCampaign.mockResolvedValue({ ...DECIDED, subscriptionId: "I-SUB", billingStatus: "past_due" });
+    cancelSponsorSubscription.mockResolvedValue("failed");
+    const { endSponsorAction } = await import("./admin-sponsors");
+    const out = await endSponsorAction({ status: "idle" }, form({ campaignId: ID }));
+    expect(out.status).toBe("done");
+    expect(out.warning).toContain("I-SUB");
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/sponsors");
+  });
+
+  it("approve, pause and resume never touch PayPal; approving an unpaid campaign warns (I4)", async () => {
+    const { approveSponsorAction, pauseSponsorAction } = await import("./admin-sponsors");
+    await pauseSponsorAction({ status: "idle" }, form({ campaignId: ID }));
+    expect(cancelSponsorSubscription).not.toHaveBeenCalled();
+    decideSponsorCampaign.mockResolvedValue({ ...DECIDED, subscriptionId: "I-SUB", billingStatus: "approval_pending" });
+    const out = await approveSponsorAction({ status: "idle" }, form({ campaignId: ID }));
+    expect(out.status).toBe("done");
+    expect(out.warning).toContain("not show until");
+    expect(cancelSponsorSubscription).not.toHaveBeenCalled();
   });
 });

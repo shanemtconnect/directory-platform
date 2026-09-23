@@ -11,6 +11,8 @@ import {
   type SponsorDecisionResult,
 } from "@/lib/db/queries/ads";
 import { notifySponsorDecided } from "@/lib/email/notify";
+import { getPayPalClient } from "@/lib/billing/paypal";
+import { cancelSponsorSubscription } from "@/lib/ads/billing";
 import { isUuid } from "@/lib/actions/validation";
 import type { TestDb } from "@/lib/db/types";
 
@@ -22,7 +24,18 @@ import type { TestDb } from "@/lib/db/types";
 export interface SponsorQueueState {
   status: "idle" | "done" | "error";
   message?: string;
+  /** Done, but with something the admin has to know (an unpaid approval, a PayPal cancel that failed). */
+  warning?: string;
 }
+
+const CANCEL_REASONS: Partial<Record<SponsorDecision, string>> = {
+  reject: "Campaign not accepted by the site",
+  end: "Campaign ended by the site",
+};
+
+const UNPAID_APPROVAL =
+  "Approved, but PayPal has not confirmed the payment yet — the campaign will not show until it does. " +
+  "The advertiser has a \"Pay now\" button on their sponsor page.";
 
 const GONE = "That campaign is not there any more. Reload the queue to see what is left.";
 
@@ -57,9 +70,34 @@ async function decide(form: FormData, decision: SponsorDecision): Promise<Sponso
     return decided;
   });
   const failure = message(result);
-  if (failure !== null) return { status: "error", message: failure };
+  if (failure !== null || result.outcome !== "decided") {
+    return { status: "error", message: failure ?? GONE };
+  }
   revalidatePath("/admin/sponsors");
   revalidatePath("/admin");
+
+  // C1: the money, after the commit. The decision stands whatever PayPal says.
+  const cancelReason = CANCEL_REASONS[decision];
+  if (cancelReason !== undefined) {
+    const outcome = await cancelSponsorSubscription(db as unknown as TestDb, getPayPalClient(), {
+      campaignId,
+      subscriptionId: result.subscriptionId,
+      billingStatus: result.billingStatus,
+      reason: cancelReason,
+      ref: result.auditId,
+    });
+    if (outcome === "failed" || outcome === "not-configured") {
+      return {
+        status: "done",
+        warning:
+          `The campaign is ${decision === "reject" ? "rejected" : "ended"}, but its PayPal subscription ` +
+          `${result.subscriptionId} could not be cancelled from here — cancel it in PayPal so the advertiser is not charged again.`,
+      };
+    }
+  }
+  if (decision === "approve" && result.billingStatus === "approval_pending") {
+    return { status: "done", warning: UNPAID_APPROVAL };
+  }
   return { status: "done" };
 }
 

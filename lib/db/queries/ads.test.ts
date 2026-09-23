@@ -225,7 +225,7 @@ describe("decideSponsorCampaign — admin only, audited with ip", () => {
       expect(await decideSponsorCampaign(tx, ADMIN_VIEWER, id, { decision: "reject", reason: "   ", ip: IP }))
         .toEqual({ outcome: "reason-required" });
       expect(await decideSponsorCampaign(tx, ADMIN_VIEWER, id, { decision: "reject", reason: "Not a real business.", ip: IP }))
-        .toEqual({ outcome: "decided" });
+        .toMatchObject({ outcome: "decided", subscriptionId: null, billingStatus: "none" });
       const [row] = await tx.select().from(sponsorCampaigns).where(eq(sponsorCampaigns.id, id));
       expect(row).toMatchObject({ status: "rejected", rejectionReason: "Not a real business." });
       expect(await decideSponsorCampaign(tx, ADMIN_VIEWER, randomUUID(), { decision: "approve", ip: IP }))
@@ -382,6 +382,41 @@ describe("self-serve helpers", () => {
         .toEqual({ id, billingStatus: "approval_pending" });
       expect(await advertiserCampaignBySubscription(tx, b.viewer, { profileId: b.profileId, providerSubscriptionId: "I-OWN" })).toBeNull();
       await expect(advertiserCampaignBySubscription(tx, PUBLIC_VIEWER, { profileId: a.profileId, providerSubscriptionId: "I-OWN" })).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});
+
+describe("endSponsorCampaignByAdvertiser / advertiserCampaignForCheckout (C1, I4)", () => {
+  it("the owner ends it (audited as theirs, with the billing facts); a stranger cannot; twice is not allowed", async () => {
+    await withTestDb(async (tx) => {
+      setClock(NOW);
+      const a = await makePerson(tx);
+      const b = await makePerson(tx);
+      const id = await approved(tx, a.viewer, a.profileId);
+      await attachSponsorSubscription(tx, a.viewer, { campaignId: id, profileId: a.profileId, providerSubscriptionId: "I-END" });
+      const { endSponsorCampaignByAdvertiser, advertiserCampaignForCheckout } = await import("./ads");
+      expect(await endSponsorCampaignByAdvertiser(tx, b.viewer, { campaignId: id, profileId: b.profileId, ip: IP })).toEqual({ outcome: "unknown" });
+      const out = await endSponsorCampaignByAdvertiser(tx, a.viewer, { campaignId: id, profileId: a.profileId, ip: IP });
+      expect(out).toMatchObject({ outcome: "decided", from: "active", subscriptionId: "I-END", billingStatus: "approval_pending" });
+      const [row] = await tx.select().from(sponsorCampaigns).where(eq(sponsorCampaigns.id, id));
+      expect(row).toMatchObject({ status: "ended", endsAt: NOW });
+      const [audit] = await tx.select().from(auditLog).where(eq(auditLog.id, (out as { auditId: string }).auditId));
+      expect(audit).toMatchObject({ action: "sponsor.end", actorId: a.profileId, ip: IP });
+      expect(audit!.meta).toMatchObject({ by: "advertiser", from: "active" });
+      expect(await endSponsorCampaignByAdvertiser(tx, a.viewer, { campaignId: id, profileId: a.profileId, ip: IP })).toEqual({ outcome: "not-allowed" });
+      expect(await advertiserCampaignForCheckout(tx, a.viewer, { campaignId: id, profileId: a.profileId })).toMatchObject({ id, status: "ended", billingStatus: "approval_pending" });
+      expect(await advertiserCampaignForCheckout(tx, b.viewer, { campaignId: id, profileId: b.profileId })).toBeNull();
+    });
+  });
+
+  it("an admin decision returns the subscription and billing state for the post-commit cancel", async () => {
+    await withTestDb(async (tx) => {
+      const a = await makePerson(tx);
+      const id = await created(tx, a.viewer, a.profileId);
+      await attachSponsorSubscription(tx, a.viewer, { campaignId: id, profileId: a.profileId, providerSubscriptionId: "I-DEC" });
+      const out = await decideSponsorCampaign(tx, ADMIN_VIEWER, id, { decision: "reject", reason: "Not for this site.", ip: IP });
+      expect(out).toMatchObject({ outcome: "decided", from: "pending", subscriptionId: "I-DEC", billingStatus: "approval_pending" });
+      expect(typeof (out as { auditId: string }).auditId).toBe("string");
     });
   });
 });

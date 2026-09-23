@@ -9,10 +9,11 @@ import { ensureProfile } from "@/lib/auth/profile";
 import { clientIp } from "@/lib/spam/client-ip";
 import { SPONSOR_SUBMIT_RATE_LIMIT, limitPublicWrite, retryMessage } from "@/lib/spam/write-limit";
 import { getPayPalClient } from "@/lib/billing/paypal";
-import { startSponsorCheckout } from "@/lib/ads/billing";
+import { cancelSponsorSubscription, startSponsorCheckout } from "@/lib/ads/billing";
 import { LOGO_MAX_BYTES, processSponsorLogo, sponsorLogosConfigured, storeSponsorLogo } from "@/lib/ads/logo";
 import {
   createSponsorCampaign,
+  endSponsorCampaignByAdvertiser,
   setSponsorLogo,
   updateSponsorCampaign,
   type SponsorField,
@@ -67,6 +68,13 @@ export async function createSponsorCampaignAction(
   const limit = await limitPublicWrite("sponsor-submit", requestHeaders, SPONSOR_SUBMIT_RATE_LIMIT);
   if (!limit.allowed) return { status: "error", message: retryMessage(limit) };
 
+  // The cheap checks first; sharp only runs on a form that could succeed.
+  if (str(form, "title") === "" || str(form, "title").length > 60) {
+    return { status: "error", field: "title", message: FIELD_MESSAGES.title };
+  }
+  if (str(form, "blurb") === "" || str(form, "blurb").length > 120) {
+    return { status: "error", field: "blurb", message: FIELD_MESSAGES.blurb };
+  }
   const logo = await readLogo(form);
   if (logo === "invalid") return { status: "error", field: "logo", message: FIELD_MESSAGES.logo };
 
@@ -162,4 +170,93 @@ export async function updateSponsorCampaignAction(
       revalidatePath(SPONSOR_PAGE);
       return { status: "submitted", message: "Saved. It goes back on the rails once an admin has looked at the change." };
   }
+}
+
+/* ------------------------------------------------------------- C1 / I4 */
+
+export interface SponsorActionState {
+  status: "idle" | "done" | "error";
+  message?: string;
+}
+
+/** The advertiser ends their own campaign; PayPal is cancelled after the commit. */
+export async function endSponsorCampaignAction(
+  _prev: SponsorActionState,
+  form: FormData,
+): Promise<SponsorActionState> {
+  const viewer = await currentViewer();
+  if (viewer.role === "public") return { status: "error", message: "Please sign in." };
+  const campaignId = str(form, "campaignId");
+  if (!isUuid(campaignId)) return { status: "error", message: GENERIC };
+  const requestHeaders = await headers();
+  const profile = await ensureProfile(db, viewer);
+  const result = await db.transaction(async (tx) =>
+    endSponsorCampaignByAdvertiser(tx as unknown as TestDb, viewer, {
+      campaignId,
+      profileId: profile.id,
+      ip: clientIp(requestHeaders),
+    }),
+  );
+  if (result.outcome !== "decided") {
+    return { status: "error", message: "That campaign is not yours to end, or it has already finished." };
+  }
+  revalidatePath(SPONSOR_PAGE);
+  const outcome = await cancelSponsorSubscription(db as unknown as TestDb, getPayPalClient(), {
+    campaignId,
+    subscriptionId: result.subscriptionId,
+    billingStatus: result.billingStatus,
+    reason: "Campaign ended by the advertiser",
+    ref: result.auditId,
+  });
+  if (outcome === "failed" || outcome === "not-configured") {
+    return {
+      status: "done",
+      message:
+        "Your campaign has ended. We could not reach PayPal to cancel the subscription just now — " +
+        "we have logged it and will cancel it; you can also cancel it from your PayPal account.",
+    };
+  }
+  return {
+    status: "done",
+    message: outcome === "cancelled"
+      ? "Your campaign has ended and the PayPal subscription is cancelled."
+      : "Your campaign has ended.",
+  };
+}
+
+/** "Pay now" for a campaign whose checkout was never completed (I4). */
+export async function startSponsorCheckoutAction(
+  _prev: SponsorActionState,
+  form: FormData,
+): Promise<SponsorActionState> {
+  const viewer = await currentViewer();
+  if (viewer.role === "public") return { status: "error", message: "Please sign in." };
+  const campaignId = str(form, "campaignId");
+  if (!isUuid(campaignId)) return { status: "error", message: GENERIC };
+  const requestHeaders = await headers();
+  const limit = await limitPublicWrite("sponsor-submit", requestHeaders, SPONSOR_SUBMIT_RATE_LIMIT);
+  if (!limit.allowed) return { status: "error", message: retryMessage(limit) };
+  const client = getPayPalClient();
+  const profile = await ensureProfile(db, viewer);
+  let result;
+  try {
+    result = await db.transaction(async (tx) =>
+      startSponsorCheckout(tx as unknown as TestDb, { client, viewer, profileId: profile.id, campaignId }),
+    );
+  } catch (e) {
+    console.error("[ads] sponsor pay-now failed:", e);
+    return { status: "error", message: GENERIC };
+  }
+  switch (result.outcome) {
+    case "not-configured":
+      return { status: "error", message: "Card payments are not set up on this site yet." };
+    case "not-owner":
+      return { status: "error", message: "That campaign is not yours." };
+    case "not-eligible":
+      return { status: "error", message: "That campaign is already paid for, or has finished." };
+    case "approval":
+      if (result.approveUrl === null) return { status: "error", message: GENERIC };
+      break;
+  }
+  redirect(result.approveUrl!);
 }

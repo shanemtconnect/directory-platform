@@ -5,11 +5,15 @@ import type { PlanRequestBody } from "@/lib/billing/plans";
 import type { PayPalClient } from "@/lib/billing/paypal";
 import { addInterval, type PayPalEvent } from "@/lib/billing/webhooks";
 import {
+  CHECKOUT_BILLING,
+  advertiserCampaignForCheckout,
   applySponsorBillingEffect,
   attachSponsorSubscription,
   sponsorCampaignForBilling,
   type SponsorBillingRow,
 } from "@/lib/db/queries/ads";
+import { writeAuditAs } from "@/lib/db/queries/audit";
+import { BILLING_SYSTEM_VIEWER } from "@/lib/billing/process";
 import type { SponsorBillingStatus } from "@/lib/db/schema";
 import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
@@ -79,6 +83,7 @@ export interface StartSponsorCheckoutInput {
 export type StartSponsorCheckoutResult =
   | { outcome: "not-configured" }
   | { outcome: "not-owner" }
+  | { outcome: "not-eligible" }
   | { outcome: "approval"; approveUrl: string | null };
 
 /**
@@ -92,6 +97,21 @@ export async function startSponsorCheckout(
 ): Promise<StartSponsorCheckoutResult> {
   const planId = sponsorPlanId(input.env ?? process.env);
   if (input.client === null || planId === null) return { outcome: "not-configured" };
+  // Ownership and eligibility BEFORE the PayPal call: a stranger's id must not
+  // leave an orphaned subscription behind, and a paid or finished campaign
+  // must not get a second one.
+  const campaign = await advertiserCampaignForCheckout(tx, input.viewer, {
+    campaignId: input.campaignId,
+    profileId: input.profileId,
+  });
+  if (campaign === null) return { outcome: "not-owner" };
+  if (
+    campaign.status === "ended" ||
+    campaign.status === "rejected" ||
+    !CHECKOUT_BILLING.includes(campaign.billingStatus)
+  ) {
+    return { outcome: "not-eligible" };
+  }
   const created = await input.client.createSubscription({
     planId,
     customId: input.campaignId,
@@ -220,4 +240,64 @@ export async function applySponsorBillingEvent(
     providerSubscriptionId: ids.providerSubscriptionId,
   });
   return { outcome: "applied", detail: effect.action };
+}
+
+/* ------------------------------------------------------- after a decision (C1) */
+
+/** Billing states under which a PayPal subscription is still charging or about to. */
+export const CANCELLABLE_BILLING: readonly SponsorBillingStatus[] = [
+  "approval_pending", "active", "past_due",
+];
+
+export interface CancelSponsorInput {
+  readonly campaignId: string;
+  readonly subscriptionId: string | null;
+  readonly billingStatus: SponsorBillingStatus;
+  readonly reason: string;
+  /** What to key the audit on — the decision's audit row id. */
+  readonly ref: string;
+}
+
+export type CancelSponsorOutcome = "not-needed" | "not-configured" | "cancelled" | "failed";
+
+/**
+ * Runs AFTER the decision has committed, exactly like `cancelSubscriptionAction`
+ * does for listings: PayPal first, then our row. Never throws — the campaign
+ * is already ended or rejected and that must stand; a PayPal failure is
+ * logged and audited (`sponsor.billing` / `cancel-failed`) so somebody can
+ * cancel it by hand, and the caller tells the admin.
+ */
+export async function cancelSponsorSubscription(
+  db: TestDb,
+  client: PayPalClient | null,
+  input: CancelSponsorInput,
+): Promise<CancelSponsorOutcome> {
+  if (input.subscriptionId === null || !CANCELLABLE_BILLING.includes(input.billingStatus)) {
+    return "not-needed";
+  }
+  if (client === null) {
+    console.warn(`[ads] campaign ${input.campaignId} has subscription ${input.subscriptionId} but PayPal is not configured — cancel it by hand`);
+    return "not-configured";
+  }
+  try {
+    await client.cancelSubscription(input.subscriptionId, input.reason);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`[ads] PayPal cancel failed for campaign ${input.campaignId}:`, message);
+    await writeAuditAs(db, null, {
+      action: "sponsor.billing",
+      entityType: "sponsor_campaign",
+      entityId: input.campaignId,
+      meta: { action: "cancel-failed", ref: input.ref, subscriptionId: input.subscriptionId, error: message.slice(0, 200) },
+    }).catch(() => {});
+    return "failed";
+  }
+  await applySponsorBillingEffect(db, BILLING_SYSTEM_VIEWER, input.campaignId, {
+    action: "cancel",
+    billingStatus: "cancelled",
+    currentPeriodEnd: undefined,
+    endsAt: now(),
+    eventId: `decision:${input.ref}`,
+  });
+  return "cancelled";
 }

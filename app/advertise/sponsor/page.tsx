@@ -73,7 +73,7 @@ export default async function SponsorPage({ searchParams }: Props) {
       )}
       {sp.cancelled !== undefined && (
         <Notice variant="status" testId="sponsor-cancelled">
-          PayPal approval was cancelled. Your campaign is saved below; edit it or try the payment again later.
+          PayPal approval was cancelled. Your campaign is saved below — use "Pay now" when you are ready.
         </Notice>
       )}
       <h2>What you get</h2>
@@ -86,7 +86,12 @@ export default async function SponsorPage({ searchParams }: Props) {
       {campaigns.length === 0 ? (
         <p className="text-muted" data-testid="sponsor-none">You have not submitted a campaign yet.</p>
       ) : (
-        <SponsorCampaignList campaigns={campaigns} titleMax={SPONSOR_TITLE_MAX} blurbMax={SPONSOR_BLURB_MAX} />
+        <SponsorCampaignList
+          campaigns={campaigns}
+          titleMax={SPONSOR_TITLE_MAX}
+          blurbMax={SPONSOR_BLURB_MAX}
+          paymentsAvailable={cardPayments}
+        />
       )}
       <h2>Submit a campaign</h2>
       <SponsorForm
