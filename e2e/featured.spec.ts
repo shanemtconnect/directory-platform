@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL } from "./database";
-import { quietCity } from "./fixtures";
+import { busiestCity, quietCity } from "./fixtures";
 
 /**
  * Featured spots, end to end, with no PayPal involved.
@@ -190,6 +190,197 @@ test.describe("the featured row on the city page", () => {
         "Playwright Bravo Featured",
         "Playwright Alpha Featured",
       ]);
+    } finally {
+      await cleanup(sql, ids, spotId);
+      await sql.end({ timeout: 5 });
+    }
+  });
+});
+
+/* ------------------------------------------------------------- Task 45 */
+
+/** A spot row for the quiet city (or the one already there). */
+async function citySpot(sql: postgres.Sql, cityId: string): Promise<string> {
+  const [spot] = await sql<{ id: string }[]>`
+    insert into featured_spots (area_kind, area_id, category_id, positions, floor_cents, status)
+    values ('city', ${cityId}, null, 3, 5000, 'open')
+    on conflict do nothing returning id`;
+  if (spot) return spot.id;
+  const [existing] = await sql<{ id: string }[]>`
+    select id from featured_spots where area_kind = 'city' and area_id = ${cityId} and category_id is null`;
+  return existing!.id;
+}
+
+async function confirmedBid(
+  sql: postgres.Sql,
+  spotId: string,
+  listingId: string,
+  amountCents: number,
+  position: number | null,
+  n: number,
+): Promise<string> {
+  const [sub] = await sql<{ id: string }[]>`
+    insert into featured_subscriptions (listing_id, provider_subscription_id, provider_plan_id, status, quantity, requested_quantity)
+    values (${listingId}, ${`I-E2E45-${listingId.slice(0, 8)}-${n}`}, 'P-F-E2E', 'active', ${amountCents / 100}, ${amountCents / 100})
+    returning id`;
+  const [bid] = await sql<{ id: string }[]>`
+    insert into featured_bids (spot_id, listing_id, subscription_id, amount_cents, status, position)
+    values (${spotId}, ${listingId}, ${sub!.id}, ${amountCents}, 'active', ${position}) returning id`;
+  return bid!.id;
+}
+
+test.describe("leaderboard, outbid email and the owner's tools (Task 45)", () => {
+  test("the leaderboard shows the three positions; a re-rank queues the outbid emails with the amount to retake", async ({ page }) => {
+    // The busiest town, not the quiet one: the owner-page spec above asserts
+    // the quiet town's spot is empty, and this one fills a spot with bids.
+    const city = await busiestCity();
+    const email = await signUp(page);
+    const sql = postgres(DATABASE_URL, { max: 1 });
+    const ids: string[] = [];
+    let spotId: string | null = null;
+    try {
+      const [u] = await sql<{ id: string }[]>`select id from "user" where email = ${email}`;
+      await sql`insert into profiles (user_id) values (${u!.id}) on conflict (user_id) do nothing`;
+      const [p] = await sql<{ id: string }[]>`select id from profiles where user_id = ${u!.id}`;
+      const s = await scaffold(sql, city.slug);
+      spotId = await citySpot(sql, s.cityId);
+
+      // The rows the engine leaves after three confirmed bids, plus a fourth
+      // (Delta, 85) confirmed by PayPal a moment ago and not yet re-ranked,
+      // and the signed-in owner's own outbid bid (Echo, 40).
+      const alpha = await verifiedListing(sql, s, null, "Playwright Alpha Board");
+      const bravo = await verifiedListing(sql, s, null, "Playwright Bravo Board");
+      const charlie = await verifiedListing(sql, s, null, "Playwright Charlie Board");
+      const delta = await verifiedListing(sql, s, null, "Playwright Delta Board");
+      const echo = await verifiedListing(sql, s, p!.id, "Playwright Echo Board");
+      ids.push(alpha, bravo, charlie, delta, echo);
+      const alphaBid = await confirmedBid(sql, spotId, alpha, 8000, 1, 1);
+      await confirmedBid(sql, spotId, bravo, 7000, 2, 2);
+      const charlieBid = await confirmedBid(sql, spotId, charlie, 6000, 3, 3);
+      await confirmedBid(sql, spotId, delta, 8500, null, 4);
+      await confirmedBid(sql, spotId, echo, 4000, null, 5);
+
+      // The public leaderboard: names in order, "3 of 3 taken", no amounts, noindex.
+      await page.goto(`/spots/${spotId}`);
+      const board = page.locator('[data-testid="spot-leaderboard"]');
+      await expect(board).toBeVisible();
+      await expect(page.locator('[data-testid="spot-scarcity"]')).toContainText("3 of 3 taken");
+      await expect(page.locator('[data-testid="spot-positions"] li a')).toHaveText([
+        "Playwright Alpha Board", "Playwright Bravo Board", "Playwright Charlie Board",
+      ]);
+      expect(await board.textContent()).not.toMatch(/[£$€]\s?\d/);
+      await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+
+      // The owner's page links the leaderboard and honours the email's prefill.
+      await page.goto(`/account/listings/${echo}/featured?bid=city:${s.cityId}:-&amount=71`);
+      await expect(page.locator('[data-testid="prefill-notice"]')).toBeVisible();
+      const row = page.locator(`[data-testid="spot-row"][data-spot="city:${s.cityId}:-"]`);
+      await expect(row.locator('[data-testid="bid-amount"]')).toHaveValue("71");
+      await expect(row.locator('[data-testid="spot-leaderboard"]')).toHaveAttribute("href", `/spots/${spotId}`);
+      await expect(row.locator('[data-testid="spot-you"]')).toContainText("outbid");
+      await expect(page.locator('[data-testid="bid-history"]')).toBeVisible();
+
+      // Echo cancels: the spot is settled — Delta takes first, Charlie drops
+      // out — and two outbid jobs land in the queue with the amounts to retake.
+      await row.locator('[data-testid="cancel-bid"]').click();
+      await row.locator('[data-testid="cancel-bid-confirm"]').click();
+      // The action revalidates this page, so the row re-renders without a
+      // bid; the history is where the cancellation is now visible.
+      await expect(page.locator('[data-testid="bid-history"]')).toContainText("Bid cancelled", { timeout: 15_000 });
+      await expect(row.locator('[data-testid="spot-you"]')).toHaveText("—");
+
+      const jobs = await sql<{ payload: { bidId: string; kind: string; amountCents: number } }[]>`
+        select payload from job_queue where kind = 'notify.spot.outbid' and payload->>'bidId' = any(${[alphaBid, charlieBid]})`;
+      expect(jobs.map((j) => j.payload).sort((a, b) => a.kind.localeCompare(b.kind))).toEqual([
+        // Charlie: the lowest featured is Bravo's 70, so 71 gets back in.
+        { bidId: charlieBid, kind: "dropped-out", amountCents: 7100 },
+        // Alpha: Delta's 85 + max(10%, 5) = 93.5 → 94.
+        { bidId: alphaBid, kind: "lost-first", amountCents: 9400 },
+      ]);
+
+      await page.goto(`/spots/${spotId}`);
+      await expect(page.locator('[data-testid="spot-positions"] li a')).toHaveText([
+        "Playwright Delta Board", "Playwright Alpha Board", "Playwright Bravo Board",
+      ]);
+    } finally {
+      await sql`delete from job_queue where kind = 'notify.spot.outbid' and payload->>'bidId' in
+        (select id::text from featured_bids where listing_id = any(${ids}))`;
+      await cleanup(sql, ids, spotId);
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  test("a signed-in owner whose listing is on the town page but not featured sees the upsell strip; a stranger does not", async ({ page, browser }) => {
+    const city = await quietCity();
+    const email = await signUp(page);
+    const sql = postgres(DATABASE_URL, { max: 1 });
+    let listingId: string | null = null;
+    try {
+      const [u] = await sql<{ id: string }[]>`select id from "user" where email = ${email}`;
+      await sql`insert into profiles (user_id) values (${u!.id}) on conflict (user_id) do nothing`;
+      const [p] = await sql<{ id: string }[]>`select id from profiles where user_id = ${u!.id}`;
+      const s = await scaffold(sql, city.slug);
+      listingId = await verifiedListing(sql, s, p!.id, "Playwright Upsell Owner");
+
+      await page.goto(city.path);
+      const strip = page.locator('[data-testid="featured-upsell"]');
+      await expect(strip).toBeVisible({ timeout: 15_000 });
+      await expect(strip).toContainText("Playwright Upsell Owner");
+      await expect(strip).toContainText("/month");
+      await expect(strip.locator('[data-testid="featured-upsell-link"]')).toHaveAttribute("href", `/account/listings/${listingId}/featured`);
+
+      // Anonymous: the same cached page, no strip, and the fetch answers 204.
+      const anon = await browser.newContext();
+      const anonPage = await anon.newPage();
+      const res = await anonPage.request.get(`/api/spots/upsell?key=city:${s.cityId}:-`);
+      expect(res.status()).toBe(204);
+      await anonPage.goto(city.path);
+      await anonPage.waitForTimeout(1500);
+      await expect(anonPage.locator('[data-testid="featured-upsell"]')).toHaveCount(0);
+      await anon.close();
+    } finally {
+      if (listingId !== null) await cleanup(sql, [listingId], null);
+      await sql.end({ timeout: 5 });
+    }
+  });
+});
+
+test.describe("the featured row on the region page (Task 45)", () => {
+  test.skip(REVALIDATE_SECRET === "", "INTERNAL_REVALIDATE_SECRET is not set, so the ISR page cannot be busted");
+
+  test("shows the region spot's confirmed bids above the region's list, out of the grid", async ({ page, request }) => {
+    const city = await quietCity();
+    if (city.region === null) throw new Error("the quiet city has no region");
+    const regionSlug = city.region.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const sql = postgres(DATABASE_URL, { max: 1 });
+    const ids: string[] = [];
+    let spotId: string | null = null;
+    try {
+      const s = await scaffold(sql, city.slug);
+      const alpha = await verifiedListing(sql, s, null, "Playwright Alpha Region");
+      ids.push(alpha);
+      const [spot] = await sql<{ id: string }[]>`
+        insert into featured_spots (area_kind, area_id, category_id, positions, floor_cents, status)
+        values ('region', ${regionSlug}, null, 3, 10000, 'open')
+        on conflict do nothing returning id`;
+      const [existing] = await sql<{ id: string }[]>`
+        select id from featured_spots where area_kind = 'region' and area_id = ${regionSlug} and category_id is null`;
+      spotId = spot?.id ?? existing!.id;
+      await confirmedBid(sql, spotId, alpha, 12000, 1, 9);
+
+      const res = await request.post("/api/internal/revalidate", {
+        headers: { authorization: `Bearer ${REVALIDATE_SECRET}` },
+        data: { paths: [`/areas/${regionSlug}`] },
+      });
+      expect(res.status()).toBe(200);
+
+      await page.goto(`/areas/${regionSlug}`);
+      const row = page.locator('[data-testid="featured-row"]');
+      await expect(row).toBeVisible();
+      await expect(row.locator("li > a")).toHaveText(["Playwright Alpha Region"]);
+      await expect(row.locator("ul")).toHaveAttribute("data-dp-spot", spotId);
+      await expect(row.locator('[data-testid="featured-how"]')).toHaveAttribute("href", `/spots/${spotId}`);
+      await expect(page.locator('[data-testid="listing-grid"] li > a', { hasText: "Playwright Alpha Region" })).toHaveCount(0);
     } finally {
       await cleanup(sql, ids, spotId);
       await sql.end({ timeout: 5 });
