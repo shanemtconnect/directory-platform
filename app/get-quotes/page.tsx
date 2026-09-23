@@ -7,6 +7,7 @@ import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { listCategories } from "@/lib/db/queries/indexes";
 import { QuoteRequestForm } from "@/components/quotes/QuoteRequestForm";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { QUOTE_STEPS } from "@/components/quotes/steps";
 import { Steps } from "@/components/ui/Steps";
 
 /**
@@ -29,8 +30,6 @@ export const metadata: Metadata = {
     `${siteConfig.entity.plural} in your town. They reply to you directly.`,
 };
 
-export const QUOTE_STEPS = ["Describe the job", "We send it on", "Quotes arrive"] as const;
-
 export default async function GetQuotesPage() {
   guardFeature("quoteBroadcast");
 
@@ -49,7 +48,7 @@ export default async function GetQuotesPage() {
         title={`Get quotes from ${e.plural} near you`}
         lede={
           `Tell us what you need once. We pass it to up to ${siteConfig.quotes.maxRecipients} ` +
-          `${e.plural} in your town — the best-rated and verified ones first — and they reply to you directly.`
+          `${e.plural} in your town — listings on a paid plan and verified listings first, then claimed ones — and they reply to you directly.`
         }
       />
       <Steps steps={QUOTE_STEPS} current={0} />
@@ -63,7 +62,7 @@ export default async function GetQuotesPage() {
       <h2>How it works</h2>
       <ul>
         <li>We only send your request to {e.plural} that are listed in the town you choose and have an address we can reach.</li>
-        <li>Nobody pays to be included, and we never charge you. {e.Plural} on a paid plan see your details straight away; the rest are told a request arrived.</li>
+        <li>You never pay for this. {e.Plural} on a paid plan see your details straight away; the rest are told a request arrived.</li>
         <li>Your details go to those {e.plural} and nowhere else. See our <a href="/privacy">privacy policy</a>.</li>
       </ul>
     </main>

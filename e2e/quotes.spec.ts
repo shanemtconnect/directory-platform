@@ -174,8 +174,12 @@ test.describe("the quote broadcast", () => {
     // longest-waiting first, so ours is pushed to the front of the queue —
     // what is under test is this job's handler, not the tick's ordering.
     await sql`update job_queue set run_after = to_timestamp(0) where id = ${job!.id}`;
+    // The worker reads its environment at call time; restored afterwards so
+    // specs sharing this Playwright worker inherit nothing.
+    const env = { ...process.env };
     process.env.DATABASE_URL = E2E_DATABASE_URL;
     process.env.NEXT_PUBLIC_SITE_URL ??= "http://localhost:3200";
+    process.env.BETTER_AUTH_SECRET ??= "e2e-not-a-real-secret";
     delete process.env.RESEND_API_KEY;
     const schema = await import("@/lib/db/schema");
     const { processNotifications } = await import("@/worker/jobs/notify");
@@ -188,6 +192,7 @@ test.describe("the quote broadcast", () => {
       expect(completed, "the tick must complete at least this job").toBeGreaterThanOrEqual(1);
     } finally {
       await workerSql.end({ timeout: 5 });
+      process.env = env;
     }
     const [done] = await sql<{ status: string; attempts: number; last_error: string | null }[]>`
       select status, attempts, last_error from job_queue where id = ${job!.id}
