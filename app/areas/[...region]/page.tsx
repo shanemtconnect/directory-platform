@@ -1,14 +1,10 @@
 import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
-import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { PER_PAGE } from "@/lib/db/queries/listings";
-import {
-  regionBySlug, listRegionListings, countRegionListings, topCategoriesInRegion,
-  type RegionPage,
-} from "@/lib/db/queries/areas";
+import { regionBySlug, listRegionListings, countRegionListings, topCategoriesInRegion, type RegionPage, regionRedirect } from "@/lib/db/queries/areas";
 import { redirects } from "@/lib/db/schema";
 import { countryProfile } from "@/lib/geo/countries";
 import { JsonLd } from "@/components/seo/JsonLd";
@@ -58,11 +54,7 @@ async function resolve(segments: string[]): Promise<Resolved> {
   const region = await regionBySlug(db as never, PUBLIC_VIEWER, parsed.slug);
   if (region) return { kind: "page", region, page: parsed.page };
 
-  const [row] = await db
-    .select({ to: redirects.toPath, status: redirects.statusCode })
-    .from(redirects)
-    .where(eq(redirects.fromPath, regionPath(parsed.slug)))
-    .limit(1);
+  const row = await regionRedirect(db as never, PUBLIC_VIEWER, regionPath(parsed.slug));
   // A 410 row is a tombstone that stores its own path; 404 rather than loop.
   if (row && row.status !== 410) return { kind: "redirect", to: row.to };
   return { kind: "not-found" };

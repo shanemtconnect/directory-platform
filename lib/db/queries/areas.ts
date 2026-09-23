@@ -9,6 +9,7 @@ import {
 import { registerRegionSlug, releaseRegionSlug, regionSlug } from "@/lib/routing/slugs";
 import { regionPagePath, regionPath } from "@/lib/routing/regions";
 import type { Db } from "@/lib/db/client";
+import type { TestDb } from "@/lib/db/types";
 
 /**
  * Queries behind the region pages — /areas and /areas/[region].
@@ -370,4 +371,22 @@ export async function regionPaths(tx: Db, region: string | null): Promise<string
   const out = [regionPath(slug)];
   for (let n = 2; n <= pages; n++) out.push(regionPagePath(slug, n));
   return out;
+}
+
+/**
+ * The redirect row for a renamed region's path, if any. Read here rather than
+ * in the page so the page holds no Drizzle (constraint 6); a 410 tombstone is
+ * returned as-is and the caller decides what a tombstone means.
+ */
+export async function regionRedirect(
+  tx: TestDb,
+  _viewer: Viewer,
+  fromPath: string,
+): Promise<{ to: string; status: number } | null> {
+  const [row] = await tx
+    .select({ to: redirects.toPath, status: redirects.statusCode })
+    .from(redirects)
+    .where(eq(redirects.fromPath, fromPath.toLowerCase()))
+    .limit(1);
+  return row ? { to: row.to, status: row.status } : null;
 }
