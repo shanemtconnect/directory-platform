@@ -57,10 +57,12 @@ ENV NEXT_PUBLIC_MEDIA_URL=$NEXT_PUBLIC_MEDIA_URL
 ARG SITE_ENV
 ENV SITE_ENV=$SITE_ENV
 # SITE_FLAGS_OVERRIDE is a build arg for the same reason: `lib/features/flags.ts`
-# freezes `resolveFeatures()` at build time so disabled routes are tree-shaken
-# and 404. A staging deploy passes `on` so every module renders for review;
-# `config/flag-variants.ts` ignores it under SITE_ENV=production, so it cannot
-# flip a flag on a real site however it is set.
+# evaluates `resolveFeatures()` where the module loads, which for prerendered
+# routes is here, in the build. A staging deploy passes `on` so every module
+# renders for review; `config/flag-variants.ts` ignores it under
+# SITE_ENV=production, so it cannot flip a flag on a real site however it is
+# set. Declared on the runner too: request-rendered routes re-evaluate the
+# flags in the running container.
 ARG SITE_FLAGS_OVERRIDE
 ENV SITE_FLAGS_OVERRIDE=$SITE_FLAGS_OVERRIDE
 # No DATABASE_URL. The build does not need one.
@@ -92,6 +94,14 @@ ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
 # the X-Robots-Tag header baked into routes-manifest.json will not follow it.
 ARG SITE_ENV
 ENV SITE_ENV=$SITE_ENV
+# And the flag override, for the same reason again. `features` in
+# lib/features/flags.ts is evaluated where the module loads: during the build
+# for prerendered routes, and per process at boot for everything rendered on
+# request. A route the staging build turned on is a 404 again at request time
+# unless the running container agrees — so the value follows the build into
+# the image. `resolveFeatures()` ignores it under SITE_ENV=production.
+ARG SITE_FLAGS_OVERRIDE
+ENV SITE_FLAGS_OVERRIDE=$SITE_FLAGS_OVERRIDE
 # The entrypoint may have to write a volume Docker created as root, so it runs
 # as root and hands the server to an unprivileged user itself.
 RUN apk add --no-cache su-exec

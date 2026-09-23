@@ -38,6 +38,20 @@
 #    end to end: a fresh throwaway database gets every migration applied and
 #    `/pricing` returns 200 once the container is up, and a wrong
 #    `DATABASE_URL` exits the container non-zero instead of serving anyway.
+# 9. Every page TYPE renders from the image, against the seeded database:
+#    `/`, `/areas`, a city, a listing and `/advertise/sponsor`. Turbopack leaves
+#    sharp and the S3 client external and imports them at runtime through
+#    hashed aliases in `.next/node_modules/` — symlinks into the builder's pnpm
+#    layout that dangle once the runner swaps in the hoisted prod tree. Only
+#    the pages whose import graph reaches those packages 500 (`/pricing` does
+#    not), which is how a green run of this script once shipped a staging site
+#    with every city and listing page down. The container log is also grepped
+#    for `Failed to load external module`, so a new dangling alias fails here
+#    even on a route this list does not name.
+# 10. SITE_FLAGS_OVERRIDE is a build arg too, and its production guard holds:
+#    the staging image is built with `SITE_FLAGS_OVERRIDE=on` and a flag-gated
+#    route (`/jobs`) is 200 there, while the production image built above
+#    serves that route as `site.config.ts` says (404 while `jobBoard: false`).
 #
 # This cannot be a RUN step in the Dockerfile: importing the handler needs REDIS_URL.
 #
@@ -117,6 +131,34 @@ admin_sql() {
       await sql.unsafe(process.env.STMT);
       await sql.end();
     ' > /dev/null
+}
+
+# Boot an image as a real deploy would (no MIGRATE_ON_BOOT: the database is
+# already migrated) and echo the container id. $1 image, $2 DATABASE_URL,
+# $3 site URL.
+boot_runner() {
+  docker run -d --add-host=host.docker.internal:host-gateway \
+    -e DATABASE_URL="$2" \
+    -e NEXT_PUBLIC_SITE_URL="$3" \
+    -e REDIS_URL="$RUNTIME_REDIS" \
+    -e BETTER_AUTH_SECRET="$AUTH_SECRET" \
+    -e BETTER_AUTH_URL="$3" \
+    -p 127.0.0.1::3000 "$1"
+}
+host_port() { docker port "$1" 3000/tcp | head -n1 | cut -d: -f2; }
+http_code() { curl -s -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || echo 000; }
+# Poll rather than sleep-and-hope, and fail the moment the container dies
+# rather than time out looking like a slow success. $1 container, $2 url.
+wait_for_200() {
+  local i
+  for i in $(seq 1 30); do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" != "true" ]; then
+      fail "container exited before serving: $(docker logs "$1" 2>&1 | tail -30)"
+    fi
+    if [ "$(http_code "$2")" = "200" ]; then return 0; fi
+    sleep 1
+  done
+  fail "$2 did not return 200 within 30s of boot: $(docker logs "$1" 2>&1 | tail -30)"
 }
 
 # One trap for everything, armed before anything is created: a failure halfway
@@ -364,22 +406,91 @@ grep -qE '^seeded ".+": 0 cities, 0 categories, 0 listings \([1-9][0-9]* skipped
   || fail "re-seeding was not idempotent: $S2_OUT"
 echo "ok: $S2_OUT"
 
+# Against the seeded database, so a city and a listing exist to render. The
+# slugs come from the database rather than the seed files: the seed is the
+# niche's, and a clone's first city is not Leeds.
+echo "--- boot: every page type renders from the runner image ---"
+SLUGS=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  -e ADMIN_URL="$VERIFY_DB_URL" "$IMAGE" \
+  node --input-type=module -e '
+    import postgres from "postgres";
+    const sql = postgres(process.env.ADMIN_URL, { max: 1, onnotice: () => {} });
+    const rows = await sql`
+      select c.slug as city, l.slug as listing
+      from listings l join cities c on c.id = l.city_id
+      where l.status = ${"published"} and c.is_published
+      order by c.slug, l.slug limit 1`;
+    if (!rows[0]) { console.error("no published listing in the seeded database"); process.exit(1); }
+    console.log(rows[0].city + " " + rows[0].listing);
+    await sql.end();
+  ') || fail "could not read a city/listing slug from the seeded database: $SLUGS"
+CITY_SLUG=${SLUGS%% *}
+LISTING_SLUG=${SLUGS##* }
+[ -n "$CITY_SLUG" ] && [ -n "$LISTING_SLUG" ] || fail "empty slugs from the seeded database: '$SLUGS'"
+
+BOOT_CONTAINER=$(boot_runner "$IMAGE" "$VERIFY_DB_URL" "$SITE_URL")
+BOOT_PORT=$(host_port "$BOOT_CONTAINER")
+wait_for_200 "$BOOT_CONTAINER" "http://127.0.0.1:$BOOT_PORT/"
+# /advertise/sponsor sends an anonymous viewer to the login page (307), but
+# its module graph — lib/ads/logo -> sharp, lib/media/r2 -> S3 — is loaded
+# before the redirect runs, which is exactly the load that used to 500. The
+# redirect is followed too, so the login page it lands on is also proven.
+for spec in /:200 /areas:200 "/$CITY_SLUG:200" "/$CITY_SLUG/$LISTING_SLUG:200" /advertise/sponsor:307; do
+  route=${spec%:*}; want=${spec##*:}
+  CODE=$(http_code "http://127.0.0.1:$BOOT_PORT$route")
+  [ "$CODE" = "$want" ] \
+    || fail "$route returned $CODE (expected $want) from the runner image: $(docker logs "$BOOT_CONTAINER" 2>&1 | grep -iE 'error|failed' | head -10)"
+  if [ "$want" != "200" ]; then
+    FINAL=$(curl -sL -o /dev/null -w '%{http_code}' "http://127.0.0.1:$BOOT_PORT$route" 2>/dev/null || echo 000)
+    [ "$FINAL" = "200" ] || fail "$route redirected to a page that returned $FINAL"
+  fi
+  echo "ok: $route $CODE"
+done
+# The other half of case 10: the production image ignores any flag override,
+# so a flag-gated route answers as site.config.ts says. Derived, not
+# hardcoded — a clone that turns the board on still passes.
+if grep -qE '^\s*jobBoard:\s*false' config/site.config.ts; then JOBS_EXPECTED=404; else JOBS_EXPECTED=200; fi
+CODE=$(http_code "http://127.0.0.1:$BOOT_PORT/jobs")
+[ "$CODE" = "$JOBS_EXPECTED" ] || fail "/jobs returned $CODE from the production image, expected $JOBS_EXPECTED per site.config.ts"
+echo "ok: /jobs $CODE in the production image (site.config.ts jobBoard)"
+BOOT_LOG=$(docker logs "$BOOT_CONTAINER" 2>&1)
+if grep -q "Failed to load external module" <<<"$BOOT_LOG"; then
+  fail "a Turbopack external did not resolve in the image: $(grep "Failed to load external module" <<<"$BOOT_LOG" | sort -u | head -5)"
+fi
+echo "ok: no 'Failed to load external module' in the container log"
+docker rm -f "$BOOT_CONTAINER" > /dev/null 2>&1 || true
+BOOT_CONTAINER=""
+
 # SITE_ENV is a build arg — these two cases are the only thing that keeps it
-# one. Both build the `builder` stage only: what is under test is `next build`
-# and the config guards it runs, not the runner's layers.
-echo "--- staging build: a real subdomain with SITE_ENV=staging builds ---"
-EXTRA_IMAGES="$IMAGE-staging-builder"
+# one. The staging case builds the full runner and boots it, because it also
+# carries SITE_FLAGS_OVERRIDE=on and the proof of that is a flag-gated route
+# serving 200 from the image; the no-SITE_ENV case builds the `builder` stage
+# only, since what is under test there is `next build` and the guard it runs.
+echo "--- staging build: a real subdomain with SITE_ENV=staging and SITE_FLAGS_OVERRIDE=on builds ---"
+EXTRA_IMAGES="$IMAGE-staging"
 set +e
-SB_OUT=$(docker build --target builder \
+SB_OUT=$(docker build --target runner \
   --add-host=host.docker.internal:host-gateway \
   --build-arg NEXT_PUBLIC_SITE_URL="$PUBLIC_SITE_URL" \
   --build-arg SITE_ENV=staging \
-  -t "$IMAGE-staging-builder" . 2>&1)
+  --build-arg SITE_FLAGS_OVERRIDE=on \
+  -t "$IMAGE-staging" . 2>&1)
 SB_CODE=$?
 set -e
 [ "$SB_CODE" -eq 0 ] \
   || fail "a staging image on a real subdomain could not be built — SITE_ENV is not reaching next build: $(tail -40 <<<"$SB_OUT")"
 echo "ok: SITE_ENV=staging reaches the builder and waives the production config guard"
+
+echo "--- staging image: SITE_FLAGS_OVERRIDE=on turns a flag-gated route on ---"
+BOOT_CONTAINER=$(boot_runner "$IMAGE-staging" "$VERIFY_DB_URL" "$PUBLIC_SITE_URL")
+BOOT_PORT=$(host_port "$BOOT_CONTAINER")
+wait_for_200 "$BOOT_CONTAINER" "http://127.0.0.1:$BOOT_PORT/"
+CODE=$(http_code "http://127.0.0.1:$BOOT_PORT/jobs")
+[ "$CODE" = "200" ] \
+  || fail "/jobs returned $CODE from the staging image — SITE_FLAGS_OVERRIDE=on is not reaching next build: $(docker logs "$BOOT_CONTAINER" 2>&1 | tail -20)"
+echo "ok: /jobs 200 in the staging image"
+docker rm -f "$BOOT_CONTAINER" > /dev/null 2>&1 || true
+BOOT_CONTAINER=""
 
 # The other half: without it the guard must fire, or "SITE_ENV is a build arg"
 # is a claim about a variable nothing reads.
@@ -403,5 +514,6 @@ echo "PASS: cache handler loads, assets survive a redeploy, a read-only volume"
 echo "      fails the boot, the worker runs its real entrypoint, the runner"
 echo "      migrates a fresh database and the worker seeds it, MIGRATE_ON_BOOT"
 echo "      migrates before serving and refuses to boot on a bad DATABASE_URL,"
-echo "      and SITE_ENV is genuinely a build arg — staging builds, and its"
-echo "      absence is caught."
+echo "      every page type renders from the image with no dangling external,"
+echo "      SITE_ENV is genuinely a build arg — staging builds, and its absence"
+echo "      is caught — and SITE_FLAGS_OVERRIDE=on reaches only the staging build."
