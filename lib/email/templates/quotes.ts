@@ -1,5 +1,5 @@
 import { siteConfig } from "@/config/site.config";
-import { layout, type Block, type EmailContent } from "./layout";
+import { layout, unsubscribeBlock, type Block, type EmailContent } from "./layout";
 
 /**
  * The quote broadcast's emails.
@@ -22,6 +22,12 @@ export interface QuoteRecipientEmailData {
   contactVisible: boolean;
   requester: { name: string; email: string; phone: string | null };
   message: string;
+  /**
+   * Signed opt-out token for THIS recipient address, or null when no signing
+   * key is configured. Both variants carry the link: the free one is an
+   * upsell and the paid one still reaches an inbox that never asked.
+   */
+  unsubscribeToken: string | null;
 }
 
 export function quoteToRecipient(data: QuoteRecipientEmailData): EmailContent {
@@ -42,6 +48,7 @@ export function quoteToRecipient(data: QuoteRecipientEmailData): EmailContent {
       { label: "See your plan options", value: data.pricingUrl, href: data.pricingUrl },
       { label: "Your leads", value: data.leadsUrl, href: data.leadsUrl },
     ];
+    if (data.unsubscribeToken !== null) blocks.push(unsubscribeBlock(data.unsubscribeToken));
     return {
       subject,
       ...layout({ subject, heading: `A quote request was sent to ${data.listingName}`, blocks }),
@@ -61,6 +68,7 @@ export function quoteToRecipient(data: QuoteRecipientEmailData): EmailContent {
   blocks.push({ label: "Where", value: data.cityName });
   blocks.push({ label: e.Singular, value: data.listingName });
   blocks.push({ label: "Mark it won or lost", value: data.leadsUrl, href: data.leadsUrl });
+  if (data.unsubscribeToken !== null) blocks.push(unsubscribeBlock(data.unsubscribeToken));
   return {
     subject,
     // Replying goes to the person who asked; quoting should be one keystroke.

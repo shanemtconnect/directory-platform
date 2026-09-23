@@ -256,3 +256,11 @@ export const BADGE_BACKLINK_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as c
  * do — a typo must not cost one of the three.
  */
 export const QUOTE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
+ * Thirty a minute per address, on the unsubscribe link — the page and the
+ * POST behind its button share the bucket. The token is an HMAC over the
+ * address, so guessing it is not realistic; what the limit stops is a guess
+ * loop being a free database write per guess. Same shape as the claim link.
+ */
+export const UNSUBSCRIBE_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;

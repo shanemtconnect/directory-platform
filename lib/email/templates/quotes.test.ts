@@ -11,7 +11,19 @@ const base: QuoteRecipientEmailData = {
   contactVisible: true,
   requester: { name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 960000" },
   message: "Eighty people in June <script>alert(1)</script>",
+  unsubscribeToken: "payload.signature",
 };
+
+describe("quoteToRecipient — opt-out", () => {
+  it("links the unsubscribe page in both variants, and omits it only when there is no token", () => {
+    for (const contactVisible of [true, false]) {
+      const email = quoteToRecipient({ ...base, contactVisible });
+      expect(email.text).toContain("/unsubscribe?t=payload.signature");
+      expect(email.html).toContain("/unsubscribe?t=payload.signature");
+    }
+    expect(quoteToRecipient({ ...base, unsubscribeToken: null }).text).not.toContain("/unsubscribe");
+  });
+});
 
 describe("quoteToRecipient — paid", () => {
   it("carries the job and the contact details and replies to the requester", () => {
