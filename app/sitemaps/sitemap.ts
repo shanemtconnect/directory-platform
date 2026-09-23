@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { db } from "@/lib/db/client";
+import { siteConfig } from "@/config/site.config";
 import { prerenderingWithoutDatabase } from "@/lib/db/build-phase";
 import { siteUrl } from "@/lib/schema/builders";
 import { isStaging } from "@/lib/site-env";
@@ -14,10 +15,12 @@ import {
   listingShardIndex,
   STATIC_SHARD_ID,
   CATEGORY_SHARD_ID,
+  REGION_SHARD_ID,
   SITEMAP_SHARD_SIZE,
   JOBS_SHARD_ID,
   sitemapJobs,
 } from "@/lib/db/queries/sitemap";
+import { sitemapRegions } from "@/lib/db/queries/areas";
 import { sitemapRoutes } from "@/lib/features/navigation";
 
 // Dynamic, not force-static: the set of indexable cities changes whenever a
@@ -100,6 +103,19 @@ export default async function sitemap({ id }: { id: Promise<string> }): Promise<
       lastModified: c.lastModified,
       changeFrequency: "weekly" as const,
       priority: 0.6,
+    }));
+  }
+
+  if (shard === REGION_SHARD_ID) {
+    // Only on the mode that has region pages: elsewhere the shard is valid
+    // and empty, so the index never names a URL that 404s.
+    if (siteConfig.siteMode !== "niche-national") return [];
+    const regions = await sitemapRegions(db as never, PUBLIC_VIEWER);
+    return regions.map((r) => ({
+      url: siteUrl(r.path),
+      lastModified: r.lastModified,
+      changeFrequency: "weekly" as const,
+      priority: 0.7,
     }));
   }
 

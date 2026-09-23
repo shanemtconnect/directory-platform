@@ -52,6 +52,8 @@ describe("checkBadgeBacklinks", () => {
         `/${city!.slug}/the-old-mill/reviews`,
         `/${city!.slug}`,
         `/${city!.slug}/barn-venues`,
+        // The scaffold city's region page — the listing is on it too.
+        "/areas/west-yorkshire",
       ]);
       const [badge] = await tx.select().from(badges).where(eq(badges.listingId, listingId));
       expect(badge?.backlinkVerified).toBe(true);
@@ -78,7 +80,7 @@ describe("checkBadgeBacklinks", () => {
       });
 
       expect(report).toMatchObject({ checked: 1, verified: 0, failed: 1 });
-      expect(report.revalidate).toHaveLength(4);
+      expect(report.revalidate).toHaveLength(5);
       const [listing] = await tx.select().from(listings).where(eq(listings.id, listingId));
       expect(listing?.backlinkBoost).toBe(0);
     });

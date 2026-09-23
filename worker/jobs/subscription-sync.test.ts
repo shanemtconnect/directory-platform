@@ -108,6 +108,8 @@ describe("syncSubscriptions", () => {
         `/${page!.citySlug}/${page!.slug}/reviews`,
         `/${page!.citySlug}`,
         `/${page!.citySlug}/barn-venues`,
+        // The scaffold city's region page — the listing is on it too.
+        "/areas/west-yorkshire",
       ]);
 
       const [row] = await tx.select().from(subscriptions).where(eq(subscriptions.id, s.id));
@@ -148,7 +150,7 @@ describe("syncSubscriptions", () => {
         env: ENV,
       });
 
-      expect(out.revalidate).toHaveLength(4);
+      expect(out.revalidate).toHaveLength(5);
       expect(out.revalidate.every((p) => p.startsWith("/"))).toBe(true);
       expect(out.revalidate[1]).toMatch(/\/reviews$/);
     });

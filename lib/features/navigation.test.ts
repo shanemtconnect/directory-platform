@@ -55,12 +55,14 @@ describe("buildRoutes", () => {
     expect(buildRoutes(allOn, "niche-national").map((r) => r.href)).not.toContain("/membership");
   });
 
-  it("advertises no /areas in either mode until the page exists", () => {
-    // local-multi-vertical has schema and scopes but no pages; a link to
-    // /areas was a 404 on any clone that chose the mode.
-    for (const mode of ["niche-national", "local-multi-vertical"] as const) {
-      expect(buildRoutes(allOff, mode).map((r) => r.href)).not.toContain("/areas");
-    }
+  it("advertises /areas — the region index — on niche-national only", () => {
+    // The region pages read cities.region, which is a niche-national concept.
+    // local-multi-vertical's own areas (its `areas` table) still have no page,
+    // so a link to /areas there would be a link to a 404.
+    const national = buildRoutes(allOff, "niche-national").find((r) => r.href === "/areas");
+    expect(national).toMatchObject({ inFooter: true, inSitemap: true });
+    expect(national?.label).toBe("Venues by county");
+    expect(buildRoutes(allOff, "local-multi-vertical").map((r) => r.href)).not.toContain("/areas");
   });
 
   it("returns no duplicate hrefs under any flag combination", () => {

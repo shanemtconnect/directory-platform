@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
 import { cities, listings } from "@/lib/db/schema";
-import { makeCategory, makeListing, makeScaffold } from "@/test/factories";
+import { makeCategory, makeCity, makeListing, makeScaffold } from "@/test/factories";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import { PER_PAGE } from "./listings";
@@ -27,6 +27,8 @@ describe("listingPaths", () => {
         `/${city}/the-old-mill/reviews`,
         `/${city}`,
         `/${city}/barn-venues`,
+        // The scaffold's city sits in West Yorkshire; the region page is on the list.
+        "/areas/west-yorkshire",
       ]);
     });
   });
@@ -108,7 +110,7 @@ describe("listingPaths", () => {
 
       const paths = await listingPaths(tx, ADMIN_VIEWER, listingId);
 
-      expect(paths).toEqual([`/${city}/the-hall`, `/${city}/the-hall/reviews`, `/${city}`]);
+      expect(paths).toEqual([`/${city}/the-hall`, `/${city}/the-hall/reviews`, `/${city}`, "/areas/west-yorkshire"]);
     });
   });
 
@@ -119,7 +121,7 @@ describe("listingPaths", () => {
       await tx.update(listings).set({ status: "removed" }).where(eq(listings.id, listingId));
 
       const paths = await listingPaths(tx, ADMIN_VIEWER, listingId);
-      expect(paths).toHaveLength(4);
+      expect(paths).toHaveLength(5);
       expect(paths[0]).toMatch(/\/gone$/);
     });
   });
@@ -150,6 +152,27 @@ describe("listingPaths", () => {
       await expect(
         listingPaths(tx, PUBLIC_VIEWER, "11111111-1111-4111-8111-111111111111"),
       ).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});
+
+describe("listingPaths — region pages", () => {
+  it("includes the region pillar and its paginated pages, and none for a city without a region", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx); // Leeds, West Yorkshire
+      const ids: string[] = [];
+      for (let i = 0; i < PER_PAGE; i++) ids.push(await makeListing(tx, ctx));
+
+      const paths = await listingPaths(tx, ADMIN_VIEWER, ids[0]!);
+      expect(paths).toContain("/areas/west-yorkshire");
+      // PER_PAGE published plus the one-listing allowance spills onto page 2.
+      expect(paths).toContain("/areas/west-yorkshire/page/2");
+      expect(paths).not.toContain("/areas/west-yorkshire/page/3");
+      expect(paths).not.toContain("/areas/west-yorkshire/page/1");
+
+      const nowhere = await makeCity(tx, "Nowhere", null);
+      const lone = await makeListing(tx, { ...ctx, cityId: nowhere });
+      expect((await listingPaths(tx, ADMIN_VIEWER, lone)).some((p) => p.startsWith("/areas/"))).toBe(false);
     });
   });
 });

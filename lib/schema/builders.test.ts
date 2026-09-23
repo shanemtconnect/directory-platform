@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import {
   organisationSchema, websiteSchema, breadcrumbSchema,
-  listingSchema, pillarSchema, faqSchema, siteUrl, reviewsPageSchema,
+  listingSchema, pillarSchema, faqSchema, siteUrl, reviewsPageSchema, regionPillarSchema,
 } from "./builders";
 import type { listings, cities, categories } from "@/lib/db/schema";
 
@@ -261,5 +261,33 @@ describe("review markup", () => {
       path: "/leeds/the-old-barn/reviews",
       reviews: [],
     })).toBeNull();
+  });
+});
+
+describe("regionPillarSchema", () => {
+  it("is a CollectionPage about the region as an AdministrativeArea in the site's country", () => {
+    const out = regionPillarSchema({
+      title: "Venues in West Yorkshire", region: "West Yorkshire", path: "/areas/west-yorkshire",
+      description: "Two of them.",
+      items: [{ name: "The Old Barn", path: "/leeds/the-old-barn" }],
+    }) as Record<string, unknown>;
+    expect(out["@type"]).toBe("CollectionPage");
+    expect(out["url"]).toBe("https://example.test/areas/west-yorkshire");
+    expect(out["about"]).toEqual({
+      "@type": "AdministrativeArea",
+      name: "West Yorkshire",
+      containedInPlace: { "@type": "Country", name: "United Kingdom" },
+    });
+    const list = out["mainEntity"] as { numberOfItems: number; itemListElement: { url: string }[] };
+    expect(list.numberOfItems).toBe(1);
+    // Constraint 11: the listing's URL is /[city]/[listing], never under the region.
+    expect(list.itemListElement[0]!.url).toBe("https://example.test/leeds/the-old-barn");
+  });
+
+  it("carries no ItemList for an empty page", () => {
+    const out = regionPillarSchema({
+      title: "T", region: "R", path: "/areas/r", items: [],
+    }) as Record<string, unknown>;
+    expect(out["mainEntity"]).toBeUndefined();
   });
 });

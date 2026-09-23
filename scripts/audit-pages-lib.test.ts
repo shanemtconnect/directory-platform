@@ -125,6 +125,7 @@ describe("sitemap-derived page selection", () => {
     "/leeds", "/york", "/bath",
     "/categories/barns", "/categories/hotels",
     "/leeds/the-mill", "/leeds/old-hall", "/york/minster-rooms",
+    "/areas", "/areas/west-yorkshire",
   ];
   const sitemap = classifySitemapPaths(paths);
 
@@ -160,6 +161,8 @@ describe("sitemap-derived page selection", () => {
     const byName = Object.fromEntries(full.pages.map((p) => [p.name, p.path]));
     expect(byName["city pillar"]).toBe("/leeds");
     expect(byName["listing detail"]).toBe("/leeds/the-mill");
+    expect(byName["regions index"]).toBe("/areas");
+    expect(byName["region pillar"]).toBe("/areas/west-yorkshire");
     expect(byName["pagination"]).toBe("/leeds/page/2");
     expect(byName["claim"]).toBe("/claim/abc");
     expect(byName["blog post"]).toBe("/blog/how-to-read-a-quote");

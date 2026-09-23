@@ -208,14 +208,23 @@ export function formatTable(results, thresholds) {
  * @returns {SitemapPaths}
  */
 export function classifySitemapPaths(paths) {
-  const listings = paths.filter((p) => /^\/[^/]+\/[^/]+$/.test(p) && !p.startsWith("/categories/") && !p.startsWith("/blog/"));
+  // Region pages live under /areas and would otherwise be read as listings of
+  // a city called "areas" — the busiest "city" in any seed with many regions.
+  const regions = paths.filter((p) => /^\/areas\/[^/]+$/.test(p));
+  const listings = paths.filter(
+    (p) =>
+      /^\/[^/]+\/[^/]+$/.test(p)
+      && !p.startsWith("/categories/")
+      && !p.startsWith("/blog/")
+      && !p.startsWith("/areas/"),
+  );
   const citySlugs = new Set(listings.map((p) => p.split("/")[1]));
   const cities = paths.filter((p) => /^\/[^/]+$/.test(p) && citySlugs.has(p.slice(1)));
   const categories = paths.filter((p) => /^\/categories\/[^/]+$/.test(p));
   const statics = paths.filter(
-    (p) => !cities.includes(p) && !categories.includes(p) && !listings.includes(p),
+    (p) => !cities.includes(p) && !categories.includes(p) && !listings.includes(p) && !regions.includes(p),
   );
-  return { statics, cities, categories, listings };
+  return { statics, cities, categories, listings, regions };
 }
 
 /**
@@ -318,6 +327,15 @@ export function selectPages({ sitemap, cityCategoryPath, listingId, hasSecondPag
   add("city pillar", city === null ? null : `/${city}`);
   add("city + category", cityCategoryPath);
   add("category", sitemap.categories[0] ?? null);
+  // Region pages are optional (niche-national mode only); a site without them
+  // records a skip rather than auditing a 404.
+  const regions = sitemap.regions ?? [];
+  if (regions.length > 0) {
+    add("regions index", "/areas");
+    add("region pillar", regions[0] ?? null);
+  } else {
+    skipped.push("regions: nothing in the sitemap under /areas");
+  }
   add("listing detail", listing);
   if (city !== null && hasSecondPage) add("pagination", `/${city}/page/2`);
   else skipped.push("pagination: no city in the sitemap has a second page of listings");
