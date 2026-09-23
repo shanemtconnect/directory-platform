@@ -26,6 +26,7 @@ import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
 import { SponsorRails } from "@/components/ads/SponsorRails";
+import { placementForScope } from "@/lib/ads/policy";
 
 export const revalidate = 3600;
 
@@ -300,7 +301,7 @@ export default async function CatchAllPage({ params }: Props) {
             ])}
           />
           {faq.length > 0 && <JsonLd data={faqSchema(faq)} />}
-          <SponsorRails placement={cityId !== null && result.scope.type === "city-category" ? "categoryPillar" : "cityPillar"} />
+          <SponsorRails placement={placementForScope(result.scope)} />
           <PillarPage
             heading={heading}
             featured={featured}

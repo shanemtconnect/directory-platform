@@ -171,7 +171,9 @@ export interface UpdateSponsorInput extends Omit<SponsorCopy, "name"> {
 
 /**
  * The advertiser's own edit. A live campaign goes back to `pending`: copy an
- * admin has not seen must not be on the rails, however small the change.
+ * admin has not seen must not be on the rails, however small the change. A
+ * paused one stays paused — the admin's pause is theirs to lift, and the new
+ * copy is reviewed when they do (`approve` is allowed from `paused`).
  */
 export async function updateSponsorCampaign(
   tx: TestDb,
@@ -193,7 +195,7 @@ export async function updateSponsorCampaign(
       title: input.title.trim(),
       blurb: input.blurb.trim(),
       targetUrl: input.targetUrl,
-      status: "pending",
+      status: current.status === "active" ? "pending" : current.status,
       updatedAt: now(),
     })
     .where(eq(sponsorCampaigns.id, current.id));
@@ -474,7 +476,7 @@ export interface SponsorBillingRow {
   readonly endsAt: Date | null;
 }
 
-/** Worker/webhook only. The provider id first, our own id as the fallback. */
+/** Worker/webhook only. The provider id when the event carries one, else our own id (custom_id). */
 export async function sponsorCampaignForBilling(
   tx: TestDb,
   viewer: Viewer,

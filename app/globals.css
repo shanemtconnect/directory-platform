@@ -612,8 +612,12 @@
   @media (min-width: 1280px) {
     .sponsor-rail {
       display: block; position: fixed; top: 50%; transform: translateY(-50%);
-      width: var(--sponsor-rail-w); max-height: calc(100vh - 4rem); overflow: hidden; z-index: 5;
+      width: var(--sponsor-rail-w); z-index: 5;
     }
+    /* No clipping: a card is either rendered or display:none, so the beacon
+       can tell (getClientRects) whether a reader could have seen it. */
+    @media (max-height: 899.98px) { .sponsor-rail .sponsor-card:nth-child(n + 4) { display: none; } }
+    @media (max-height: 699.98px) { .sponsor-rail .sponsor-card:nth-child(n + 3) { display: none; } }
     .sponsor-rail-left { left: max(0.75rem, calc((100vw - 72rem) / 2 - var(--sponsor-rail-w) - var(--sponsor-rail-gap))); }
     .sponsor-rail-right { right: max(0.75rem, calc((100vw - 72rem) / 2 - var(--sponsor-rail-w) - var(--sponsor-rail-gap))); }
     /* Make room: the container narrows until the viewport is wide enough for both. */

@@ -148,6 +148,22 @@ describe("advertiserCampaigns / updateSponsorCampaign — owner scoped", () => {
     });
   });
 
+  it("an edit to a paused campaign keeps the admin's pause (I6)", async () => {
+    await withTestDb(async (tx) => {
+      const a = await makePerson(tx);
+      const id = await approved(tx, a.viewer, a.profileId);
+      await decideSponsorCampaign(tx, ADMIN_VIEWER, id, { decision: "pause", ip: IP });
+      const patch = { campaignId: id, profileId: a.profileId, title: "t2", blurb: "b2", targetUrl: "https://acme.example/", ip: IP };
+      expect(await updateSponsorCampaign(tx, a.viewer, patch)).toBe("updated");
+      const [row] = await tx.select().from(sponsorCampaigns).where(eq(sponsorCampaigns.id, id));
+      expect(row).toMatchObject({ title: "t2", status: "paused" });
+      const pendingOne = await created(tx, a.viewer, a.profileId);
+      expect(await updateSponsorCampaign(tx, a.viewer, { ...patch, campaignId: pendingOne })).toBe("updated");
+      const [p] = await tx.select().from(sponsorCampaigns).where(eq(sponsorCampaigns.id, pendingOne));
+      expect(p!.status).toBe("pending");
+    });
+  });
+
   it("refuses an invalid edit and an edit to an ended campaign", async () => {
     await withTestDb(async (tx) => {
       const a = await makePerson(tx);

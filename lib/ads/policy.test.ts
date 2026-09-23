@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AD_PLACEMENTS, type AdPlacement, type AdsConfig } from "@/config/types";
 import { siteConfig } from "@/config/site.config";
-import { decideSponsorRails, type PageListing, type RailsDecision } from "./policy";
+import { decideSponsorRails, placementForScope, type PageListing, type RailsDecision } from "./policy";
 
 const ON: AdsConfig = { ...siteConfig.ads, enabled: true };
 const OFF: AdsConfig = { ...siteConfig.ads, enabled: false };
@@ -93,12 +93,26 @@ describe("decideSponsorRails — the config rule table", () => {
     expect(decideSponsorRails({ placement: "home", listing: null, config: rules({ home: "always" }), env: PROD })).toBe("off");
   });
 
-  it("'always' on a listing page ignores the tier; 'never' on a pillar hides it", () => {
-    expect(decideSponsorRails({ placement: "listingDetail", listing: PAID, config: rules({ listingDetail: "always" }), env: PROD })).toBe("show");
+  it("a paid or verified listing page is never a placement, even when a clone's config says always", () => {
+    for (const listing of [PAID, FREE_VERIFIED, PREMIUM_VERIFIED]) {
+      expect(decideSponsorRails({ placement: "listingDetail", listing, config: rules({ listingDetail: "always" }), env: PROD })).toBe("off");
+    }
+    expect(decideSponsorRails({ placement: "listingDetail", listing: FREE_CLAIMED, config: rules({ listingDetail: "always" }), env: PROD })).toBe("show");
     expect(decideSponsorRails({ placement: "cityPillar", listing: null, config: rules({ cityPillar: "never" }), env: PROD })).toBe("off");
   });
 
   it("'unpaid-only' on a page without a listing is off", () => {
     expect(decideSponsorRails({ placement: "search", listing: null, config: rules({ search: "unpaid-only" }), env: PROD })).toBe("off");
+  });
+});
+
+describe("placementForScope", () => {
+  it.each([
+    [{ type: "city", cityId: "c" }, "cityPillar"],
+    [{ type: "city-category", cityId: "c", categoryId: "k" }, "categoryPillar"],
+    [{ type: "vertical", verticalId: "v" }, "categoryPillar"],
+    [{ type: "vertical-area", verticalId: "v", areaId: "a" }, "categoryPillar"],
+  ] as const)("%j → %s", (scope, placement) => {
+    expect(placementForScope(scope)).toBe(placement);
   });
 });

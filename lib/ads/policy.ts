@@ -1,5 +1,6 @@
 import { siteConfig } from "@/config/site.config";
 import type { AdPlacement, AdsConfig, TierName } from "@/config/types";
+import type { PillarScope } from "@/lib/routing/scope";
 
 /**
  * Whether a sponsor rail renders on a page, and as what.
@@ -68,8 +69,28 @@ export function decideSponsorRails(input: RailsInput): RailsDecision {
 
   const rule = config.placements[input.placement];
   if (rule === "never") return "off";
-  if (rule === "unpaid-only") {
+  if (input.placement === "listingDetail") {
+    // A product rule, not a clone knob: the owner of a paid or verified page
+    // bought that page. "always" here means every unpaid listing.
+    if (input.listing === null || !isUnpaidListing(input.listing)) return "off";
+  } else if (rule === "unpaid-only") {
     if (input.listing === null || !isUnpaidListing(input.listing)) return "off";
   }
   return env.SITE_ENV === "production" ? "show" : "placeholder";
+}
+
+/**
+ * Which placement a pillar page is (I2). A city page is the town pillar; a
+ * city × category page, a vertical page and a vertical × area page all list
+ * one kind of business, which is what "type pages" means to an advertiser.
+ */
+export function placementForScope(scope: PillarScope): AdPlacement {
+  switch (scope.type) {
+    case "city":
+      return "cityPillar";
+    case "city-category":
+    case "vertical":
+    case "vertical-area":
+      return "categoryPillar";
+  }
 }
