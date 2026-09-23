@@ -5,6 +5,8 @@ import { siteConfig } from "@/config/site.config";
 import { sanitiseRichText } from "@/lib/html/sanitise";
 import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
+import { FeaturedRow } from "./FeaturedRow";
+import type { FeaturedListing } from "@/lib/db/queries/spots";
 import { ListingMap } from "@/components/map/ListingMap";
 
 
@@ -13,6 +15,8 @@ export interface FaqEntry { question: string; answer: string }
 interface Props {
   heading: PillarHeading;
   featured: Listing[];
+  /** The spot's featured bids (lib/spots), page 1 only. Not in `listings`. */
+  featuredBids?: readonly FeaturedListing[];
   listings: Listing[];
   categories: CategoryIndexRow[];
   nearby: CityIndexRow[];
@@ -40,7 +44,7 @@ interface Props {
  *    what is visibly on the page
  */
 export function PillarPage({
-  heading, featured, listings, categories, nearby, faq,
+  heading, featured, featuredBids = [], listings, categories, nearby, faq,
   total, page, totalPages, basePath, cityPath,
 }: Props) {
   const e = siteConfig.entity;
@@ -68,6 +72,16 @@ export function PillarPage({
           // still be sure — and the editor that will write this copy next has
           // not been built yet.
           dangerouslySetInnerHTML={{ __html: sanitiseRichText(heading.introHtml) }}
+        />
+      )}
+
+      {/* Paid featured spots, above everything organic. Empty spot: no row. */}
+      {isFirstPage && (
+        <FeaturedRow
+          featured={featuredBids}
+          nounPlural={heading.nounPlural}
+          place={heading.place}
+          cityPath={cityPath}
         />
       )}
 

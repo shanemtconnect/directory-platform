@@ -22,6 +22,8 @@ import {
 } from "@/lib/db/queries/reviews";
 import { ReviewsPage } from "@/components/reviews/ReviewsPage";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
+import { featuredForScope } from "@/lib/db/queries/spots";
+import { excludeFeatured } from "@/lib/spots/grid";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
@@ -247,12 +249,18 @@ export default async function CatchAllPage({ params }: Props) {
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
 
-      const [rows, total, categories, nearby] = await Promise.all([
+      const [rows, total, categories, nearby, featuredBids] = await Promise.all([
         listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
         countListings(db as never, PUBLIC_VIEWER, result.scope),
         cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+        // Page 1 only: the paid row sits above the grid and nowhere else.
+        result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
       ]);
+
+      // A featured listing is not listed twice. The ItemList below keeps
+      // every row it is handed — the featured cards are on the page too.
+      const grid = excludeFeatured(rows, featuredBids);
 
       const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
       // A page number past the end has nothing on it and must not be a soft 404
@@ -298,7 +306,8 @@ export default async function CatchAllPage({ params }: Props) {
           <PillarPage
             heading={heading}
             featured={featured}
-            listings={rows}
+            featuredBids={featuredBids}
+            listings={grid}
             categories={categories}
             nearby={nearby}
             faq={faq}

@@ -10,8 +10,8 @@ import { StatsBeacon } from "@/components/stats/StatsBeacon";
  * and would poison the ISR cache for everyone who sees it afterwards.
  */
 export function ListingCard({
-  listing, basePath, featured = false,
-}: { listing: Listing; basePath: string; featured?: boolean }) {
+  listing, basePath, featured = false, position,
+}: { listing: Listing; basePath: string; featured?: boolean; position?: number }) {
   const tier = siteConfig.tiers[listing.tier];
   const summary =
     tier.descriptionDisplay === "full"
@@ -23,8 +23,18 @@ export function ListingCard({
       data-tier={listing.tier}
       data-claim-status={listing.claimStatus}
       data-featured={featured}
+      data-position={position}
       className={`card card-hover flex flex-col gap-2 ${featured ? "border-primary" : ""}`}
     >
+      {/* The word, not the border: a paid placement is disclosed as one. */}
+      {featured && (
+        <span
+          data-testid="featured-label"
+          className="inline-flex w-fit items-center rounded-full bg-accent px-2 py-0.5 text-xs font-semibold text-ink"
+        >
+          Featured
+        </span>
+      )}
       {/* The name is the whole click target and the first anchor in the card —
           both the crawl and the e2e suite read it as the listing's link. */}
       <a

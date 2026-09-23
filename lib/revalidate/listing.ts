@@ -23,3 +23,18 @@ import { revalidatePath } from "next/cache";
 export function revalidateListingPaths(paths: readonly string[]): void {
   for (const path of new Set(paths)) revalidatePath(path);
 }
+
+/**
+ * The pages a featured spot's ranking appears on — its city pillar, its
+ * category pillar or its region page — from `spotPaths` in
+ * lib/db/queries/spots.ts. Server actions call it after their transaction
+ * has committed, for the same reason as `revalidateListingPaths` above.
+ */
+export async function revalidateSpotPaths(spotIds: readonly string[]): Promise<void> {
+  const { db } = await import("@/lib/db/client");
+  const { spotPaths } = await import("@/lib/db/queries/spots");
+  const { PUBLIC_VIEWER } = await import("@/lib/db/viewer");
+  const paths: string[] = [];
+  for (const id of new Set(spotIds)) paths.push(...(await spotPaths(db, PUBLIC_VIEWER, id)));
+  revalidateListingPaths(paths);
+}
