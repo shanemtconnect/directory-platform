@@ -2,6 +2,9 @@ import type { RegionPage, RegionListingRow, RegionCategoryRow } from "@/lib/db/q
 import { siteConfig } from "@/config/site.config";
 import { Pagination } from "@/components/pillar/Pagination";
 import { Breadcrumbs, type Crumb } from "@/components/seo/Breadcrumbs";
+import { FeaturedRow } from "@/components/pillar/FeaturedRow";
+import { FeaturedUpsell } from "@/components/pillar/FeaturedUpsell";
+import type { FeaturedListing } from "@/lib/db/queries/spots";
 
 interface Props {
   region: RegionPage;
@@ -10,6 +13,8 @@ interface Props {
   /** Rendered on page 1 only; see lib/areas/intro.ts. */
   intro: string;
   listings: RegionListingRow[];
+  /** The region spot's featured bids (lib/spots, Task 45), page 1 only. Not listed twice. */
+  featuredBids?: readonly FeaturedListing[];
   categories: RegionCategoryRow[];
   total: number;
   page: number;
@@ -29,10 +34,13 @@ interface Props {
  * they are on every page of a city pillar: page 2 is a landing page too.
  */
 export function RegionPillar({
-  region, trail, title, intro, listings, categories, total, page, totalPages, basePath,
+  region, trail, title, intro, listings, featuredBids = [], categories, total, page, totalPages, basePath,
 }: Props) {
   const e = siteConfig.entity;
   const isFirstPage = page === 1;
+  // A featured listing is above the grid, so it is not in it as well.
+  const featuredIds = new Set(featuredBids.map((f) => f.id));
+  const grid = listings.filter((r) => !featuredIds.has(r.listing.id));
 
   return (
     <main>
@@ -71,15 +79,27 @@ export function RegionPillar({
         </section>
       )}
 
+      {isFirstPage && featuredBids.length > 0 && (
+        <FeaturedRow featured={featuredBids} nounPlural={e.plural} place={region.name} />
+      )}
+      {isFirstPage && (
+        <FeaturedUpsell
+          spotKey={`region:${region.slug}:-`}
+          nounSingular={e.singular}
+          locale={siteConfig.locale}
+          currency={siteConfig.currency}
+        />
+      )}
+
       <section aria-labelledby="all">
         <h2 id="all">
           {total} {total === 1 ? e.singular : e.plural} in {region.name}
         </h2>
-        {listings.length === 0 ? (
+        {grid.length === 0 ? (
           <p>No {e.plural} listed in {region.name} yet.</p>
         ) : (
           <ul data-testid="listing-grid" className="card-grid">
-            {listings.map((r) => (
+            {grid.map((r) => (
               <li
                 key={r.listing.id}
                 data-tier={r.listing.tier}

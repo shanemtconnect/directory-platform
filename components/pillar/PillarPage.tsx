@@ -6,6 +6,7 @@ import { sanitiseRichText } from "@/lib/html/sanitise";
 import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
 import { FeaturedRow } from "./FeaturedRow";
+import { FeaturedUpsell } from "./FeaturedUpsell";
 import type { FeaturedListing } from "@/lib/db/queries/spots";
 import { ListingMap } from "@/components/map/ListingMap";
 
@@ -33,6 +34,8 @@ interface Props {
   cityPath: string;
   /** Award years per listing id (Task 50), read by the route from the `awards` table. */
   awardYears?: ReadonlyMap<string, readonly number[]>;
+  /** The page's featured spot as `areaKind:areaId:categoryId|-` (Task 45): mounts the owner upsell strip. */
+  spotKey?: string;
 }
 
 /**
@@ -47,7 +50,7 @@ interface Props {
  */
 export function PillarPage({
   heading, featured, featuredBids = [], listings, categories, nearby, faq,
-  total, page, totalPages, basePath, cityPath, awardYears,
+  total, page, totalPages, basePath, cityPath, awardYears, spotKey,
 }: Props) {
   const e = siteConfig.entity;
   const isFirstPage = page === 1;
@@ -86,6 +89,18 @@ export function PillarPage({
           featured={featuredBids}
           nounPlural={heading.nounPlural}
           place={heading.place}
+        />
+      )}
+
+      {/* Client-side, outside the cached tree's knowledge of who is looking:
+          renders nothing unless the visitor owns a listing on this page that
+          is not featured here (Task 45). Page 1, where the row is. */}
+      {isFirstPage && spotKey !== undefined && (
+        <FeaturedUpsell
+          spotKey={spotKey}
+          nounSingular={heading.nounSingular}
+          locale={siteConfig.locale}
+          currency={siteConfig.currency}
         />
       )}
 

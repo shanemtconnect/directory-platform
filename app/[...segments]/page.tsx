@@ -337,6 +337,11 @@ export default async function CatchAllPage({ params }: Props) {
             basePath={basePath}
             cityPath={cityPath}
             awardYears={awardYears}
+            spotKey={
+              cityId === null
+                ? undefined
+                : `city:${cityId}:${result.scope.type === "city-category" ? result.scope.categoryId : "-"}`
+            }
           />
         </>
       );

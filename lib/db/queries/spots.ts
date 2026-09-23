@@ -5,12 +5,16 @@ import {
   categories,
   cities,
   featuredBids,
+  featuredClicksDaily,
   featuredSpots,
   featuredSubscriptions,
   listingCategories,
   listings,
+  profiles,
   slugs,
   subscriptions,
+  unsubscribes,
+  user,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import { ensureProfile } from "@/lib/auth/profile";
@@ -19,7 +23,10 @@ import type { TestDb } from "@/lib/db/types";
 import type { PillarScope } from "@/lib/routing/scope";
 import { slugify } from "@/lib/routing/slugify";
 import type { BidStatus, ChargeableBid, RankableBid, RankedBid } from "@/lib/spots/rank";
+import type { FeaturedClickDelta } from "@/lib/spots/clicks";
+import { dayKey, isDayKey } from "@/lib/stats/keys";
 import { writeAuditAs } from "./audit";
+import { notifySpotClosed } from "@/lib/email/notify";
 import { LIVE_SUBSCRIPTION_STATUSES } from "./billing";
 import { publicListingColumns, publishedListings, type PublicListing } from "./listings";
 
@@ -827,6 +834,8 @@ export interface FeaturedListing extends PublicListing {
   readonly position: number;
   /** The listing's OWN city — a listing featured on another town's page still links home. */
   readonly citySlug: string;
+  /** The spot the position is in: the click beacon and the leaderboard link name it (Task 45). */
+  readonly spotId: string;
 }
 
 /**
@@ -840,34 +849,14 @@ export async function featuredForScope(
   viewer: Viewer,
   scope: PillarScope,
 ): Promise<FeaturedListing[]> {
-  let key: SpotKey;
   switch (scope.type) {
     case "city":
-      key = citySpotKey(scope.cityId, null);
-      break;
+      return featuredForSpotKey(tx, viewer, citySpotKey(scope.cityId, null));
     case "city-category":
-      key = citySpotKey(scope.cityId, scope.categoryId);
-      break;
+      return featuredForSpotKey(tx, viewer, citySpotKey(scope.cityId, scope.categoryId));
     default:
       return [];
   }
-  const rows = await tx
-    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug })
-    .from(featuredBids)
-    .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
-    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
-    .innerJoin(cities, eq(cities.id, listings.cityId))
-    .where(
-      and(
-        keyWhere(key),
-        eq(featuredSpots.status, "open"),
-        eq(featuredBids.status, "active"),
-        isNotNull(featuredBids.position),
-        publishedListings(viewer),
-      ),
-    )
-    .orderBy(asc(featuredBids.position));
-  return rows.map((r) => ({ ...r, position: r.position as number }));
 }
 
 /**
@@ -1093,4 +1082,654 @@ export async function recentRaiseExpiry(
     .orderBy(desc(auditLog.createdAt))
     .limit(1);
   return row?.at ?? null;
+}
+
+/* -------------------------------------------------- appended: Task 45 notify */
+
+/**
+ * Claims the right to email the owner about this bid: true when the bid has
+ * not been notified within the window, in which case the mark is set to now.
+ * One UPDATE, so two re-ranks in one instant cannot both claim it.
+ */
+export async function markOutbidNotified(
+  tx: TestDb,
+  viewer: Viewer,
+  bidId: string,
+  windowMs: number,
+): Promise<boolean> {
+  assertWorker(viewer);
+  const at = now();
+  const since = new Date(at.getTime() - windowMs);
+  const rows = await tx
+    .update(featuredBids)
+    .set({ outbidNotifiedAt: at, updatedAt: at })
+    .where(
+      and(
+        eq(featuredBids.id, bidId),
+        or(sql`${featuredBids.outbidNotifiedAt} is null`, lt(featuredBids.outbidNotifiedAt, since)),
+      ),
+    )
+    .returning({ id: featuredBids.id });
+  return rows.length > 0;
+}
+
+export interface OutbidNotification {
+  readonly bidId: string;
+  readonly listingId: string;
+  readonly listingName: string;
+  readonly ownerEmail: string | null;
+  readonly status: BidStatus;
+  readonly position: number | null;
+  readonly amountCents: number;
+  readonly spot: SpotRow;
+  readonly spotKey: SpotKey;
+  readonly areaName: string;
+  readonly categoryName: string | null;
+  /** The OTHER listings' featured amounts, highest first — what the minimums derive from. */
+  readonly featuredOthers: number[];
+}
+
+/**
+ * Everything the outbid email needs, re-read at send time: the bid as it
+ * stands now, the owner's account address, and the spot's standing.
+ */
+export async function outbidNotification(
+  tx: TestDb,
+  viewer: Viewer,
+  bidId: string,
+): Promise<OutbidNotification | null> {
+  assertWorker(viewer);
+  if (!UUID.test(bidId)) return null;
+  const [row] = await tx
+    .select({
+      bidId: featuredBids.id,
+      spotId: featuredBids.spotId,
+      listingId: featuredBids.listingId,
+      listingName: listings.name,
+      ownerEmail: user.email,
+      status: featuredBids.status,
+      position: featuredBids.position,
+      amountCents: featuredBids.amountCents,
+    })
+    .from(featuredBids)
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .leftJoin(profiles, eq(profiles.id, listings.ownerId))
+    .leftJoin(user, eq(user.id, profiles.userId))
+    .where(eq(featuredBids.id, bidId))
+    .limit(1);
+  if (!row) return null;
+  const spot = await spotById(tx, viewer, row.spotId);
+  if (spot === null) return null;
+  const key: SpotKey = { areaKind: spot.areaKind, areaId: spot.areaId, categoryId: spot.categoryId };
+  const [area] = await describeSpotKeys(tx, viewer, [key]);
+  const bids = await spotBids(tx, viewer, spot.id);
+  return {
+    bidId: row.bidId,
+    listingId: row.listingId,
+    listingName: row.listingName,
+    ownerEmail: row.ownerEmail?.trim() ? row.ownerEmail : null,
+    status: row.status as BidStatus,
+    position: row.position,
+    amountCents: row.amountCents,
+    spot,
+    spotKey: key,
+    areaName: area?.areaName ?? spot.areaId,
+    categoryName: area?.categoryName ?? null,
+    featuredOthers: bids
+      .filter((b) => b.listingId !== row.listingId && b.status === "active" && b.position !== null)
+      .map((b) => b.amountCents)
+      .sort((a, b) => b - a),
+  };
+}
+
+/* --------------------------------------------- appended: Task 45 availability */
+
+export interface SystemListing extends BiddingListing {
+  readonly ownerEmail: string | null;
+}
+
+/**
+ * `listingForBidding` for the system: no owner in the loop, the owner's
+ * account address alongside. Same eligibility rule, so the digest writes
+ * only to listings that could actually bid.
+ */
+export async function listingForSystem(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<SystemListing | null> {
+  assertWorker(viewer);
+  if (!UUID.test(listingId)) return null;
+  const [row] = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      status: listings.status,
+      claimStatus: listings.claimStatus,
+      primaryCategoryId: listings.primaryCategoryId,
+      cityId: listings.cityId,
+      cityName: cities.name,
+      citySlug: cities.slug,
+      region: cities.region,
+      ownerEmail: user.email,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(profiles, eq(profiles.id, listings.ownerId))
+    .leftJoin(user, eq(user.id, profiles.userId))
+    .where(eq(listings.id, listingId))
+    .limit(1);
+  if (!row) return null;
+  const extra = await tx
+    .select({ categoryId: listingCategories.categoryId })
+    .from(listingCategories)
+    .where(eq(listingCategories.listingId, row.id));
+  const categoryIds = [row.primaryCategoryId, ...extra.map((c) => c.categoryId).filter((c) => c !== row.primaryCategoryId)];
+  const [live] = await tx
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.listingId, row.id),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        inArray(subscriptions.tier, ["essential", "premium"]),
+      ),
+    )
+    .limit(1);
+  const reason: IneligibleReason | null =
+    row.status !== "published" ? "not-published" : row.claimStatus !== "verified" ? "not-verified" : live === undefined ? "no-subscription" : null;
+  return {
+    id: row.id,
+    name: row.name,
+    cityId: row.cityId,
+    cityName: row.cityName,
+    citySlug: row.citySlug,
+    cityPath: `/${row.citySlug}`,
+    region: row.region,
+    categoryIds,
+    eligible: reason === null,
+    reason,
+    ownerEmail: row.ownerEmail?.trim() ? row.ownerEmail : null,
+  };
+}
+
+/** Every listing the digest may write to: published, Verified, on a live paid plan, with an owner address. */
+export async function eligibleListingIds(tx: TestDb, viewer: Viewer): Promise<string[]> {
+  assertWorker(viewer);
+  const rows = await tx
+    .selectDistinct({ id: listings.id })
+    .from(listings)
+    .innerJoin(profiles, eq(profiles.id, listings.ownerId))
+    .innerJoin(user, eq(user.id, profiles.userId))
+    .innerJoin(subscriptions, eq(subscriptions.listingId, listings.id))
+    .where(
+      and(
+        eq(listings.status, "published"),
+        eq(listings.claimStatus, "verified"),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        inArray(subscriptions.tier, ["essential", "premium"]),
+        sql`nullif(trim(${user.email}), '') is not null`,
+      ),
+    )
+    .orderBy(asc(listings.id));
+  return rows.map((r) => r.id);
+}
+
+/** Whether this address has opted out of marketing mail (`unsubscribes`). */
+export async function isUnsubscribed(tx: TestDb, viewer: Viewer, email: string): Promise<boolean> {
+  assertWorker(viewer);
+  const [row] = await tx
+    .select({ id: unsubscribes.id })
+    .from(unsubscribes)
+    .where(eq(unsubscribes.addressNormalised, email.trim().toLowerCase()))
+    .limit(1);
+  return row !== undefined;
+}
+
+/** Every spot row there is, for the admin table. */
+export async function allSpots(tx: TestDb, viewer: Viewer): Promise<SpotRow[]> {
+  assertWorker(viewer);
+  const rows = await tx.select(spotColumns).from(featuredSpots).orderBy(asc(featuredSpots.areaKind), asc(featuredSpots.areaId));
+  return rows.map(toSpot);
+}
+
+export interface SpotFill {
+  readonly filled: number;
+  readonly topCents: number | null;
+}
+
+/** Per spot: how many positions are held and the highest featured amount. */
+export async function spotFills(tx: TestDb, viewer: Viewer): Promise<Map<string, SpotFill>> {
+  assertWorker(viewer);
+  const rows = await tx
+    .select({
+      spotId: featuredBids.spotId,
+      filled: sql<number>`count(*)::int`,
+      topCents: sql<number | null>`max(${featuredBids.amountCents})::int`,
+    })
+    .from(featuredBids)
+    .where(and(eq(featuredBids.status, "active"), isNotNull(featuredBids.position)))
+    .groupBy(featuredBids.spotId);
+  return new Map(rows.map((r) => [r.spotId, { filled: r.filled, topCents: r.topCents }]));
+}
+
+export interface PublishedCityArea {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly region: string | null;
+}
+
+/** Published cities with their region — the areas an empty spot can be virtual for. */
+export async function publishedCityAreas(tx: TestDb, viewer: Viewer): Promise<PublishedCityArea[]> {
+  assertWorker(viewer);
+  return tx
+    .select({ id: cities.id, name: cities.name, slug: cities.slug, region: cities.region })
+    .from(cities)
+    .where(eq(cities.isPublished, true))
+    .orderBy(asc(cities.name));
+}
+
+/** Whether the monthly digest has already been queued for this `YYYY-MM` (its audit mark). */
+export async function digestSentForMonth(tx: TestDb, viewer: Viewer, month: string): Promise<boolean> {
+  assertWorker(viewer);
+  const [row] = await tx
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "spots.digest_sent"), sql`${auditLog.meta}->>'month' = ${month}`))
+    .limit(1);
+  return row !== undefined;
+}
+
+/* ---------------------------------------------- appended: Task 45 clicks */
+
+/** Additive upsert; a delta for a spot or listing that is gone is dropped, not fatal. */
+export async function applyFeaturedClickDeltas(
+  tx: TestDb,
+  viewer: Viewer,
+  deltas: readonly FeaturedClickDelta[],
+): Promise<number> {
+  assertWorker(viewer);
+  const valid = deltas.filter((d) => UUID.test(d.spotId) && UUID.test(d.listingId) && isDayKey(d.day) && d.clicks > 0);
+  if (valid.length === 0) return 0;
+  const rows = sql.join(
+    valid.map((d) => sql`(${d.spotId}::uuid, ${d.listingId}::uuid, ${d.day}::date, ${Math.trunc(d.clicks)}::int)`),
+    sql`, `,
+  );
+  const written = (await tx.execute(sql`
+    insert into featured_clicks_daily (spot_id, listing_id, day, clicks)
+    select v.spot_id, v.listing_id, v.day, v.clicks
+      from (values ${rows}) as v(spot_id, listing_id, day, clicks)
+      join featured_spots s on s.id = v.spot_id
+      join listings l on l.id = v.listing_id
+    on conflict (spot_id, listing_id, day) do update set
+      clicks     = featured_clicks_daily.clicks + excluded.clicks,
+      updated_at = now()
+    returning featured_clicks_daily.id
+  `)) as unknown as unknown[];
+  return written.length;
+}
+
+/**
+ * The owner's featured clicks per spot over the last `days` days. Scoped by
+ * the listing's owner (constraint 24): somebody else's listing reads as an
+ * empty map.
+ */
+export async function featuredClicksForListing(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string; days: number },
+  at: Date = now(),
+): Promise<Map<string, number>> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return new Map();
+  const since = new Date(at.getTime() - input.days * 24 * 60 * 60 * 1000);
+  const rows = await tx
+    .select({ spotId: featuredClicksDaily.spotId, clicks: sql<number>`sum(${featuredClicksDaily.clicks})::int` })
+    .from(featuredClicksDaily)
+    .innerJoin(listings, eq(listings.id, featuredClicksDaily.listingId))
+    .where(
+      and(
+        eq(featuredClicksDaily.listingId, input.listingId),
+        eq(listings.ownerId, input.profileId),
+        gte(featuredClicksDaily.day, dayKey(since)),
+      ),
+    )
+    .groupBy(featuredClicksDaily.spotId);
+  return new Map(rows.map((r) => [r.spotId, r.clicks]));
+}
+
+/* ------------------------------------------ appended: Task 45 leaderboard */
+
+/** The featured row for any spot key — the region page's mount and the leaderboard share it. */
+export async function featuredForSpotKey(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+): Promise<FeaturedListing[]> {
+  const rows = await tx
+    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug, spotId: featuredSpots.id })
+    .from(featuredBids)
+    .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(
+      and(
+        keyWhere(key),
+        eq(featuredSpots.status, "open"),
+        eq(featuredBids.status, "active"),
+        isNotNull(featuredBids.position),
+        publishedListings(viewer),
+      ),
+    )
+    .orderBy(asc(featuredBids.position));
+  return rows.map((r) => ({ ...r, position: r.position as number }));
+}
+
+export interface LeaderboardEntry {
+  readonly position: number;
+  readonly name: string;
+  readonly slug: string;
+  readonly citySlug: string;
+}
+
+export interface SpotLeaderboard {
+  readonly spot: SpotRow;
+  readonly areaName: string;
+  readonly categoryName: string | null;
+  /** The public page the spot sits on, when it can be named. */
+  readonly path: string | null;
+  /** Position order; published listings only; NO amounts. */
+  readonly featured: LeaderboardEntry[];
+}
+
+/**
+ * The public leaderboard: positions and names, nothing about money. A
+ * closed spot still answers (the page says it is closed); a spot that does
+ * not exist is null.
+ */
+export async function spotLeaderboard(
+  tx: TestDb,
+  viewer: Viewer,
+  spotId: string,
+): Promise<SpotLeaderboard | null> {
+  const spot = await spotById(tx, viewer, spotId);
+  if (spot === null) return null;
+  const key: SpotKey = { areaKind: spot.areaKind, areaId: spot.areaId, categoryId: spot.categoryId };
+  const [area] = await describeSpotKeys(tx, viewer, [key]);
+  const rows = await tx
+    .select({ position: featuredBids.position, name: listings.name, slug: listings.slug, citySlug: cities.slug })
+    .from(featuredBids)
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .where(
+      and(
+        eq(featuredBids.spotId, spot.id),
+        eq(featuredBids.status, "active"),
+        isNotNull(featuredBids.position),
+        publishedListings(viewer),
+      ),
+    )
+    .orderBy(asc(featuredBids.position));
+  return {
+    spot,
+    areaName: area?.areaName ?? spot.areaId,
+    categoryName: area?.categoryName ?? null,
+    path: (await spotPaths(tx, viewer, spot.id))[0] ?? null,
+    featured: rows.map((r) => ({ position: r.position as number, name: r.name, slug: r.slug, citySlug: r.citySlug })),
+  };
+}
+
+/* ----------------------------------------------- appended: Task 45 upsell */
+
+export interface UpsellCandidate {
+  readonly listingId: string;
+  readonly listingName: string;
+  /** The cheapest bid that would take a position now, in minor units. */
+  readonly fromCents: number;
+}
+
+/**
+ * The signed-in owner's listing that belongs on this page but is not
+ * featured on it: the first of the viewer's eligible listings in the area
+ * (and category, for a category spot) with no active positioned bid on the
+ * spot. Null for anybody with nothing to be upsold — which is what the
+ * public strip renders as nothing.
+ */
+export async function upsellCandidate(
+  tx: TestDb,
+  viewer: Viewer,
+  profileId: string,
+  key: SpotKey,
+): Promise<UpsellCandidate | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(profileId)) return null;
+  const rows = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      cityId: listings.cityId,
+      region: cities.region,
+      primaryCategoryId: listings.primaryCategoryId,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .innerJoin(subscriptions, eq(subscriptions.listingId, listings.id))
+    .where(
+      and(
+        eq(listings.ownerId, profileId),
+        eq(listings.status, "published"),
+        eq(listings.claimStatus, "verified"),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        inArray(subscriptions.tier, ["essential", "premium"]),
+      ),
+    )
+    .orderBy(asc(listings.createdAt));
+  const inArea = rows.filter((r) =>
+    key.areaKind === "city" ? r.cityId === key.areaId : r.region !== null && slugify(r.region) === key.areaId,
+  );
+  if (inArea.length === 0) return null;
+  const spot = await findSpot(tx, viewer, key);
+  const bids = spot === null ? [] : await spotBids(tx, viewer, spot.id);
+  const featured = bids.filter((b) => b.status === "active" && b.position !== null);
+  for (const r of inArea) {
+    if (key.categoryId !== null && r.primaryCategoryId !== key.categoryId) {
+      const [extra] = await tx
+        .select({ id: listingCategories.listingId })
+        .from(listingCategories)
+        .where(and(eq(listingCategories.listingId, r.id), eq(listingCategories.categoryId, key.categoryId)))
+        .limit(1);
+      if (extra === undefined) continue;
+    }
+    if (featured.some((b) => b.listingId === r.id)) continue;
+    const positions = spot?.positions ?? siteConfig.featured.positions;
+    const floorCents = spot?.floorCents ?? floorCentsFor(key.areaKind);
+    const lowest = featured.length === 0 ? null : Math.min(...featured.map((b) => b.amountCents));
+    const fromCents =
+      lowest === null || featured.length < positions ? floorCents : Math.max(floorCents, lowest + UNIT_CENTS_LOCAL);
+    return { listingId: r.id, listingName: r.name, fromCents };
+  }
+  return null;
+}
+
+/** One major unit; `lib/spots/rank.ts` owns the constant, repeated here to keep this module free of that import at load. */
+const UNIT_CENTS_LOCAL = 100;
+
+/* ---------------------------------------------- appended: Task 45 history */
+
+export interface BidHistoryEntry {
+  readonly at: Date;
+  /** `spots.bid_placed`, `spots.bid_raise_requested`, `spots.bid_lowered`, `spots.bid_cancelled`, `spots.raise_withdrawn`, `spots.raise_expired`. */
+  readonly action: string;
+  readonly bidId: string;
+  readonly key: SpotKey;
+  /** The amount the row recorded, when it did. */
+  readonly amountCents: number | null;
+  readonly meta: Record<string, unknown>;
+}
+
+/**
+ * The owner's bid history: every audit row written against one of the
+ * listing's bids (cancelled ones included), newest first. Scoped by the
+ * listing's owner (constraint 24).
+ */
+export async function bidHistory(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string; limit?: number },
+): Promise<BidHistoryEntry[]> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return [];
+  const rows = await tx
+    .select({
+      at: auditLog.createdAt,
+      action: auditLog.action,
+      bidId: featuredBids.id,
+      meta: auditLog.meta,
+      areaKind: featuredSpots.areaKind,
+      areaId: featuredSpots.areaId,
+      categoryId: featuredSpots.categoryId,
+    })
+    .from(auditLog)
+    .innerJoin(featuredBids, eq(featuredBids.id, auditLog.entityId))
+    .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .where(
+      and(
+        eq(auditLog.entityType, "featured_bid"),
+        eq(featuredBids.listingId, input.listingId),
+        eq(listings.ownerId, input.profileId),
+      ),
+    )
+    .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+    .limit(input.limit ?? 50);
+  return rows.map((r) => {
+    const meta = (r.meta ?? {}) as Record<string, unknown>;
+    const amount = [meta.amountCents, meta.pendingAmountCents].find((v): v is number => typeof v === "number") ?? null;
+    return {
+      at: r.at,
+      action: r.action,
+      bidId: r.bidId,
+      key: { areaKind: r.areaKind as AreaKind, areaId: r.areaId, categoryId: r.categoryId },
+      amountCents: amount,
+      meta,
+    };
+  });
+}
+
+/* ------------------------------------------------ appended: Task 45 admin */
+
+export type AdminSpotResult =
+  | { readonly outcome: "done"; readonly spotId: string; readonly listingIds: string[]; readonly paths: string[] }
+  | { readonly outcome: "not-allowed" };
+
+/**
+ * Closes a spot to bidding. Every uncancelled bid on it is cancelled (audit
+ * row each, reason `spot-closed`) so nobody is billed for a row that is not
+ * shown; the caller settles the listings returned so PayPal hears. Creates
+ * the row first when the spot has never been bid on. Admin only, with ip.
+ */
+export async function closeSpot(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+  input: { ip: string | null },
+): Promise<AdminSpotResult> {
+  if (!isAdmin(viewer)) return { outcome: "not-allowed" };
+  const spot = await ensureSpot(tx, viewer, key);
+  const at = now();
+  const rows = await tx
+    .update(featuredBids)
+    .set({ status: "cancelled", position: null, pendingAmountCents: null, cancelledAt: at, updatedAt: at })
+    .where(and(eq(featuredBids.spotId, spot.id), ne(featuredBids.status, "cancelled")))
+    .returning({ id: featuredBids.id, listingId: featuredBids.listingId });
+  const actor = await actorFor(tx, viewer);
+  for (const row of rows) {
+    await writeAuditAs(tx, actor, {
+      entityType: "featured_bid",
+      action: "spots.bid_cancelled",
+      entityId: row.id,
+      meta: { listingId: row.listingId, spotId: spot.id, reason: "spot-closed" },
+      ip: input.ip,
+    });
+  }
+  await tx.update(featuredSpots).set({ status: "closed", updatedAt: at }).where(eq(featuredSpots.id, spot.id));
+  // Every owner whose bid just went is told why (Task 45 I3), one job per listing.
+  for (const listingId of new Set(rows.map((r) => r.listingId))) {
+    await notifySpotClosed(tx, viewer, { listingId, spotId: spot.id });
+  }
+  await writeAuditAs(tx, actor, {
+    entityType: "featured_spot",
+    action: "spots.spot_closed",
+    entityId: spot.id,
+    meta: { key: spotKeyString(key), bidsCancelled: rows.length },
+    ip: input.ip,
+  });
+  return {
+    outcome: "done",
+    spotId: spot.id,
+    listingIds: [...new Set(rows.map((r) => r.listingId))],
+    paths: await spotPaths(tx, viewer, spot.id),
+  };
+}
+
+export async function openSpot(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+  input: { ip: string | null },
+): Promise<AdminSpotResult> {
+  if (!isAdmin(viewer)) return { outcome: "not-allowed" };
+  const spot = await ensureSpot(tx, viewer, key);
+  await tx.update(featuredSpots).set({ status: "open", updatedAt: now() }).where(eq(featuredSpots.id, spot.id));
+  await writeAuditAs(tx, await actorFor(tx, viewer), {
+    entityType: "featured_spot",
+    action: "spots.spot_opened",
+    entityId: spot.id,
+    meta: { key: spotKeyString(key) },
+    ip: input.ip,
+  });
+  return { outcome: "done", spotId: spot.id, listingIds: [], paths: await spotPaths(tx, viewer, spot.id) };
+}
+
+/**
+ * Overrides the floor for one spot. Bids already below the new floor keep
+ * their place — the floor is what a NEW bid must clear — so nobody is
+ * silently unfeatured by an admin edit.
+ */
+export async function setSpotFloor(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+  input: { floorCents: number; ip: string | null },
+): Promise<AdminSpotResult> {
+  if (!isAdmin(viewer)) return { outcome: "not-allowed" };
+  if (!Number.isInteger(input.floorCents) || input.floorCents <= 0) return { outcome: "not-allowed" };
+  const spot = await ensureSpot(tx, viewer, key);
+  await tx.update(featuredSpots).set({ floorCents: input.floorCents, updatedAt: now() }).where(eq(featuredSpots.id, spot.id));
+  await writeAuditAs(tx, await actorFor(tx, viewer), {
+    entityType: "featured_spot",
+    action: "spots.floor_set",
+    entityId: spot.id,
+    meta: { key: spotKeyString(key), from: spot.floorCents, to: input.floorCents },
+    ip: input.ip,
+  });
+  return { outcome: "done", spotId: spot.id, listingIds: [], paths: [] };
+}
+
+/** The listing's most recent bid on a spot the site closed — the amount the owner is told about. */
+export async function spotClosedBid(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; spotId: string },
+): Promise<{ amountCents: number } | null> {
+  assertWorker(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.spotId)) return null;
+  const [row] = await tx
+    .select({ amountCents: featuredBids.amountCents })
+    .from(featuredBids)
+    .where(and(eq(featuredBids.listingId, input.listingId), eq(featuredBids.spotId, input.spotId)))
+    .orderBy(desc(featuredBids.createdAt))
+    .limit(1);
+  return row ?? null;
 }

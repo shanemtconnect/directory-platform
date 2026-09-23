@@ -5,6 +5,7 @@ import { siteConfig } from "@/config/site.config";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { PER_PAGE } from "@/lib/db/queries/listings";
 import { regionBySlug, listRegionListings, countRegionListings, topCategoriesInRegion, type RegionPage, regionRedirect } from "@/lib/db/queries/areas";
+import { featuredForSpotKey } from "@/lib/db/queries/spots";
 import { redirects } from "@/lib/db/schema";
 import { countryProfile } from "@/lib/geo/countries";
 import { JsonLd } from "@/components/seo/JsonLd";
@@ -72,10 +73,15 @@ export default async function RegionRoute({ params }: Props) {
   if (resolved.kind !== "page") notFound();
   const { region, page } = resolved;
 
-  const [rows, total, categories] = await Promise.all([
+  const [rows, total, categories, featuredBids] = await Promise.all([
     listRegionListings(db as never, PUBLIC_VIEWER, region.names, { page }),
     countRegionListings(db as never, PUBLIC_VIEWER, region.names),
     topCategoriesInRegion(db as never, PUBLIC_VIEWER, region.names),
+    // The region spot (lib/spots, Task 45): its key is the region slug, the
+    // same string `spotPaths` answers `/areas/<slug>` for. Page 1 only.
+    page === 1
+      ? featuredForSpotKey(db as never, PUBLIC_VIEWER, { areaKind: "region", areaId: region.slug, categoryId: null })
+      : Promise.resolve([]),
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
@@ -118,6 +124,7 @@ export default async function RegionRoute({ params }: Props) {
         title={title}
         intro={intro}
         listings={rows}
+        featuredBids={featuredBids}
         categories={categories}
         total={total}
         page={page}

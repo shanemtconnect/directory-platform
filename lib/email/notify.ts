@@ -451,3 +451,59 @@ export async function notifySponsorDecided(
   const payload: SponsorJobPayload = { campaignId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SPONSOR_DECIDED, payload });
 }
+
+/* ------------------------------------------------- featured spots (Task 45) */
+
+/**
+ * A bid lost first place or dropped out of the featured positions. The
+ * payload is the bid id, the EVENT (lost first, dropped out) and the amount
+ * it took to get back at that moment; the worker re-reads the bid and the
+ * spot's standing when it runs, so the amount in the email is what it would
+ * take NOW, and a bid that has since regained its place is not written to
+ * at all.
+ */
+export const NOTIFY_SPOT_OUTBID = "notify.spot.outbid";
+/**
+ * The monthly availability digest: one job per verified listing with empty
+ * spots near it, and one for the admin's site-wide table. Both recomputed at
+ * send time; an owner job whose listing no longer has an empty spot sends
+ * nothing.
+ */
+export const NOTIFY_SPOT_DIGEST = "notify.spot.digest";
+/** The site closed a spot the listing had a bid on: the bid is cancelled and the owner is told why. */
+export const NOTIFY_SPOT_CLOSED = "notify.spot.closed";
+NOTIFY_KINDS.push(NOTIFY_SPOT_OUTBID, NOTIFY_SPOT_DIGEST, NOTIFY_SPOT_CLOSED);
+
+export type SpotOutbidJobPayload = {
+  bidId: string;
+  kind: "lost-first" | "dropped-out";
+  /** What it took to get back when the change happened, in minor units. The worker recomputes before sending. */
+  amountCents: number;
+};
+export type SpotDigestJobPayload = { listingId: string } | { admin: true };
+
+export async function notifySpotOutbid(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: SpotOutbidJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_OUTBID, payload });
+}
+
+export async function notifySpotDigest(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: SpotDigestJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_DIGEST, payload });
+}
+
+export type SpotClosedJobPayload = { listingId: string; spotId: string };
+
+export async function notifySpotClosed(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: SpotClosedJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_CLOSED, payload });
+}
