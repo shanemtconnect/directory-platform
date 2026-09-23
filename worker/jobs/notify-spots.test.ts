@@ -78,7 +78,7 @@ describe("notify.spot.outbid", () => {
       const ctx = await makeScaffold(tx);
       const spot = await ensureSpot(tx, { role: "admin", userId: "w" }, citySpotKey(ctx.cityId, null));
       const delta = await bidder(tx, ctx, spot.id, 5000, "Delta Den");
-      await bidder(tx, ctx, spot.id, 6000, "Echo Estate");
+      const echo = await bidder(tx, ctx, spot.id, 6000, "Echo Estate");
       const foxtrot = await bidder(tx, ctx, spot.id, 7000, "Foxtrot Farm");
       await rerankSpots(tx, [spot.id]);
       const golf = await bidder(tx, ctx, spot.id, 9000, "Golf Grange");
@@ -95,13 +95,14 @@ describe("notify.spot.outbid", () => {
       expect(bodyTo(foxtrot.email)).toContain("amount=99");
 
       // A job for Delta that is already stale when it runs — Delta is back
-      // at #1 by then — sends nothing; Golf, who lost first to it, is told.
+      // at #1 by then — sends nothing; Golf (lost first) and Echo (pushed
+      // out by Delta's return) are told.
       sendEmail.mockClear();
       await notifySpotOutbid(tx, { role: "admin", userId: "w" }, { bidId: delta.bidId, kind: "dropped-out" });
       await tx.update(featuredBids).set({ amountCents: 10000 }).where(eq(featuredBids.id, delta.bidId));
       await rerankSpots(tx, [spot.id]);
-      expect(await processNotifications(tx)).toBe(2);
-      expect(sentTo()).toEqual([golf.email]);
+      expect(await processNotifications(tx)).toBe(3);
+      expect(sentTo().sort()).toEqual([echo.email, golf.email].sort());
     });
   });
 });
