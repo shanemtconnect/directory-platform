@@ -5,7 +5,8 @@ import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
 import { ensureProfile } from "@/lib/auth/profile";
 import { ownerListings, type OwnerListing } from "@/lib/db/queries/owner";
-import { ownerUnreadCount } from "@/lib/db/queries/owner";
+import { ownerNextActions, ownerUnreadCount } from "@/lib/db/queries/owner";
+import { nextActionFor } from "./next-action";
 import { claimsForViewer } from "@/lib/db/queries/claims";
 import { listingStats } from "@/lib/db/queries/stats";
 import { UnverifiedEmailBanner } from "@/components/auth/UnverifiedEmailBanner";
@@ -29,32 +30,6 @@ const CLAIM_MESSAGES: Record<string, string> = {
 
 interface Props {
   searchParams: Promise<{ claim?: string }>;
-}
-
-/**
- * The one thing to do next for a listing, worked out from what the dashboard
- * already knows. Unread enquiries always win: they are the only item here
- * with a person waiting on the other end. A listing still under review has
- * nothing to do; everything else points at the editor, which is where the
- * details that make a page worth opening live.
- *
- * "Reply to N reviews" belongs here too, and is not — the count of reviews
- * without an owner reply has no owner-facing query yet (see the task report).
- */
-function nextAction(l: OwnerListing): { label: string; href: string | null } {
-  if (l.unreadEnquiries > 0) {
-    return {
-      label: `Reply to ${l.unreadEnquiries} unread ${l.unreadEnquiries === 1 ? "enquiry" : "enquiries"}`,
-      href: `/account/listings/${l.id}/enquiries`,
-    };
-  }
-  if (l.status === "pending") {
-    return { label: "Being reviewed — we will email you when it is live", href: null };
-  }
-  if (l.status !== "published") {
-    return { label: "Check the details", href: `/account/listings/${l.id}` };
-  }
-  return { label: "Keep the description and opening hours up to date", href: `/account/listings/${l.id}` };
 }
 
 /** Views over the tier's window, as a line, or null when there is nothing to draw. */
@@ -89,6 +64,9 @@ export default async function AccountPage({ searchParams }: Props) {
     claimsForViewer(db, viewer),
   ]);
   const lines = await Promise.all(listings.map((l) => viewsLine(viewer, l)));
+  // What the "Next" line is worked out from: unanswered reviews, photos,
+  // claim and verification, per listing, through the owner-gated query.
+  const actions = await Promise.all(listings.map((l) => ownerNextActions(db, viewer, l.id)));
 
   const message = claim === undefined ? null : CLAIM_MESSAGES[claim] ?? null;
   const openClaims = claims.filter((c) => c.status === "pending");
@@ -139,7 +117,7 @@ export default async function AccountPage({ searchParams }: Props) {
             )}
             <ul data-testid="owner-listings" className="dash-grid">
               {listings.map((l, i) => {
-                const next = nextAction(l);
+                const next = nextActionFor(l, actions[i] ?? null);
                 const line = lines[i] ?? null;
                 return (
                   <li key={l.id} className="card">
@@ -181,6 +159,8 @@ export default async function AccountPage({ searchParams }: Props) {
                     )}
                     <p className="mb-0">
                       <a href={`/account/listings/${l.id}`}>Edit details</a>
+                      {" · "}
+                      <a href={`/account/listings/${l.id}/photos`}>Photos</a>
                       {" · "}
                       <a href={`/account/listings/${l.id}/enquiries`}>
                         Enquiries ({l.enquiryCount})

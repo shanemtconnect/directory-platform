@@ -23,6 +23,7 @@ import {
 import { ReviewsPage } from "@/components/reviews/ReviewsPage";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
+import { galleryImages } from "@/lib/media/public-url";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
 
@@ -67,13 +68,6 @@ function parseFaq(value: unknown): FaqEntry[] {
     if (q.trim() === "" || a.trim() === "") return [];
     return [{ question: q, answer: a }];
   });
-}
-
-/** Images live on the Cloudflare-proxied R2 domain; schema.org needs absolutes. */
-function absoluteMediaUrl(path: string | null): string | null {
-  const base = process.env.NEXT_PUBLIC_MEDIA_URL;
-  if (!base || !path) return null;
-  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
 /** Schema descriptions are plain text; intro copy is stored as HTML. */
@@ -151,9 +145,10 @@ export default async function CatchAllPage({ params }: Props) {
               // excerpt on a free tier, the socials only where they are shown.
               description: displayedDescription(detail.listing, siteConfig.tiers[detail.listing.tier]),
               sameAs: displayedSocials(detail.listing.socials, siteConfig.tiers[detail.listing.tier]),
-              imageUrls: detail.images
-                .map((i) => absoluteMediaUrl(i.storagePath))
-                .filter((u): u is string => u !== null),
+              // Exactly the photos the Gallery renders, from the same helper:
+              // live derivatives only, never an unprocessed original. Empty
+              // when none is live, and `prune` then omits `image` entirely.
+              imageUrls: galleryImages(detail.images, detail.listing.name).map((i) => i.full),
               // The rating is passed ONLY when the page is rendering the
               // summary block below it — same numbers, same query, one
               // decision. A count of zero renders nothing and asserts nothing.

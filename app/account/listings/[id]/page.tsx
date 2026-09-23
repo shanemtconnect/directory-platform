@@ -72,6 +72,8 @@ export default async function EditListingPage({ params }: Props) {
           {" · "}
           <a href={`/account/listings/${listing.id}/enquiries`}>Enquiries</a>
           {" · "}
+          <a href={`/account/listings/${listing.id}/photos`} data-testid="photos-link">Photos</a>
+          {" · "}
           <a href={`/advertise/badge/mine?id=${listing.id}`} data-testid="badge-link">Get your badge</a>
         </p>
       </PageHeader>

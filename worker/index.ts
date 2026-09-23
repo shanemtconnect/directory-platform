@@ -77,8 +77,8 @@ function schedule(name: string, expr: string, fn: (tx: Db) => Promise<JobOutcome
 }
 
 schedule("derivatives", "*/1 * * * *", async (tx) => {
-  const { processPendingDerivatives } = await import("./jobs/derivatives");
-  await processPendingDerivatives(tx);
+  const { derivativesJob } = await import("./jobs/derivatives");
+  return derivativesJob(tx);
 });
 
 // Every 30 seconds (six fields — the first is seconds). An enquiry notification

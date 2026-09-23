@@ -985,3 +985,10 @@ export async function countReviewsAwaitingModeration(tx: TestDb, viewer: Viewer)
   const [row] = await tx.select({ n: count() }).from(reviews).where(awaitingModeration());
   return row?.n ?? 0;
 }
+
+/**
+ * The moderation-queue predicate, for the console's one-round-trip nav count
+ * (lib/db/queries/admin/dashboard.ts): the same expression the queue and its
+ * tile use, so the three cannot drift apart.
+ */
+export { awaitingModeration };

@@ -1,5 +1,7 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { cities, enquiries, listings, profiles } from "@/lib/db/schema";
+import {
+  cities, enquiries, listingImages, listings, profiles, reviewReplies, reviews,
+} from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 import type { Db } from "@/lib/db/client";
@@ -321,4 +323,62 @@ export async function ownerUnreadCount(tx: Db, viewer: Viewer): Promise<number> 
     .innerJoin(listings, eq(listings.id, enquiries.listingId))
     .where(and(isNull(enquiries.readAt), eq(enquiries.isSpam, false), ownedByViewer(viewer)));
   return row?.n ?? 0;
+}
+
+/**
+ * What the dashboard should tell an owner to do next about one listing.
+ *
+ * Raw facts, not a label: the page turns them into "Reply to 2 reviews" or
+ * "Add photos" and picks the order, because the copy is the page's and the
+ * counts are the database's. `unrepliedReviews` is published reviews with no
+ * reply row at all — a pending reply is still a reply the owner wrote.
+ *
+ * Null for a listing the viewer does not own, like every read here.
+ */
+export interface OwnerNextActions {
+  unrepliedReviews: number;
+  /** Every `listing_images` row, live or not: an upload in progress is not "missing photos". */
+  photoCount: number;
+  claimStatus: "unclaimed" | "claimed" | "verified";
+  status: OwnerListing["status"];
+}
+
+export async function ownerNextActions(
+  tx: Db,
+  viewer: Viewer,
+  listingId: string,
+): Promise<OwnerNextActions | null> {
+  assertSignedIn(viewer);
+  if (!UUID.test(listingId)) return null;
+
+  // Ownership first, then two plain counts against the id it confirmed.
+  // Not one query with correlated sub-selects: in a single-table select
+  // Drizzle writes the outer column unqualified, so `listing_id = "id"`
+  // compares the inner table with itself and the count is always zero.
+  const [listing] = await tx
+    .select({ id: listings.id, claimStatus: listings.claimStatus, status: listings.status })
+    .from(listings)
+    .where(and(eq(listings.id, listingId), ownedByViewer(viewer)))
+    .limit(1);
+  if (!listing) return null;
+
+  const [unreplied] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(reviews)
+    .where(and(
+      eq(reviews.listingId, listing.id),
+      eq(reviews.status, "published"),
+      sql`not exists (select 1 from ${reviewReplies} where ${reviewReplies.reviewId} = ${reviews.id})`,
+    ));
+  const [photos] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(listingImages)
+    .where(eq(listingImages.listingId, listing.id));
+
+  return {
+    unrepliedReviews: unreplied?.n ?? 0,
+    photoCount: photos?.n ?? 0,
+    claimStatus: listing.claimStatus,
+    status: listing.status,
+  };
 }

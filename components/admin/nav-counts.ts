@@ -1,6 +1,8 @@
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
-import { adminQueueCounts, type AdminQueueCounts } from "@/lib/db/queries/admin/dashboard";
+import {
+  adminQueueCountsInOneQuery, type AdminQueueCounts,
+} from "@/lib/db/queries/admin/dashboard";
 
 /**
  * The numbers beside the console's nav links: how much is waiting in each
@@ -25,6 +27,10 @@ export function navCountsFrom(counts: AdminQueueCounts): NavCounts {
   return Object.fromEntries(pairs.filter(([, n]) => n > 0));
 }
 
+/**
+ * One statement, six sub-selects: every console page calls this beside its
+ * own query, so the sequential version cost six extra round trips per page.
+ */
 export async function adminNavCounts(tx: TestDb, viewer: Viewer): Promise<NavCounts> {
-  return navCountsFrom(await adminQueueCounts(tx, viewer));
+  return navCountsFrom(await adminQueueCountsInOneQuery(tx, viewer));
 }
