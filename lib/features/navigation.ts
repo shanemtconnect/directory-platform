@@ -65,7 +65,15 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
 
   if (f.shortlist) routes.push({ href: "/shortlist", label: "Shortlist", inNav: true, inFooter: false, inSitemap: false });
 
-  // costGuides, quoteBroadcast, jobBoard, awards, affiliates and utilityTool
+  // Jobs board (Task 49). Both pages exist under app/jobs and app/post-a-job;
+  // the posting page is advertised from the footer and the board's own CTA,
+  // not the header, which is already full.
+  if (f.jobBoard) {
+    routes.push({ href: "/jobs", label: "Jobs", inNav: true, inFooter: true, inSitemap: true });
+    routes.push({ href: "/post-a-job", label: "Post a job", inNav: false, inFooter: true, inSitemap: true });
+  }
+
+  // costGuides, quoteBroadcast, awards, affiliates and utilityTool
   // have no page yet. Until one ships under app/, its flag advertises nothing:
   // a nav, footer and sitemap entry for /get-quotes was a link to a 404 on
   // every clone that turned the flag on, found by scripts/verify-clone.sh.

@@ -78,6 +78,15 @@ describe("buildRoutes", () => {
     expect(labels).toContain("venue");
   });
 
+  it("emits the jobs board and the posting page only when jobBoard is on", () => {
+    const on = buildRoutes({ ...allOff, jobBoard: true }, "niche-national").map((r) => r.href);
+    expect(on).toContain("/jobs");
+    expect(on).toContain("/post-a-job");
+    const off = buildRoutes(allOff, "niche-national").map((r) => r.href);
+    expect(off).not.toContain("/jobs");
+    expect(off).not.toContain("/post-a-job");
+  });
+
   it("emits the shortlist route when its flag is on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
     expect(hrefs).toContain("/shortlist");
@@ -85,7 +94,7 @@ describe("buildRoutes", () => {
 
   it("does not advertise the unbuilt features even with every flag on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
-    for (const unbuilt of ["/cost", "/get-quotes", "/jobs", "/awards", "/affiliates", "/tools"]) {
+    for (const unbuilt of ["/cost", "/get-quotes", "/awards", "/affiliates", "/tools"]) {
       expect(hrefs).not.toContain(unbuilt);
     }
   });

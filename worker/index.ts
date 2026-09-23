@@ -187,3 +187,13 @@ schedule("purge-stats", "0 4 * * *", async (tx) => {
   const { purgeStats } = await import("./jobs/purge-stats");
   await purgeStats(tx);
 });
+
+// Jobs board (Task 49). Every ten minutes: close posts past their date, queue
+// the closing-soon reminders, and drain the board's own notification kinds
+// (a paid or free post waiting for review, a decision, the reminder). On a
+// flag-off site every query finds nothing. The expiry hands back the board
+// pages it left stale — see worker/jobs/job-board.ts.
+schedule("job-board", "*/10 * * * *", async (tx) => {
+  const { runJobBoard } = await import("./jobs/job-board");
+  return runJobBoard(tx);
+});
