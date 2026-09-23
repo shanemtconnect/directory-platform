@@ -303,6 +303,22 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     retentionDays: 400,
   },
 
+  // Sponsor rails: house ads plus self-serve sponsors, never an ad network.
+  // The env kill switch ADS_ENABLED=false sits on top of this.
+  ads: {
+    enabled: ${a.adsEnabled},
+    monthlyPrice: 49,
+    placements: {
+      home: "never",
+      cityPillar: "always",
+      categoryPillar: "always",
+      listingDetail: "unpaid-only",
+      search: "always",
+      blog: "always",
+      other: "never",
+    },
+  },
+
   // /privacy and /terms are templates with every clone-specific claim marked
   // "[Confirm with counsel]". These dates are the day the site was scaffolded;
   // move them when the wording is actually reviewed, not before — a "last

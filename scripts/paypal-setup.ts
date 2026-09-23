@@ -12,6 +12,7 @@ import {
   planRequestBody,
   productNameFor,
 } from "@/lib/billing/plans";
+import { SPONSOR_PLAN_ENV, sponsorPlanName, sponsorPlanRequestBody } from "@/lib/ads/billing";
 
 /**
  * Creates the PayPal product and the one plan per billable tier and interval
@@ -132,6 +133,26 @@ async function main(): Promise<void> {
     }
     console.log(`plan      created ${json.id}  ${name}`);
     lines.push(`${planEnvVar(tier, interval)}=${json.id}`);
+  }
+
+  // The sponsor rail plan (Task 43): one monthly plan, priced from siteConfig.ads.
+  {
+    const name = sponsorPlanName();
+    const existing = await findPlan(call, productId, name);
+    if (existing?.id) {
+      console.log(`plan      reused  ${existing.id}  ${name}`);
+      lines.push(`${SPONSOR_PLAN_ENV}=${existing.id}`);
+    } else {
+      const { ok, status, json } = await call("/v1/billing/plans", {
+        method: "POST",
+        body: JSON.stringify(sponsorPlanRequestBody(productId)),
+      });
+      if (!ok || typeof json.id !== "string") {
+        throw new Error(`could not create plan "${name}" (${status}): ${JSON.stringify(json)}`);
+      }
+      console.log(`plan      created ${json.id}  ${name}`);
+      lines.push(`${SPONSOR_PLAN_ENV}=${json.id}`);
+    }
   }
 
   console.log(`\nAdd these to the site's environment:\n`);

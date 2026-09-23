@@ -285,3 +285,12 @@ describe("buildAnswers", () => {
     expect(result.errors.join("\n")).toMatch(/customFields/);
   });
 });
+
+describe("sponsor rails question (Task 43)", () => {
+  it("asks whether to show sponsor rails, off by default", () => {
+    const q = QUESTIONS.find((x) => x.key === "adsEnabled");
+    expect(q?.type).toBe("boolean");
+    expect(q?.prompt).toBe("Show sponsor rails on unpaid pages?");
+    expect(q?.default).toBe(false);
+  });
+});

@@ -114,6 +114,9 @@ const SERVER_ENV: Record<string, string> = {
   ...(process.env.SITE_FLAGS_OVERRIDE
     ? { SITE_FLAGS_OVERRIDE: process.env.SITE_FLAGS_OVERRIDE }
     : {}),
+  // Sponsor rails (Task 43): the template config has them off; e2e/sponsors.spec.ts
+  // runs with ADS_ENABLED=true to prove the production shape.
+  ...(process.env.ADS_ENABLED ? { ADS_ENABLED: process.env.ADS_ENABLED } : {}),
 };
 
 // Specs run in this process, not the server's, so the one server setting a

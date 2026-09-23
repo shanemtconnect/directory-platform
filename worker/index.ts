@@ -216,3 +216,14 @@ if (features.awards) {
     return { revalidate };
   }, awardsCronOptions());
 }
+
+
+schedule("flush-sponsor-stats", "*/5 * * * *", async (tx) => {
+  const { flushSponsorStats } = await import("./jobs/flush-sponsor-stats");
+  await flushSponsorStats(tx);
+});
+
+schedule("notify-sponsors", "15,45 * * * * *", async (tx) => {
+  const { processSponsorNotifications } = await import("./jobs/notify-sponsors");
+  await processSponsorNotifications(tx);
+});

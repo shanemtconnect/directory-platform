@@ -9,6 +9,7 @@ import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
 import type { PayPalClient } from "./paypal";
 import { customIdFor, decide, HANDLED_EVENTS, parseEvent, providerSubscriptionIdFor } from "./webhooks";
+import { applySponsorBillingEvent } from "@/lib/ads/billing";
 
 /**
  * One PayPal delivery, from raw body to applied transition.
@@ -115,6 +116,14 @@ export async function processPayPalWebhook(
     customId: customIdFor(event),
   });
   if (sub === null) {
+    // Not a listing subscription — a sponsor campaign's, perhaps (Task 43).
+    const sponsor = await applySponsorBillingEvent(tx, WEBHOOK_VIEWER, event, {
+      providerSubscriptionId: providerSubscriptionIdFor(event),
+      customId: customIdFor(event),
+    });
+    if (sponsor.outcome !== "unknown-subscription") {
+      return { status: 200, outcome: sponsor.outcome, detail: sponsor.detail };
+    }
     // Another site sharing the PayPal account, or a subscription created
     // before this database existed. Not an error, and not ours to act on.
     console.warn(`[billing] ${event.type} names a subscription this site does not hold`);

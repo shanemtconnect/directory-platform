@@ -5,6 +5,7 @@ import { getPost, getPostSlugs, formatDate, articleSchema } from "@/lib/blog/pos
 import { PostBody } from "@/components/blog/PostBody";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { SponsorRails } from "@/components/ads/SponsorRails";
 import { contentSectionLabel } from "@/lib/features/navigation";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 
@@ -73,6 +74,7 @@ export default async function BlogPost({ params }: Props) {
   return (
     <>
       <JsonLd data={articleSchema(post)} />
+      <SponsorRails placement="blog" />
       <main>
         <Breadcrumbs
           trail={[

@@ -264,3 +264,10 @@ export const QUOTE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
  * loop being a free database write per guess. Same shape as the claim link.
  */
 export const UNSUBSCRIBE_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+
+
+/* ------------------------------------------------------ sponsor rails (Task 43) */
+/** `/out/<id>` — a click is one GET; 30 a minute from one address is a script, not a reader. */
+export const SPONSOR_CLICK_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+/** The self-serve sponsor form: a campaign is a considered thing, not a burst. */
+export const SPONSOR_SUBMIT_RATE_LIMIT = { limit: 5, windowSeconds: 3600 } as const;

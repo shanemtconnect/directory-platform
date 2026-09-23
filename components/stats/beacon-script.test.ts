@@ -42,4 +42,10 @@ describe("BEACON_SCRIPT", () => {
   it("uses a null-prototype map for the dedupe keys", () => {
     expect(BEACON_SCRIPT).toContain("Object.create(null)");
   });
+
+  it("skips a marker whose card is not rendered, so a hidden sponsor rail counts nothing (Task 43)", () => {
+    // The marker itself is `hidden`; its parent (the card) is what CSS shows or
+    // hides per viewport, so that is what has to have a box.
+    expect(BEACON_SCRIPT).toContain("parentNode.getClientRects().length===0)continue");
+  });
 });

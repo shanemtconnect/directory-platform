@@ -210,6 +210,22 @@ export const siteConfig = {
     retentionDays: 400,
   },
 
+  ads: {
+    // Sponsor rails: house ads plus self-serve sponsors, never an ad network.
+    // Off until the site has the traffic to sell; `pnpm new-site` asks.
+    enabled: false,
+    monthlyPrice: 49,
+    placements: {
+      home: "never",
+      cityPillar: "always",
+      categoryPillar: "always",
+      listingDetail: "unpaid-only",
+      search: "always",
+      blog: "always",
+      other: "never",
+    },
+  },
+
   legal: {
     privacyLastUpdated: "2026-09-08",
     termsLastUpdated: "2026-09-08",

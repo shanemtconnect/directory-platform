@@ -27,6 +27,8 @@ import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { galleryImages } from "@/lib/media/public-url";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
+import { SponsorRails } from "@/components/ads/SponsorRails";
+import { placementForScope } from "@/lib/ads/policy";
 
 export const revalidate = 3600;
 
@@ -176,6 +178,10 @@ export default async function CatchAllPage({ params }: Props) {
               { name: detail.listing.name, path },
             ])}
           />
+          <SponsorRails
+            placement="listingDetail"
+            listing={{ tier: detail.listing.tier, claimStatus: detail.listing.claimStatus }}
+          />
           <ListingDetail
             detail={detail}
             related={related}
@@ -306,6 +312,7 @@ export default async function CatchAllPage({ params }: Props) {
             ])}
           />
           {faq.length > 0 && <JsonLd data={faqSchema(faq)} />}
+          <SponsorRails placement={placementForScope(result.scope)} />
           <PillarPage
             heading={heading}
             featured={featured}

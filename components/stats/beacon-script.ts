@@ -25,6 +25,7 @@ export const BEACON_SCRIPT = `
     for(var i=0;i<nodes.length&&events.length<${MAX_BEACON_EVENTS};i++){
       var m=nodes[i].getAttribute('data-dp-stat'),l=nodes[i].getAttribute('data-dp-listing');
       if(!m||!l)continue;
+      if(nodes[i].parentNode&&nodes[i].parentNode.getClientRects&&nodes[i].parentNode.getClientRects().length===0)continue;
       var k=m+'|'+l;
       if(seen[k])continue;
       seen[k]=1;
