@@ -93,6 +93,22 @@ const SERVER_ENV: Record<string, string> = {
    */
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? "e2e-not-a-real-secret",
   BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? BASE_URL,
+  /**
+   * Owner photos (e2e/photos.spec.ts). The presign step signs a POST policy
+   * offline — no request leaves the box — so throwaway R2 credentials are
+   * enough for the upload form to exist, and the spec intercepts the
+   * browser's POST to the bucket host. Only the MEDIA bucket is named:
+   * R2_BUCKET_CLAIM_DOCS stays unset, so claim documents remain "not
+   * configured" and claim.spec.ts sees the page it always did. The media URL
+   * is BUILD-time (NEXT_PUBLIC_, inlined) and is what turns a processed
+   * photo into an <img> on the listing page; the host is reserved and never
+   * fetched, the spec asserts on the attributes.
+   */
+  R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID ?? "e2e-account",
+  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID ?? "e2e-not-a-real-key",
+  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY ?? "e2e-not-a-real-secret",
+  R2_BUCKET_MEDIA: process.env.R2_BUCKET_MEDIA ?? "e2e-media",
+  NEXT_PUBLIC_MEDIA_URL: process.env.NEXT_PUBLIC_MEDIA_URL ?? "https://media.e2e.invalid",
   PORT: String(PORT),
   HOSTNAME: "127.0.0.1",
   ...(process.env.SITE_FLAGS_OVERRIDE
@@ -103,6 +119,7 @@ const SERVER_ENV: Record<string, string> = {
 // Specs run in this process, not the server's, so the one server setting a
 // spec has to know about is mirrored here: whether the demo blog posts exist.
 process.env.E2E_DEMO_MODE = SERVER_ENV.NEXT_PUBLIC_DEMO_MODE;
+process.env.E2E_MEDIA_URL = SERVER_ENV.NEXT_PUBLIC_MEDIA_URL;
 
 export default defineConfig({
   testDir: "./e2e",
