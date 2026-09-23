@@ -117,3 +117,27 @@ export function spotDigestToAdmin(data: SpotDigestAdminEmailData): EmailContent 
   ];
   return { subject, ...layout({ subject, heading: subject, blocks }) };
 }
+
+export interface SpotClosedEmailData {
+  listingName: string;
+  spotLabel: string;
+  /** What the bid was, formatted. */
+  amount: string;
+  bidUrl: string;
+}
+
+/** The site closed the spot: the bid is cancelled, the charge stops, nothing to do. */
+export function spotClosedToOwner(data: SpotClosedEmailData): EmailContent {
+  const subject = `Featured spot closed: ${data.spotLabel}`;
+  const blocks: Block[] = [
+    {
+      value:
+        `${siteConfig.name} has closed the featured spots in ${data.spotLabel}. Your bid of ${data.amount} a month for ` +
+        `${data.listingName} there has been cancelled and you will not be charged for it again. ` +
+        `${data.listingName} keeps its ordinary place in the list.`,
+    },
+    { value: "Your bids in other spots are unchanged. If the spot reopens you can bid again from your account." },
+    { label: "Your featured spots", value: `Featured spots for ${data.listingName}`, href: data.bidUrl },
+  ];
+  return { subject, ...layout({ subject, heading: "A featured spot was closed", blocks }) };
+}

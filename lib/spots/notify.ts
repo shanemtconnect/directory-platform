@@ -99,9 +99,12 @@ export async function notifyOutbid(
   spot: SpotStandingInput,
   before: readonly HeldBid[],
   after: readonly RankedBid[],
+  /** The listing whose owner made this change: lowering your own bid is not being outbid. */
+  silentListingId: string | null = null,
 ): Promise<OutbidChange[]> {
   const queued: OutbidChange[] = [];
   for (const change of positionChanges(before, after)) {
+    if (change.listingId === silentListingId) continue;
     const fresh = await markOutbidNotified(tx, SYSTEM, change.bidId, OUTBID_DEBOUNCE_MS);
     if (!fresh) continue;
     await notifySpotOutbid(tx, SYSTEM, {

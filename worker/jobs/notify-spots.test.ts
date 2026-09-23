@@ -13,9 +13,9 @@ vi.mock("@/lib/email/sender", () => ({
   sendEmail: (m: Record<string, unknown>) => sendEmail(m),
 }));
 
-const { citySpotKey, createFeaturedSubscription, ensureSpot, insertBid } = await import("@/lib/db/queries/spots");
+const { citySpotKey, closeSpot, createFeaturedSubscription, ensureSpot, insertBid } = await import("@/lib/db/queries/spots");
 const { rerankSpots } = await import("@/lib/spots/engine");
-const { NOTIFY_SPOT_OUTBID, notifySpotOutbid } = await import("@/lib/email/notify");
+const { NOTIFY_SPOT_CLOSED, NOTIFY_SPOT_OUTBID, notifySpotOutbid } = await import("@/lib/email/notify");
 const { processNotifications } = await import("./notify");
 
 const ENV = { ...process.env };
@@ -103,6 +103,84 @@ describe("notify.spot.outbid", () => {
       await rerankSpots(tx, [spot.id]);
       expect(await processNotifications(tx)).toBe(3);
       expect(sentTo().sort()).toEqual([echo.email, golf.email].sort());
+    });
+  });
+});
+
+describe("I2: the sentence is derived from the standing at send time", () => {
+  it("a lost-first job whose bid has since dropped out reads 'no longer featured' with the amount to re-enter", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const spot = await ensureSpot(tx, { role: "admin", userId: "w" }, citySpotKey(ctx.cityId, null));
+      const alpha = await bidder(tx, ctx, spot.id, 6000, "Alpha Abbey");
+      await bidder(tx, ctx, spot.id, 5000, "Bravo Barn");
+      await bidder(tx, ctx, spot.id, 4000, "Charlie Chapel");
+      await rerankSpots(tx, [spot.id]);
+      await bidder(tx, ctx, spot.id, 8000, "Delta Dock");
+      await rerankSpots(tx, [spot.id]);
+      // Alpha's lost-first job is queued; before the worker runs, two more
+      // bidders push Alpha out entirely (debounced: no second job).
+      await bidder(tx, ctx, spot.id, 9000, "Echo Estate");
+      await bidder(tx, ctx, spot.id, 7000, "Foxtrot Farm");
+      await rerankSpots(tx, [spot.id]);
+      const queued = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_SPOT_OUTBID));
+      expect(queued.map((j) => (j.payload as { bidId: string; kind: string }).kind).sort()).toEqual(["dropped-out", "dropped-out", "lost-first", "lost-first"]);
+
+      await processNotifications(tx);
+      const text = bodyTo(alpha.email);
+      expect(text.toLowerCase()).toContain("no longer featured");
+      expect(text).not.toContain("still featured");
+      // Featured now: 90, 80, 70 → 71 to re-enter.
+      expect(text).toContain("amount=71");
+    });
+  });
+
+  it("a dropped-out job whose bid is back at #2 reads 'lost first'; back at #1 sends nothing", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const spot = await ensureSpot(tx, { role: "admin", userId: "w" }, citySpotKey(ctx.cityId, null));
+      const alpha = await bidder(tx, ctx, spot.id, 6000, "Alpha Abbey");
+      await bidder(tx, ctx, spot.id, 7000, "Bravo Barn");
+      await notifySpotOutbid(tx, { role: "admin", userId: "w" }, { bidId: alpha.bidId, kind: "dropped-out", amountCents: 100 });
+      await rerankSpots(tx, [spot.id]); // Alpha #2
+      await processNotifications(tx);
+      expect(bodyTo(alpha.email)).toContain("#2");
+      expect(bodyTo(alpha.email)).toContain("amount=77");
+
+      sendEmail.mockClear();
+      await notifySpotOutbid(tx, { role: "admin", userId: "w" }, { bidId: alpha.bidId, kind: "dropped-out", amountCents: 100 });
+      await tx.update(featuredBids).set({ amountCents: 9000 }).where(eq(featuredBids.id, alpha.bidId));
+      await rerankSpots(tx, [spot.id]); // Alpha #1
+      expect(await processNotifications(tx)).toBeGreaterThanOrEqual(1);
+      expect(sentTo()).not.toContain(alpha.email);
+    });
+  });
+});
+
+describe("notify.spot.closed (I3)", () => {
+  it("tells every owner whose bid the close cancelled, naming the spot, the amount and that the charge stops", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const key = citySpotKey(ctx.cityId, null);
+      const spot = await ensureSpot(tx, { role: "admin", userId: "w" }, key);
+      const alpha = await bidder(tx, ctx, spot.id, 6000, "Alpha Abbey");
+      const bravo = await bidder(tx, ctx, spot.id, 5000, "Bravo Barn");
+      await rerankSpots(tx, [spot.id]);
+      const closed = await closeSpot(tx, { role: "admin", userId: "w" }, key, { ip: "203.0.113.9" });
+      expect(closed.outcome).toBe("done");
+      const queued = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_SPOT_CLOSED));
+      expect(queued.map((j) => j.payload)).toEqual(
+        expect.arrayContaining([{ listingId: alpha.listingId, spotId: spot.id }, { listingId: bravo.listingId, spotId: spot.id }]),
+      );
+      expect(queued).toHaveLength(2);
+
+      await processNotifications(tx);
+      expect(sentTo().sort()).toEqual([alpha.email, bravo.email].sort());
+      const text = bodyTo(alpha.email);
+      expect(text).toContain("closed the featured spots in Leeds");
+      expect(text).toContain(money(6000));
+      expect(text).toContain("will not be charged for it again");
+      expect(text).toContain(`/account/listings/${alpha.listingId}/featured`);
     });
   });
 });

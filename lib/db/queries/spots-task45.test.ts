@@ -1,18 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { auditLog, listings, subscriptions, unsubscribes, user } from "@/lib/db/schema";
+import { auditLog, featuredSubscriptions, listings, subscriptions, unsubscribes, user } from "@/lib/db/schema";
+import type { PayPalClient } from "@/lib/billing/paypal";
+import { placeBid } from "@/lib/spots/bidding";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
 import { ensureProfile } from "@/lib/auth/profile";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { createPendingSubscription } from "@/lib/db/queries/billing";
-import { rerankSpots } from "@/lib/spots/engine";
+import { rerankSpots, settleSpots } from "@/lib/spots/engine";
 import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availability";
 import {
+  attachFeaturedProvider,
   citySpotKey,
   closeSpot,
   createFeaturedSubscription,
+  currentFeaturedSubscription,
   eligibleListingIds,
   ensureSpot,
   featuredForSpotKey,
@@ -218,6 +222,62 @@ describe("admin: close, open, floor", () => {
       const made = await setSpotFloor(tx, ADMIN, catKey, { floorCents: 2000, ip: null });
       expect(made.outcome).toBe("done");
       expect((await spotsForKeys(tx, ADMIN, [catKey])).size).toBe(1);
+    });
+  });
+});
+
+describe("I3: close settles the money — no bids left means cancelled at PayPal now, not paused", () => {
+  it("cancels the subscription of a listing with nothing left, revises the one that still holds another spot, never a silent DB-only cancel", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const b = await bidder(tx, ctx, "Bravo");
+      const town = citySpotKey(ctx.cityId, null);
+      const cat = citySpotKey(ctx.cityId, ctx.primaryCategoryId);
+      const townSpot = await ensureSpot(tx, a.viewer, town);
+      const catSpot = await ensureSpot(tx, a.viewer, cat);
+      // Alpha: town only. Bravo: town and category.
+      const aSub = await createFeaturedSubscription(tx, a.viewer, { listingId: a.listingId, profileId: a.profileId, planId: "P-F", quantity: 60, ip: null });
+      await insertBid(tx, a.viewer, { spotId: townSpot.id, listingId: a.listingId, subscriptionId: aSub, amountCents: 6000, status: "active", ip: null });
+      const bSub = await createFeaturedSubscription(tx, b.viewer, { listingId: b.listingId, profileId: b.profileId, planId: "P-F", quantity: 120, ip: null });
+      await insertBid(tx, b.viewer, { spotId: townSpot.id, listingId: b.listingId, subscriptionId: bSub, amountCents: 7000, status: "active", ip: null });
+      await insertBid(tx, b.viewer, { spotId: catSpot.id, listingId: b.listingId, subscriptionId: bSub, amountCents: 5000, status: "active", ip: null });
+      for (const [id, sub, q] of [[aSub, "I-A", 60], [bSub, "I-B", 120]] as const) {
+        await attachFeaturedProvider(tx, ADMIN, id, { providerSubscriptionId: sub, approveUrl: null });
+        await tx.update(featuredSubscriptions).set({ status: "active", quantity: q, requestedQuantity: q }).where(eq(featuredSubscriptions.id, id));
+      }
+      await rerankSpots(tx, [townSpot.id, catSpot.id]);
+
+      const cancelled: string[] = [];
+      const suspended: string[] = [];
+      const revised: { id: string; quantity: number }[] = [];
+      const client: PayPalClient = {
+        createSubscription: async () => ({ id: "I-X", status: "APPROVAL_PENDING", approveUrl: "https://paypal.test/a" }),
+        getSubscription: async () => null,
+        cancelSubscription: async (id) => { cancelled.push(id); },
+        suspendSubscription: async (id) => { suspended.push(id); },
+        activateSubscription: async () => {},
+        manageUrl: async () => null,
+        verifyWebhookSignature: async () => true,
+        reviseSubscription: async (id, input) => { revised.push({ id, quantity: input.quantity }); return { approveUrl: "https://paypal.test/r" }; },
+      };
+      const closed = await closeSpot(tx, ADMIN, town, { ip: null });
+      if (closed.outcome !== "done") throw new Error("close failed");
+      const settled = await settleSpots(tx, [closed.spotId], { client }, closed.listingIds);
+      expect(cancelled).toEqual(["I-A"]);
+      expect(suspended).toEqual([]);
+      expect(revised).toEqual([{ id: "I-B", quantity: 50 }]);
+      expect(settled.changes.find((c) => c.listingId === a.listingId)?.action).toBe("cancelled");
+      expect(settled.changes.find((c) => c.listingId === b.listingId)?.action).toBe("revised");
+      expect((await currentFeaturedSubscription(tx, ADMIN, a.listingId))).toBeNull();
+      const [aRow] = await tx.select({ status: featuredSubscriptions.status }).from(featuredSubscriptions).where(eq(featuredSubscriptions.id, aSub));
+      expect(aRow?.status).toBe("cancelled");
+      expect((await currentFeaturedSubscription(tx, ADMIN, b.listingId))?.status).toBe("active");
+
+      // Alpha bidding again starts a fresh subscription rather than reviving the cancelled one.
+      await openSpot(tx, ADMIN, town, { ip: null });
+      const again = await placeBid(tx, { client, env: { PAYPAL_PLAN_FEATURED: "P-F" }, viewer: a.viewer, profileId: a.profileId, listingId: a.listingId, spot: town, amountCents: 6000, ip: null });
+      expect(again.outcome).toBe("approval");
     });
   });
 });

@@ -330,15 +330,18 @@ describe("four bidders, every transition", () => {
       expect((await quantities(tx, all)).Alpha).toEqual(q(51, 80, "active"));
       expect(calls.revised.at(-1)).toEqual({ id: "I-F1", quantity: 51 });
 
-      // 8. Charlie cancels the bid: gone now, subscription suspended; Bravo's
-      //    outbid bid re-enters at #3 and its subscription is RE-ACTIVATED at
-      //    the quantity already consented to — no approval, no revise.
+      // 8. Charlie cancels the bid: gone now, and with no bid left at all the
+      //    subscription is CANCELLED at PayPal (Task 45 I3 — nothing can
+      //    re-enter, so not paused); Bravo's outbid bid re-enters at #3 and
+      //    its subscription is RE-ACTIVATED at the quantity already consented
+      //    to — no approval, no revise.
       const gone = await cancelOwnBid(tx, { client, env: ENV, viewer: c.viewer, profileId: c.profileId, listingId: c.listingId, spotId: (await findSpot(tx, PUBLIC_VIEWER, spot))!.id, ip: null });
       expect(gone).toMatchObject({ outcome: "applied", approveUrl: null });
       expect(await board(tx, ctx.cityId)).toEqual(["1:Delta", "2:Alpha", "3:Bravo"]);
-      expect((await quantities(tx, all)).Charlie).toEqual(q(70, 70, "paused"));
+      expect((await quantities(tx, all)).Charlie).toEqual(q(70, 70, "cancelled"));
       expect((await quantities(tx, all)).Bravo).toEqual(q(50, 50, "active"));
-      expect(calls.suspended).toEqual(["I-F2", "I-F3"]);
+      expect(calls.suspended).toEqual(["I-F2"]);
+      expect(calls.cancelled).toEqual(["I-F3"]);
       expect(calls.activated).toEqual(["I-F2"]);
       expect(calls.created).toHaveLength(4);
       expect(calls.revised.at(-1)).toEqual({ id: "I-F1", quantity: 51 });

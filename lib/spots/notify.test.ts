@@ -6,10 +6,16 @@ import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
 import { resetClock, setClock } from "@/lib/clock";
 import { NOTIFY_SPOT_OUTBID } from "@/lib/email/notify";
-import { citySpotKey, createFeaturedSubscription, ensureSpot, insertBid, spotBids } from "@/lib/db/queries/spots";
+import {
+  attachFeaturedProvider, citySpotKey, createFeaturedSubscription, currentFeaturedSubscription, ensureSpot, insertBid, spotBids,
+} from "@/lib/db/queries/spots";
+import { featuredSubscriptions, subscriptions } from "@/lib/db/schema";
+import { createPendingSubscription } from "@/lib/db/queries/billing";
+import type { PayPalClient } from "@/lib/billing/paypal";
+import { placeBid } from "./bidding";
 import { ensureProfile } from "@/lib/auth/profile";
 import { user } from "@/lib/db/schema";
-import { rerankSpots } from "./engine";
+import { rerankSpots, settleSpots } from "./engine";
 import { OUTBID_DEBOUNCE_MS, notifyOutbid, positionChanges } from "./notify";
 
 /**
@@ -155,6 +161,61 @@ describe("notifyOutbid through rerankSpots", () => {
       setClock(new Date(Date.parse("2026-09-23T09:00:00Z") + OUTBID_DEBOUNCE_MS + 1));
       expect((await notifyOutbid(tx, spot, held, lost)).map((c) => c.bidId)).toEqual([a.bidId]);
       expect(await tx.select().from(jobQueue).where(and(eq(jobQueue.kind, NOTIFY_SPOT_OUTBID)))).toHaveLength(2);
+    });
+  });
+});
+
+describe("I1: an owner lowering their own bid is not told they were outbid", () => {
+  it("skips the actor's own change through settleSpots, and through placeBid's lowering branch", async () => {
+    await withTestDb(async (tx) => {
+      setClock(new Date("2026-09-23T09:00:00Z"));
+      const ctx = await makeScaffold(tx);
+      const spot = await ensureSpot(tx, (await owner(tx)).viewer, citySpotKey(ctx.cityId, null));
+      const a = await activeBid(tx, ctx, spot.id, 9000);
+      const b = await activeBid(tx, ctx, spot.id, 8000);
+      const c = await activeBid(tx, ctx, spot.id, 7000);
+      const d = await activeBid(tx, ctx, spot.id, 6000);
+      await rerankSpots(tx, [spot.id]);
+      expect(await outbidJobs(tx)).toEqual([]);
+
+      // a lowers from #1 to below everyone: silent for a; nobody else lost anything.
+      await tx.update(featuredBids).set({ amountCents: 5000, amountSetAt: new Date() }).where(eq(featuredBids.id, a.bidId));
+      await settleSpots(tx, [spot.id], { client: null }, [], { silentListingId: a.listingId });
+      expect(await outbidJobs(tx)).toEqual([]);
+      void b; void c; void d;
+
+      // The same through the real lowering path: a live subscription with a
+      // provider id, then placeBid with a smaller amount.
+      const e = await activeBid(tx, ctx, spot.id, 12000);
+      const tier = await createPendingSubscription(tx, e.viewer, {
+        listingId: e.listingId, profileId: e.profileId, tier: "premium", interval: "monthly", providerPlanId: "P-1", ip: null,
+      });
+      await tx.update(subscriptions).set({ status: "active" }).where(eq(subscriptions.id, tier));
+      await rerankSpots(tx, [spot.id]);
+      // e's arrival is a real change for b (lost first) and d (dropped out).
+      expect(await outbidJobs(tx)).toHaveLength(2);
+      const sub = (await currentFeaturedSubscription(tx, ADMIN, e.listingId))!;
+      await attachFeaturedProvider(tx, e.viewer, sub.id, { providerSubscriptionId: "I-E", approveUrl: null });
+      await tx.update(featuredSubscriptions).set({ status: "active", quantity: 120 }).where(eq(featuredSubscriptions.id, sub.id));
+      const client: PayPalClient = {
+        createSubscription: async () => ({ id: "I-X", status: "APPROVAL_PENDING", approveUrl: "https://paypal.test/a" }),
+        getSubscription: async () => null,
+        cancelSubscription: async () => {},
+        manageUrl: async () => null,
+        verifyWebhookSignature: async () => true,
+        reviseSubscription: async () => ({ approveUrl: "https://paypal.test/r" }),
+      };
+      const out = await placeBid(tx, {
+        client, env: { PAYPAL_PLAN_FEATURED: "P-F" }, viewer: e.viewer, profileId: e.profileId,
+        listingId: e.listingId, spot: citySpotKey(ctx.cityId, null), amountCents: 5500, ip: null,
+      });
+      expect(out.outcome).toBe("applied");
+      const rows = await spotBids(tx, ADMIN, spot.id);
+      expect(rows.find((r) => r.id === e.bidId)?.position).toBeNull();
+      // e dropped out by its own hand: no job for e; b moved up to #1: no job either.
+      const jobs = await outbidJobs(tx);
+      expect(jobs).toHaveLength(2);
+      expect(jobs.some((j) => (j.payload as { bidId: string }).bidId === e.bidId)).toBe(false);
     });
   });
 });

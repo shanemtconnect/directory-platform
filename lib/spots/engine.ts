@@ -51,7 +51,19 @@ export interface RerankResult {
   readonly paths: string[];
 }
 
-export async function rerankSpots(tx: TestDb, spotIds: readonly string[]): Promise<RerankResult> {
+export interface SettleOptions {
+  /**
+   * The listing whose OWNER made this change (lowered a bid): it is not
+   * told it was "outbid" for something it did itself a second ago.
+   */
+  readonly silentListingId?: string | null;
+}
+
+export async function rerankSpots(
+  tx: TestDb,
+  spotIds: readonly string[],
+  opts: SettleOptions = {},
+): Promise<RerankResult> {
   const viewer = SPOTS_SYSTEM_VIEWER;
   const paths = new Set<string>();
   const unique = [...new Set(spotIds)];
@@ -62,7 +74,7 @@ export async function rerankSpots(tx: TestDb, spotIds: readonly string[]): Promi
     const ranked = rankBids(bids, spot.positions);
     await applyRanking(tx, viewer, spotId, ranked);
     // Task 45: the owners who lost ground hear about it (debounced).
-    await notifyOutbid(tx, spot, bids, ranked);
+    await notifyOutbid(tx, spot, bids, ranked, opts.silentListingId ?? null);
     for (const path of await spotPaths(tx, viewer, spotId)) paths.add(path);
   }
   return { listingIds: await listingsInSpots(tx, viewer, unique), paths: [...paths] };
@@ -77,6 +89,7 @@ export type QuantityAction =
   | "none"
   | "revised"
   | "paused"
+  | "cancelled"
   | "resumed"
   | "not-configured"
   | "awaiting-approval";
@@ -116,7 +129,8 @@ export async function syncQuantities(
     const sub = await currentFeaturedSubscription(tx, viewer, listingId);
     if (sub === null) continue;
 
-    const quantity = quantityFor(await chargeableBidsForListing(tx, viewer, listingId));
+    const liveBids = await chargeableBidsForListing(tx, viewer, listingId);
+    const quantity = quantityFor(liveBids);
     const pending = await hasPendingBids(tx, viewer, listingId);
     const push = (action: QuantityAction, approveUrl: string | null = null) =>
       out.push({ listingId, subscriptionId: sub.id, quantity, action, approveUrl });
@@ -130,6 +144,26 @@ export async function syncQuantities(
     const providerId = sub.providerSubscriptionId;
 
     if (quantity === 0 && !pending) {
+      // No bid left at all (the owner cancelled the last one, or the site
+      // closed the spot): nothing can re-enter, so the subscription is
+      // CANCELLED at PayPal now rather than paused for the sync to cancel a
+      // month later. The next bid starts a new one.
+      if (liveBids.length === 0) {
+        if (deps.client === null) {
+          push("not-configured");
+          continue;
+        }
+        await deps.client.cancelSubscription(providerId, "No featured bids remain");
+        await updateFeaturedSubscription(
+          tx,
+          viewer,
+          sub.id,
+          { status: "cancelled", pausedAt: null, reviseRequestedAt: null, approveUrl: null },
+          { action: "spots.subscription_cancelled", meta: { listingId, reason: "no-bids" } },
+        );
+        push("cancelled");
+        continue;
+      }
       if (sub.status === "paused") {
         push("none");
         continue;
@@ -232,8 +266,9 @@ export async function settleSpots(
   deps: BillingDeps,
   /** Listings to re-bill even if they no longer hold a bid in these spots — the one that just cancelled. */
   alsoListingIds: readonly string[] = [],
+  opts: SettleOptions = {},
 ): Promise<SettleResult> {
-  const ranked = await rerankSpots(tx, spotIds);
+  const ranked = await rerankSpots(tx, spotIds, opts);
   const changes = await syncQuantities(tx, [...ranked.listingIds, ...alsoListingIds], deps);
   return { ...ranked, changes };
 }

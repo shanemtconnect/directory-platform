@@ -181,7 +181,8 @@ export async function placeBid(tx: TestDb, input: PlaceBidInput): Promise<BidOut
     const check = validateLower(input.amountCents, spot.floorCents);
     if (!check.ok) return { outcome: "rejected", reason: check.reason, minimum: check.minimum };
     await setBidAmount(tx, input.viewer, { bidId: own.id, amountCents: input.amountCents, ip: input.ip });
-    const settled = await settleSpots(tx, [spot.id], deps);
+    // The owner chose this; they are not "outbid" by it (Task 45 I1).
+    const settled = await settleSpots(tx, [spot.id], deps, [], { silentListingId: listing.id });
     return { outcome: "applied", approveUrl: approvalFor(settled.changes, listing.id), paths: settled.paths };
   }
 

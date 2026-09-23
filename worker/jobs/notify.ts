@@ -16,6 +16,7 @@ import {
   NOTIFY_REPORT,
   NOTIFY_REVIEW_SUBMITTED,
   NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_SPOT_CLOSED,
   NOTIFY_SPOT_DIGEST,
   NOTIFY_SPOT_OUTBID,
   NOTIFY_SUBMISSION,
@@ -68,11 +69,11 @@ import type { Db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
 import { formatMoney } from "@/lib/pricing";
 import { signUnsubscribe } from "@/lib/email/unsubscribe";
-import { outbidNotification } from "@/lib/db/queries/spots";
+import { describeSpotKeys, listingForSystem, outbidNotification, spotById, spotClosedBid } from "@/lib/db/queries/spots";
 import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availability";
 import { minimumToEnter, minimumToTakeFirst, UNIT_CENTS } from "@/lib/spots/rank";
 import { leaderboardPath, prefilledBidPath } from "@/lib/spots/notify";
-import { spotDigestToAdmin, spotDigestToOwner, spotOutbid } from "@/lib/email/templates/spots";
+import { spotClosedToOwner, spotDigestToAdmin, spotDigestToOwner, spotOutbid } from "@/lib/email/templates/spots";
 
 /**
  * Drains the notification queue.
@@ -445,6 +446,8 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runSpotOutbid(db, d, job.payload);
     case NOTIFY_SPOT_DIGEST:
       return runSpotDigest(db, d, job.payload);
+    case NOTIFY_SPOT_CLOSED:
+      return runSpotClosed(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -772,26 +775,26 @@ const spotLabelOf = (areaName: string, categoryName: string | null) =>
   categoryName === null ? areaName : `${categoryName} in ${areaName}`;
 
 /**
- * The outbid email, from the bid AS IT STANDS when the job runs. The payload
- * names the event; the amount is what it would take now, and a bid that has
- * regained what it lost (or was cancelled, or has nobody to write to) sends
- * nothing and completes.
+ * The outbid email, from the bid AS IT STANDS when the job runs. The
+ * payload's `kind` is the reason the job exists; the sentence sent is
+ * derived from the position the bid holds NOW (I2): none → "no longer
+ * featured" with the amount to re-enter; below first → "lost first" with the
+ * amount to retake it; first → nothing, and a cancelled, pending or vanished
+ * bid, or one with nobody to write to, completes without a send.
  */
 async function runSpotOutbid(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
   const bidId = readId(payload, "bidId");
-  const kind = payload.kind;
-  if (bidId === null || (kind !== "lost-first" && kind !== "dropped-out")) {
-    throw new Retryable("The job carries no bidId or kind");
-  }
+  if (bidId === null) throw new Retryable("The job carries no bidId");
   const data = await outbidNotification(db, ADMIN_VIEWER, bidId);
-  if (data === null) throw new Retryable(`No bid ${bidId}`);
+  // A bid only vanishes with its listing; there is nobody left to tell.
+  if (data === null) return;
   if (data.status === "cancelled" || data.status === "pending") return;
-  if (kind === "lost-first" && data.position === 1) return;
-  if (kind === "dropped-out" && data.position !== null) return;
+  if (data.position === 1) return;
   if (data.ownerEmail === null) {
     console.warn(`[worker] featured bid ${bidId} has no owner address to write to`);
     return;
   }
+  const kind = data.position === null ? "dropped-out" : "lost-first";
   const standing = { floorCents: data.spot.floorCents, positions: data.spot.positions, featured: data.featuredOthers };
   const amountCents = kind === "lost-first" ? minimumToTakeFirst(standing) : minimumToEnter(standing);
   const keyString = `${data.spotKey.areaKind}:${data.spotKey.areaId}:${data.spotKey.categoryId ?? "-"}`;
@@ -806,6 +809,33 @@ async function runSpotOutbid(db: Db, d: Delivery, payload: Record<string, unknow
       amount: spotMoney(amountCents),
       bidUrl: siteUrl(prefilledBidPath(data.listingId, keyString, amountCents / UNIT_CENTS)),
       leaderboardUrl: siteUrl(leaderboardPath(data.spot.id)),
+    }),
+  });
+}
+
+/** The site closed a spot: the owner of every bid that was on it hears why (I3). */
+async function runSpotClosed(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const listingId = readId(payload, "listingId");
+  const spotId = readId(payload, "spotId");
+  if (listingId === null || spotId === null) throw new Retryable("The job carries no listingId or spotId");
+  const [listing, spot, bid] = await Promise.all([
+    listingForSystem(db, ADMIN_VIEWER, listingId),
+    spotById(db, ADMIN_VIEWER, spotId),
+    spotClosedBid(db, ADMIN_VIEWER, { listingId, spotId }),
+  ]);
+  if (listing === null || spot === null || bid === null) return;
+  if (listing.ownerEmail === null) {
+    console.warn(`[worker] listing ${listingId} has no owner address to write to about the closed spot`);
+    return;
+  }
+  const [area] = await describeSpotKeys(db, ADMIN_VIEWER, [{ areaKind: spot.areaKind, areaId: spot.areaId, categoryId: spot.categoryId }]);
+  await deliver(d, OWNER, {
+    to: listing.ownerEmail,
+    ...spotClosedToOwner({
+      listingName: listing.name,
+      spotLabel: spotLabelOf(area?.areaName ?? spot.areaId, area?.categoryName ?? null),
+      amount: spotMoney(bid.amountCents),
+      bidUrl: siteUrl(`/account/listings/${listingId}/featured`),
     }),
   });
 }

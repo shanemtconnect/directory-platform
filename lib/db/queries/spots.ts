@@ -26,6 +26,7 @@ import type { BidStatus, ChargeableBid, RankableBid, RankedBid } from "@/lib/spo
 import type { FeaturedClickDelta } from "@/lib/spots/clicks";
 import { dayKey, isDayKey } from "@/lib/stats/keys";
 import { writeAuditAs } from "./audit";
+import { notifySpotClosed } from "@/lib/email/notify";
 import { LIVE_SUBSCRIPTION_STATUSES } from "./billing";
 import { publicListingColumns, publishedListings, type PublicListing } from "./listings";
 
@@ -1653,6 +1654,10 @@ export async function closeSpot(
     });
   }
   await tx.update(featuredSpots).set({ status: "closed", updatedAt: at }).where(eq(featuredSpots.id, spot.id));
+  // Every owner whose bid just went is told why (Task 45 I3), one job per listing.
+  for (const listingId of new Set(rows.map((r) => r.listingId))) {
+    await notifySpotClosed(tx, viewer, { listingId, spotId: spot.id });
+  }
   await writeAuditAs(tx, actor, {
     entityType: "featured_spot",
     action: "spots.spot_closed",
@@ -1710,4 +1715,21 @@ export async function setSpotFloor(
     ip: input.ip,
   });
   return { outcome: "done", spotId: spot.id, listingIds: [], paths: [] };
+}
+
+/** The listing's most recent bid on a spot the site closed — the amount the owner is told about. */
+export async function spotClosedBid(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; spotId: string },
+): Promise<{ amountCents: number } | null> {
+  assertWorker(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.spotId)) return null;
+  const [row] = await tx
+    .select({ amountCents: featuredBids.amountCents })
+    .from(featuredBids)
+    .where(and(eq(featuredBids.listingId, input.listingId), eq(featuredBids.spotId, input.spotId)))
+    .orderBy(desc(featuredBids.createdAt))
+    .limit(1);
+  return row ?? null;
 }

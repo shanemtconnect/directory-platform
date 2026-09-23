@@ -243,7 +243,11 @@ function HistoryRow({ entry, label, money }: { entry: BidHistoryEntry; label: st
   return (
     <tr data-testid="history-row" data-action={entry.action}>
       <td>{entry.at.toLocaleDateString(siteConfig.locale, { timeZone: siteConfig.timezone, day: "numeric", month: "short", year: "numeric" })}</td>
-      <td>{HISTORY_LABELS[entry.action] ?? entry.action}</td>
+      <td>
+        {entry.action === "spots.bid_cancelled" && entry.meta.reason === "spot-closed"
+          ? "Cancelled — spot closed by the site"
+          : (HISTORY_LABELS[entry.action] ?? entry.action)}
+      </td>
       <td>{label}</td>
       <td>{entry.amountCents === null ? "—" : money(entry.amountCents)}</td>
     </tr>

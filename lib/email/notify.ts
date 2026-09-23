@@ -470,7 +470,9 @@ export const NOTIFY_SPOT_OUTBID = "notify.spot.outbid";
  * nothing.
  */
 export const NOTIFY_SPOT_DIGEST = "notify.spot.digest";
-NOTIFY_KINDS.push(NOTIFY_SPOT_OUTBID, NOTIFY_SPOT_DIGEST);
+/** The site closed a spot the listing had a bid on: the bid is cancelled and the owner is told why. */
+export const NOTIFY_SPOT_CLOSED = "notify.spot.closed";
+NOTIFY_KINDS.push(NOTIFY_SPOT_OUTBID, NOTIFY_SPOT_DIGEST, NOTIFY_SPOT_CLOSED);
 
 export type SpotOutbidJobPayload = {
   bidId: string;
@@ -494,4 +496,14 @@ export async function notifySpotDigest(
   payload: SpotDigestJobPayload,
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_DIGEST, payload });
+}
+
+export type SpotClosedJobPayload = { listingId: string; spotId: string };
+
+export async function notifySpotClosed(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: SpotClosedJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_CLOSED, payload });
 }
