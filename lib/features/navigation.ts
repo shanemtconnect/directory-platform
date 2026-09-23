@@ -84,10 +84,16 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
     routes.push({ href: "/get-quotes", label: "Get quotes", inNav: true, inFooter: true, inSitemap: true });
   }
 
-  // costGuides, jobBoard, awards, affiliates and utilityTool have no page
-  // yet. Until one ships under app/, its flag advertises nothing: a nav,
-  // footer and sitemap entry for /get-quotes was once a link to a 404 on
-  // every clone that turned the flag on, found by scripts/verify-clone.sh.
+  // Awards (Task 50): app/awards/page.tsx ships in the same commit as this
+  // line. The index explains how awards work even before the first winner
+  // exists, so it is advertised whenever the flag is on; it carries noindex
+  // itself until there is something to index.
+  if (f.awards) routes.push({ href: "/awards", label: "Awards", inNav: true, inFooter: true, inSitemap: true });
+
+  // costGuides, jobBoard, affiliates and utilityTool have no page yet. Until
+  // one ships under app/, its flag advertises nothing: a nav, footer and
+  // sitemap entry for /get-quotes was once a link to a 404 on every clone
+  // that turned the flag on, found by scripts/verify-clone.sh.
   // navigation.test.ts holds every href here to a page on disk, so a route
   // is added back here in the same commit as its page and never before.
 

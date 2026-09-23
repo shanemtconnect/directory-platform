@@ -10,6 +10,7 @@ import { PillarPage } from "@/components/pillar/PillarPage";
 import { ListingDetail } from "@/components/listing/ListingDetail";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-detail";
+import { awardText, awardYearsForListings, listingAwards } from "@/lib/db/queries/awards";
 import {
   listingSchema, pillarSchema, breadcrumbSchema, faqSchema, reviewsPageSchema,
   type RenderedReview,
@@ -133,10 +134,18 @@ export default async function CatchAllPage({ params }: Props) {
         ? await reviewSummary(db as never, PUBLIC_VIEWER, result.listingId)
         : null;
 
+      // Awards (Task 50): from the table and nowhere else, only with the flag
+      // on. The same rows feed the block on the page and the `award` markup.
+      const awards = features.awards
+        ? await listingAwards(db as never, PUBLIC_VIEWER, result.listingId)
+        : [];
+
       return (
         <>
           <JsonLd
             data={listingSchema({
+              // Exactly the lines ListingAwards renders, or nothing.
+              awards: awards.map(awardText),
               listing: detail.listing,
               city: detail.city,
               category: detail.category,
@@ -174,6 +183,7 @@ export default async function CatchAllPage({ params }: Props) {
             reviews={reviews}
             reviewsPath={`${path}/reviews`}
             leaveReviewPath={`/leave-review/${detail.listing.id}`}
+            awards={awards}
           />
         </>
       );
@@ -260,6 +270,12 @@ export default async function CatchAllPage({ params }: Props) {
         ? rows.filter((l) => l.tier === "premium" && siteConfig.tiers.premium.homepageSlot).slice(0, 3)
         : [];
 
+      // Awards (Task 50): the "Winner <year>" pill on each card, from the
+      // table, one query for the page. Empty (and tree-shaken) with the flag off.
+      const awardYears = features.awards
+        ? await awardYearsForListings(db as never, PUBLIC_VIEWER, rows.map((l) => l.id))
+        : new Map<string, number[]>();
+
       const faq = parseFaq(heading.faq);
 
       const basePath = pillarBasePath(segments);
@@ -302,6 +318,7 @@ export default async function CatchAllPage({ params }: Props) {
             totalPages={totalPages}
             basePath={basePath}
             cityPath={cityPath}
+            awardYears={awardYears}
           />
         </>
       );

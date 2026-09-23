@@ -52,6 +52,9 @@ export const NOTIFY_REVIEW_VERIFIED = "notify.review.verified";
 export const NOTIFY_AUTH_RESET = "notify.auth-reset";
 export const NOTIFY_AUTH_VERIFY = "notify.auth-verify";
 
+/** Awards (Task 50): the winner is told. The handler sits at the foot of worker/jobs/notify.ts. */
+export const NOTIFY_AWARD_WON = "notify.award.won";
+
 /**
  * One broadcast quote request: every recipient's copy and the requester's
  * acknowledgement, as one job. The handler sits at the foot of
@@ -84,6 +87,7 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
   NOTIFY_QUOTE,
+  NOTIFY_AWARD_WON,
 ];
 
 /**
@@ -402,4 +406,22 @@ export async function notifyQuoteRequest(
   if (result.outcome !== "created") return;
   const payload: QuoteJobPayload = { quoteRequestId: result.quoteRequestId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE, payload });
+}
+
+/* ------------------------------------------------------- awards (Task 50) */
+
+/** The award id and nothing else: the worker re-reads the row, so a revoked award is never announced. */
+export type AwardJobPayload = { awardId: string };
+
+/**
+ * Enqueued by `computeAwardsForYear` inside the transaction that wrote the
+ * award, so a winner row without its email cannot exist. One job per award.
+ */
+export async function notifyAwardWon(
+  tx: TestDb,
+  viewer: Viewer,
+  awardId: string,
+): Promise<void> {
+  const payload: AwardJobPayload = { awardId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_AWARD_WON, payload });
 }

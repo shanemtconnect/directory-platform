@@ -11,6 +11,9 @@ import { ownerListings } from "@/lib/db/queries/owner";
 import { BadgeGallery } from "@/components/advertise/BadgeGallery";
 import { BacklinkForm } from "@/components/advertise/BacklinkForm";
 import { BacklinkStatus } from "@/components/advertise/BacklinkStatus";
+import { features } from "@/lib/features/flags";
+import { PUBLIC_VIEWER } from "@/lib/db/viewer";
+import { listingAwards } from "@/lib/db/queries/awards";
 
 export const metadata: Metadata = {
   title: "Your badge",
@@ -80,6 +83,12 @@ export default async function MyBadgePage({
   const status = await ownerBadgeStatus(db, viewer, id);
   if (!status) redirect(PUBLIC_PAGE);
 
+  // Awards (Task 50): the years this listing won, from the table, so the
+  // gallery can offer the winner style. Tree-shaken with the flag.
+  const awardYears = features.awards
+    ? (await listingAwards(db, PUBLIC_VIEWER, status.id)).map((a) => a.year)
+    : [];
+
   return (
     <main>
       <p className="text-sm text-muted">
@@ -123,6 +132,7 @@ export default async function MyBadgePage({
         verified={status.claimStatus === "verified"}
         ratingAvg={status.ratingAvg}
         ratingCount={status.ratingCount}
+        awardYears={awardYears}
       />
 
       <p>

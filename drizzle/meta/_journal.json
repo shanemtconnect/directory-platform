@@ -85,6 +85,13 @@
       "when": 1790064262373,
       "tag": "0013_quote_broadcast",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0016_awards_revocation",
+      "breakpoints": true
     }
   ]
 }

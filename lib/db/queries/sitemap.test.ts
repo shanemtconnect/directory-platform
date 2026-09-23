@@ -202,3 +202,45 @@ describe("sitemap shard ids", () => {
     }
   });
 });
+
+/* ------------------------------------------------------- awards (Task 50) */
+
+describe("sitemapAwards", () => {
+  it("lists each year and each year's towns with an active winner on a published listing", async () => {
+    const { sitemapAwards, AWARDS_SHARD_ID } = await import("./sitemap");
+    const { computeAwardsForYear, revokeAward } = await import("./awards");
+    const { ADMIN_VIEWER } = await import("@/worker/viewer");
+    const { makeScaffold } = await import("@/test/factories");
+    const { profiles, user, awards, listings } = await import("@/lib/db/schema");
+    const { randomUUID } = await import("node:crypto");
+    expect(AWARDS_SHARD_ID).toBe("awards");
+
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const contest = async (c: typeof ctx) => {
+        const w = await makeListing(tx, c, { ratingAvg: "4.9", ratingCount: 7 });
+        await makeListing(tx, c, { ratingAvg: "4.2", ratingCount: 6 });
+        await makeListing(tx, c, { ratingAvg: "3.5", ratingCount: 9 });
+        return w;
+      };
+      await contest(ctx);
+      const york = await makeCity(tx, "York", "North Yorkshire");
+      const yorkWinner = await contest({ ...ctx, cityId: york });
+      const { created } = await computeAwardsForYear(tx, ADMIN_VIEWER, 2031);
+
+      const paths = (await sitemapAwards(tx, PUBLIC_VIEWER)).map((e) => e.path);
+      expect(paths).toContain("/awards/2031");
+      expect(paths.filter((p) => /^\/awards\/2031\/[a-z0-9-]+$/.test(p))).toHaveLength(2);
+
+      // A revoked award and a taken-down winner both drop out.
+      const userId = `u_${randomUUID()}`;
+      await tx.insert(user).values({ id: userId, name: "A", email: `${userId}@example.test`, emailVerified: true });
+      await tx.insert(profiles).values({ userId, role: "admin" });
+      const leedsAward = created.find((c) => c.listingId !== yorkWinner)!;
+      await revokeAward(tx, { role: "admin", userId }, leedsAward.awardId, { reason: "x", ip: null });
+      await tx.update(listings).set({ status: "removed" }).where(eq(listings.id, yorkWinner));
+      expect((await sitemapAwards(tx, PUBLIC_VIEWER)).filter((e) => e.path.startsWith("/awards/2031"))).toEqual([]);
+      await tx.delete(awards).where(eq(awards.year, 2031));
+    });
+  });
+});

@@ -314,6 +314,12 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     // on behalf of another has two answers and only one of them is right.
     dataController: ${str(a.legalEntity)},
   },
+
+  // Awards: one computed winner per town and category a year. A listing needs
+  // this many published reviews to be in the running (lib/db/queries/awards.ts).
+  awards: {
+    minReviews: 5,
+  },
 } as const satisfies SiteConfig;
 
 ${ACCESSORS}`;

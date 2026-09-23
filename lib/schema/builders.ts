@@ -85,6 +85,13 @@ export interface ListingSchemaInput {
    * whole set — a page showing three must not claim twenty.
    */
   reviews?: RenderedReview[];
+  /**
+   * The awards the page RENDERS, as the exact text it shows (Task 50;
+   * `awardText` in lib/db/queries/awards.ts). schema.org gives LocalBusiness
+   * `award` as Text, so it is emitted only from the `awards` table, only on
+   * the listing page, and only when at least one is on the page.
+   */
+  awards?: string[];
 }
 
 /**
@@ -186,6 +193,9 @@ export function listingSchema(input: ListingSchemaInput): JsonLd {
     // an assertion that there are none, which is not the same as silence.
     review:
       input.reviews && input.reviews.length > 0 ? reviewNodes(input.reviews) : undefined,
+    // Same rule as review: only what is on the page, and nothing at all when
+    // nothing is.
+    award: input.awards && input.awards.length > 0 ? input.awards : undefined,
     isPartOf: { "@id": siteUrl("#website") },
   });
 }

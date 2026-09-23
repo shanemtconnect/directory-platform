@@ -3,8 +3,10 @@ import { siteConfig } from "@/config/site.config";
 import { badgeListing } from "@/lib/db/queries/badges";
 import { db } from "@/lib/db/client";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { parseBadgeStyle, renderBadgeSvg } from "@/lib/badge/svg";
+import { awardYearOfStyle, DEFAULT_BADGE_STYLE, parseBadgeStyle, renderBadgeSvg } from "@/lib/badge/svg";
 import { recordBadgeImpression } from "@/lib/badge/counters";
+import { features } from "@/lib/features/flags";
+import { hasAwardForYear } from "@/lib/db/queries/awards";
 
 /**
  * GET /badge/{listingId}?style=dark|light|compact|rating
@@ -35,7 +37,18 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params;
-  const style = parseBadgeStyle(new URL(request.url).searchParams.get("style"));
+  let style = parseBadgeStyle(new URL(request.url).searchParams.get("style"));
+
+  // An award style is a claim, and the `awards` table is the only thing that
+  // can back it: a listing that did not win that year — or whose award was
+  // revoked, or on a site without the module — gets the default badge, not a
+  // winner's. Silently, and cached like any other: a wrong style is a wrong
+  // query string, not an error the embedding site can act on.
+  const awardYear = awardYearOfStyle(style);
+  if (awardYear !== null) {
+    const won = features.awards && (await hasAwardForYear(db as never, PUBLIC_VIEWER, id, awardYear));
+    if (!won) style = DEFAULT_BADGE_STYLE;
+  }
 
   // Published only, and the query is the thing that enforces it: an
   // unpublished, rejected or removed listing must not be able to display a

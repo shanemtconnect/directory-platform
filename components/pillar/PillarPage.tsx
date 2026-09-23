@@ -27,6 +27,8 @@ interface Props {
   totalPages: number;
   basePath: string;
   cityPath: string;
+  /** Award years per listing id (Task 50), read by the route from the `awards` table. */
+  awardYears?: ReadonlyMap<string, readonly number[]>;
 }
 
 /**
@@ -41,7 +43,7 @@ interface Props {
  */
 export function PillarPage({
   heading, featured, listings, categories, nearby, faq,
-  total, page, totalPages, basePath, cityPath,
+  total, page, totalPages, basePath, cityPath, awardYears,
 }: Props) {
   const e = siteConfig.entity;
   const isFirstPage = page === 1;
@@ -76,7 +78,7 @@ export function PillarPage({
           <h2 id="featured">Featured {heading.nounPlural} in {heading.place}</h2>
           <ul className="card-grid">
             {featured.map((l) => (
-              <ListingCard key={l.id} listing={l} basePath={cityPath} featured />
+              <ListingCard key={l.id} listing={l} basePath={cityPath} featured awardYears={awardYears?.get(l.id)} />
             ))}
           </ul>
         </section>
@@ -95,7 +97,7 @@ export function PillarPage({
         ) : (
           <ul data-testid="listing-grid" className="card-grid">
             {listings.map((l) => (
-              <ListingCard key={l.id} listing={l} basePath={cityPath} />
+              <ListingCard key={l.id} listing={l} basePath={cityPath} awardYears={awardYears?.get(l.id)} />
             ))}
           </ul>
         )}

@@ -167,3 +167,39 @@ describe("truncate", () => {
     expect(out.endsWith("…")).toBe(true);
   });
 });
+
+/* ------------------------------------------------------- awards (Task 50) */
+
+describe("award badge style", () => {
+  it("parses award-<year> and nothing that merely looks like it", async () => {
+    const { awardYearOfStyle } = await import("./svg");
+    expect(parseBadgeStyle("award-2031")).toBe("award-2031");
+    expect(parseBadgeStyle("AWARD-2031")).toBe("award-2031");
+    expect(parseBadgeStyle("award-31")).toBe("dark");
+    expect(parseBadgeStyle("award-20311")).toBe("dark");
+    expect(parseBadgeStyle("award-")).toBe("dark");
+    expect(awardYearOfStyle("award-2031")).toBe(2031);
+    expect(awardYearOfStyle("dark")).toBeNull();
+    expect(awardYearOfStyle("rating")).toBeNull();
+  });
+
+  it("is not one of the static styles the gallery lists for everyone", () => {
+    expect(BADGE_STYLES as readonly string[]).not.toContain("award-2031");
+  });
+
+  it("has dimensions and renders the year as the winner line", () => {
+    expect(badgeDimensions("award-2031")).toEqual({ width: 220, height: 64 });
+    const svg = renderBadgeSvg({
+      siteName: "Which & Where",
+      listingName: HOSTILE,
+      style: "award-2031",
+      verified: false,
+    });
+    expect(svg).toContain("WINNER 2031");
+    expect(svg).toContain("&amp;");
+    expect(svg).not.toContain("<script");
+    const ariaLabel = /aria-label="([^"]*)"/.exec(svg)?.[1] ?? "";
+    expect(ariaLabel).toContain("2031 winner");
+    expect(svg).toMatch(/^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" width="220" height="64"/);
+  });
+});

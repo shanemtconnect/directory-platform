@@ -1,4 +1,5 @@
 import type { NavCounts } from "./nav-counts";
+import { features } from "@/lib/features/flags";
 
 /**
  * The console's own navigation.
@@ -22,6 +23,10 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/admin/reports", label: "Reports" },
   { href: "/admin/removals", label: "Removals" },
   { href: "/admin/quotes", label: "Quotes" },
+  // Awards (Task 50): a link only where the page exists — app/admin/awards
+  // 404s with the flag off, and a nav link to a 404 is the bug
+  // lib/features/navigation.ts exists to prevent on the public side.
+  ...(features.awards ? [{ href: "/admin/awards", label: "Awards" }] : []),
   { href: "/admin/audit", label: "Audit log" },
 ];
 

@@ -151,7 +151,21 @@ export const awards = pgTable("awards", {
   rank: integer("rank"),
   methodologyVersion: text("methodology_version"),
   publishedAt: timestamp("published_at", { withTimezone: true }),
-}, (t) => [index("awards_year_idx").on(t.year, t.cityId, t.categoryId)]);
+  /**
+   * An admin took it back. The row stays — a revoked award is a fact about the
+   * year, and the unique index below means the slot is not re-awarded on the
+   * next run — but nothing public reads a row with this set.
+   */
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokeReason: text("revoke_reason"),
+}, (t) => [
+  // One winner per city × category × year, and the reason the compute job is
+  // idempotent at the database rather than only in its own NOT EXISTS. It
+  // also serves every lookup by year, so the plain index on the same three
+  // columns that shipped with the table is gone (migration 0016).
+  uniqueIndex("awards_year_city_category_key").on(t.year, t.cityId, t.categoryId),
+  index("awards_listing_idx").on(t.listingId),
+]);
 
 export const affiliates = pgTable("affiliates", {
   ...base,

@@ -215,6 +215,12 @@ export const siteConfig = {
     termsLastUpdated: "2026-09-08",
     dataController: "TBC",
   },
+
+  // Awards: one computed winner per town and category a year. A listing needs
+  // this many published reviews to be in the running (see lib/db/queries/awards.ts).
+  awards: {
+    minReviews: 5,
+  },
 } as const satisfies SiteConfig;
 
 /**

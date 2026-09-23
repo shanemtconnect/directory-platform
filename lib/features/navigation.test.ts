@@ -90,6 +90,12 @@ describe("buildRoutes", () => {
     expect(labels).toContain("venue");
   });
 
+  it("emits /awards only when its flag is on, in nav, footer and sitemap", () => {
+    expect(buildRoutes(allOff, "niche-national").map((r) => r.href)).not.toContain("/awards");
+    const awards = buildRoutes({ ...allOff, awards: true }, "niche-national").find((r) => r.href === "/awards");
+    expect(awards).toMatchObject({ label: "Awards", inNav: true, inFooter: true, inSitemap: true });
+  });
+
   it("emits the shortlist route when its flag is on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
     expect(hrefs).toContain("/shortlist");
@@ -97,8 +103,8 @@ describe("buildRoutes", () => {
 
   it("does not advertise the unbuilt features even with every flag on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
-    // /get-quotes left this list when app/get-quotes/page.tsx shipped (Task 47).
-    for (const unbuilt of ["/cost", "/jobs", "/awards", "/affiliates", "/tools"]) {
+    // /get-quotes (Task 47) and /awards (Task 50) left this list when their pages shipped.
+    for (const unbuilt of ["/cost", "/jobs", "/affiliates", "/tools"]) {
       expect(hrefs).not.toContain(unbuilt);
     }
   });
