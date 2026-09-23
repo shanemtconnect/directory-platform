@@ -1615,3 +1615,99 @@ export async function bidHistory(
     };
   });
 }
+
+/* ------------------------------------------------ appended: Task 45 admin */
+
+export type AdminSpotResult =
+  | { readonly outcome: "done"; readonly spotId: string; readonly listingIds: string[]; readonly paths: string[] }
+  | { readonly outcome: "not-allowed" };
+
+/**
+ * Closes a spot to bidding. Every uncancelled bid on it is cancelled (audit
+ * row each, reason `spot-closed`) so nobody is billed for a row that is not
+ * shown; the caller settles the listings returned so PayPal hears. Creates
+ * the row first when the spot has never been bid on. Admin only, with ip.
+ */
+export async function closeSpot(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+  input: { ip: string | null },
+): Promise<AdminSpotResult> {
+  if (!isAdmin(viewer)) return { outcome: "not-allowed" };
+  const spot = await ensureSpot(tx, viewer, key);
+  const at = now();
+  const rows = await tx
+    .update(featuredBids)
+    .set({ status: "cancelled", position: null, pendingAmountCents: null, cancelledAt: at, updatedAt: at })
+    .where(and(eq(featuredBids.spotId, spot.id), ne(featuredBids.status, "cancelled")))
+    .returning({ id: featuredBids.id, listingId: featuredBids.listingId });
+  const actor = await actorFor(tx, viewer);
+  for (const row of rows) {
+    await writeAuditAs(tx, actor, {
+      entityType: "featured_bid",
+      action: "spots.bid_cancelled",
+      entityId: row.id,
+      meta: { listingId: row.listingId, spotId: spot.id, reason: "spot-closed" },
+      ip: input.ip,
+    });
+  }
+  await tx.update(featuredSpots).set({ status: "closed", updatedAt: at }).where(eq(featuredSpots.id, spot.id));
+  await writeAuditAs(tx, actor, {
+    entityType: "featured_spot",
+    action: "spots.spot_closed",
+    entityId: spot.id,
+    meta: { key: spotKeyString(key), bidsCancelled: rows.length },
+    ip: input.ip,
+  });
+  return {
+    outcome: "done",
+    spotId: spot.id,
+    listingIds: [...new Set(rows.map((r) => r.listingId))],
+    paths: await spotPaths(tx, viewer, spot.id),
+  };
+}
+
+export async function openSpot(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+  input: { ip: string | null },
+): Promise<AdminSpotResult> {
+  if (!isAdmin(viewer)) return { outcome: "not-allowed" };
+  const spot = await ensureSpot(tx, viewer, key);
+  await tx.update(featuredSpots).set({ status: "open", updatedAt: now() }).where(eq(featuredSpots.id, spot.id));
+  await writeAuditAs(tx, await actorFor(tx, viewer), {
+    entityType: "featured_spot",
+    action: "spots.spot_opened",
+    entityId: spot.id,
+    meta: { key: spotKeyString(key) },
+    ip: input.ip,
+  });
+  return { outcome: "done", spotId: spot.id, listingIds: [], paths: await spotPaths(tx, viewer, spot.id) };
+}
+
+/**
+ * Overrides the floor for one spot. Bids already below the new floor keep
+ * their place — the floor is what a NEW bid must clear — so nobody is
+ * silently unfeatured by an admin edit.
+ */
+export async function setSpotFloor(
+  tx: TestDb,
+  viewer: Viewer,
+  key: SpotKey,
+  input: { floorCents: number; ip: string | null },
+): Promise<AdminSpotResult> {
+  if (!isAdmin(viewer)) return { outcome: "not-allowed" };
+  if (!Number.isInteger(input.floorCents) || input.floorCents <= 0) return { outcome: "not-allowed" };
+  const spot = await ensureSpot(tx, viewer, key);
+  await tx.update(featuredSpots).set({ floorCents: input.floorCents, updatedAt: now() }).where(eq(featuredSpots.id, spot.id));
+  await writeAuditAs(tx, await actorFor(tx, viewer), {
+    entityType: "featured_spot",
+    action: "spots.floor_set",
+    entityId: spot.id,
+    meta: { key: spotKeyString(key), from: spot.floorCents, to: input.floorCents },
+    ip: input.ip,
+  });
+  return { outcome: "done", spotId: spot.id, listingIds: [], paths: [] };
+}

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { listings, subscriptions, unsubscribes, user } from "@/lib/db/schema";
+import { auditLog, listings, subscriptions, unsubscribes, user } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
 import { ensureProfile } from "@/lib/auth/profile";
@@ -11,14 +11,20 @@ import { rerankSpots } from "@/lib/spots/engine";
 import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availability";
 import {
   citySpotKey,
+  closeSpot,
   createFeaturedSubscription,
   eligibleListingIds,
   ensureSpot,
   featuredForSpotKey,
   insertBid,
   listingForSystem,
+  openSpot,
   regionSpotKey,
+  setSpotFloor,
+  spotBids,
+  spotById,
   spotLeaderboard,
+  spotsForKeys,
   upsellCandidate,
 } from "./spots";
 
@@ -172,6 +178,46 @@ describe("upsellCandidate", () => {
       expect(await upsellCandidate(tx, a.viewer, randomUUID(), citySpotKey(ctx.cityId, ctx.primaryCategoryId))).toBeNull();
       const unpaid = await bidder(tx, ctx, "Echo", { sub: false });
       expect(await upsellCandidate(tx, unpaid.viewer, unpaid.profileId, key)).toBeNull();
+    });
+  });
+});
+
+describe("admin: close, open, floor", () => {
+  it("close cancels every bid with an audit row and the ip, open flips it back, the floor binds new bids only", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const a = await bidder(tx, ctx, "Alpha");
+      const b = await bidder(tx, ctx, "Bravo");
+      const key = citySpotKey(ctx.cityId, null);
+      const spot = await ensureSpot(tx, a.viewer, key);
+      await activeBid(tx, a, spot.id, 6000);
+      await activeBid(tx, b, spot.id, 7000);
+      await rerankSpots(tx, [spot.id]);
+
+      expect(await closeSpot(tx, a.viewer, key, { ip: "203.0.113.9" })).toEqual({ outcome: "not-allowed" });
+
+      const closed = await closeSpot(tx, ADMIN, key, { ip: "203.0.113.9" });
+      expect(closed).toMatchObject({ outcome: "done", spotId: spot.id, paths: [expect.stringMatching(/^\/leeds/)] });
+      expect((closed as { listingIds: string[] }).listingIds.sort()).toEqual([a.listingId, b.listingId].sort());
+      expect((await spotById(tx, ADMIN, spot.id))?.status).toBe("closed");
+      expect(await spotBids(tx, ADMIN, spot.id)).toEqual([]);
+      const audits = await tx.select({ action: auditLog.action, ip: auditLog.ip, meta: auditLog.meta }).from(auditLog).where(eq(auditLog.ip, "203.0.113.9"));
+      expect(audits.filter((r) => r.action === "spots.bid_cancelled")).toHaveLength(2);
+      expect(audits.find((r) => r.action === "spots.spot_closed")?.meta).toMatchObject({ bidsCancelled: 2 });
+      expect(await featuredForSpotKey(tx, PUBLIC_VIEWER, key)).toEqual([]);
+
+      await openSpot(tx, ADMIN, key, { ip: null });
+      expect((await spotById(tx, ADMIN, spot.id))?.status).toBe("open");
+
+      await setSpotFloor(tx, ADMIN, key, { floorCents: 9000, ip: null });
+      expect((await spotById(tx, ADMIN, spot.id))?.floorCents).toBe(9000);
+      expect(await setSpotFloor(tx, ADMIN, key, { floorCents: 0, ip: null })).toEqual({ outcome: "not-allowed" });
+
+      // A page nobody has bid on: the first admin edit creates the row.
+      const catKey = citySpotKey(ctx.cityId, ctx.primaryCategoryId);
+      const made = await setSpotFloor(tx, ADMIN, catKey, { floorCents: 2000, ip: null });
+      expect(made.outcome).toBe("done");
+      expect((await spotsForKeys(tx, ADMIN, [catKey])).size).toBe(1);
     });
   });
 });

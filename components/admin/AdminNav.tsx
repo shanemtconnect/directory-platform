@@ -28,6 +28,7 @@ const LINKS: { href: string; label: string }[] = [
   // lib/features/navigation.ts exists to prevent on the public side.
   ...(features.awards ? [{ href: "/admin/awards", label: "Awards" }] : []),
   { href: "/admin/sponsors", label: "Sponsors" },
+  { href: "/admin/spots", label: "Featured" },
   { href: "/admin/audit", label: "Audit log" },
 ];
 
