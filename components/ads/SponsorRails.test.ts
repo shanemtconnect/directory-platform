@@ -1,0 +1,74 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SponsorCardData } from "@/lib/db/queries/ads";
+
+const activeSponsorCampaigns = vi.fn<(...a: unknown[]) => Promise<SponsorCardData[]>>();
+vi.mock("@/lib/db/client", () => ({ db: { marker: "the pool" } }));
+vi.mock("@/lib/db/queries/ads", () => ({
+  activeSponsorCampaigns: (...args: unknown[]) => activeSponsorCampaigns(...args),
+}));
+vi.mock("@/lib/observability/build-id", () => ({ currentBuildId: () => "build-x" }));
+
+const { elements, text } = await import("@/test/elements");
+
+const campaign = (n: number): SponsorCardData => ({
+  id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+  name: `S${n}`, logoPath: null, title: `T${n}`, blurb: `B${n}`, weight: 1,
+});
+
+function state(node: unknown): unknown {
+  return [...elements(node as never)]
+    .map((e) => (e.props as Record<string, unknown>)["data-state"])
+    .find((v) => v !== undefined);
+}
+
+function testIds(node: unknown): string[] {
+  return [...elements(node as never)]
+    .map((e) => (e.props as Record<string, unknown>)["data-testid"])
+    .filter((v): v is string => typeof v === "string");
+}
+
+beforeEach(() => {
+  vi.resetModules();
+  activeSponsorCampaigns.mockReset().mockResolvedValue([campaign(1), campaign(2)]);
+  delete process.env.ADS_ENABLED;
+  delete process.env.SITE_ENV;
+});
+
+describe("SponsorRails", () => {
+  it("renders nothing when the policy says off, and never queries", async () => {
+    process.env.ADS_ENABLED = "false";
+    const { SponsorRails } = await import("./SponsorRails");
+    expect(await SponsorRails({ placement: "cityPillar" })).toBeNull();
+    expect(activeSponsorCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("renders the placeholder on staging without a database read", async () => {
+    process.env.ADS_ENABLED = "true";
+    const { SponsorRails } = await import("./SponsorRails");
+    const el = await SponsorRails({ placement: "search" });
+    expect(state(el)).toBe("placeholder");
+    expect(text(el)).toContain("Sponsor slot");
+    expect(activeSponsorCampaigns).not.toHaveBeenCalled();
+  });
+
+  it("in production renders two rails and the inline slot from the query for that placement", async () => {
+    process.env.ADS_ENABLED = "true";
+    process.env.SITE_ENV = "production";
+    const { SponsorRails } = await import("./SponsorRails");
+    const el = await SponsorRails({ placement: "listingDetail", listing: { tier: "free", claimStatus: "claimed" } });
+    expect(state(el)).toBe("live");
+    const ids = testIds(el);
+    expect(ids).toContain("sponsor-rail-left");
+    expect(ids).toContain("sponsor-rail-right");
+    expect(ids).toContain("sponsor-inline");
+    expect(activeSponsorCampaigns.mock.calls[0]![2]).toMatchObject({ placement: "listingDetail" });
+    expect(text(el)).toContain("Sponsored");
+  });
+
+  it("a paid listing page gets nothing", async () => {
+    process.env.ADS_ENABLED = "true";
+    process.env.SITE_ENV = "production";
+    const { SponsorRails } = await import("./SponsorRails");
+    expect(await SponsorRails({ placement: "listingDetail", listing: { tier: "premium", claimStatus: "verified" } })).toBeNull();
+  });
+});

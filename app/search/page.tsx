@@ -10,6 +10,7 @@ import { Pagination } from "@/components/pillar/Pagination";
 import { LocationSwitcher } from "@/components/location/LocationSwitcher";
 import { searchCityHref } from "@/components/location/switcher-links";
 import { StatsBeacon } from "@/components/stats/StatsBeacon";
+import { SponsorRails } from "@/components/ads/SponsorRails";
 
 // Search is a utility page, not an indexable asset. Faceted URLs are a classic
 // source of near-duplicate thin pages, so it is noindexed and excluded from the
@@ -69,6 +70,8 @@ export default async function SearchPage({ searchParams }: Props) {
   const basePath = `/search${qs.toString() ? `?${qs}` : ""}`;
 
   return (
+    <>
+    <SponsorRails placement="search" />
     <main>
       <h1>Search {e.plural}</h1>
 
@@ -167,5 +170,6 @@ export default async function SearchPage({ searchParams }: Props) {
 
       <Pagination basePath={basePath} page={results.page} totalPages={results.totalPages} searchStyle />
     </main>
+    </>
   );
 }

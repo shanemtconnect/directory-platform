@@ -25,6 +25,7 @@ import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
 import type { FaqEntry } from "@/components/pillar/PillarPage";
+import { SponsorRails } from "@/components/ads/SponsorRails";
 
 export const revalidate = 3600;
 
@@ -172,6 +173,10 @@ export default async function CatchAllPage({ params }: Props) {
               { name: detail.listing.name, path },
             ])}
           />
+          <SponsorRails
+            placement="listingDetail"
+            listing={{ tier: detail.listing.tier, claimStatus: detail.listing.claimStatus }}
+          />
           <ListingDetail
             detail={detail}
             related={related}
@@ -295,6 +300,7 @@ export default async function CatchAllPage({ params }: Props) {
             ])}
           />
           {faq.length > 0 && <JsonLd data={faqSchema(faq)} />}
+          <SponsorRails placement={cityId !== null && result.scope.type === "city-category" ? "categoryPillar" : "cityPillar"} />
           <PillarPage
             heading={heading}
             featured={featured}

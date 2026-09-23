@@ -4,6 +4,7 @@ import { contentSectionLabel } from "@/lib/features/navigation";
 import { getAllPosts } from "@/lib/blog/posts";
 import { PostCard } from "@/components/blog/PostCard";
 import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+import { SponsorRails } from "@/components/ads/SponsorRails";
 
 export const revalidate = 3600;
 
@@ -26,6 +27,8 @@ export default function BlogIndex() {
   const posts = getAllPosts();
 
   return (
+    <>
+    <SponsorRails placement="blog" />
     <main>
       <Breadcrumbs trail={[{ name: "Home", path: "/" }, { name: SECTION, path: "/blog" }]} />
       <h1>{SECTION}</h1>
@@ -37,5 +40,6 @@ export default function BlogIndex() {
         </div>
       )}
     </main>
+    </>
   );
 }
