@@ -26,6 +26,8 @@ export interface StatsDay {
   enquiries: number;
   shortlistAdds: number;
   badgeClicks: number;
+  /** Broadcast quote requests the listing was chosen for. */
+  quoteRequests: number;
 }
 
 export type StatsTotals = Omit<StatsDay, "day">;
@@ -73,7 +75,7 @@ function assertWorker(viewer: Viewer): void {
 }
 
 function zeroDay(day: string): StatsDay {
-  return { day, views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 };
+  return { day, views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 };
 }
 
 /**
@@ -138,6 +140,7 @@ export async function listingStats(
       enquiries: listingStatsDaily.enquiries,
       shortlistAdds: listingStatsDaily.shortlistAdds,
       badgeClicks: listingStatsDaily.badgeClicks,
+      quoteRequests: listingStatsDaily.quoteRequests,
     })
     .from(listingStatsDaily)
     .where(and(
@@ -148,7 +151,7 @@ export async function listingStats(
 
   const byDay = new Map(rows.map((r) => [r.day, r]));
   const totals: StatsTotals = {
-    views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
+    views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0,
   };
   const filled = range.map((day) => {
     const found = byDay.get(day);
@@ -158,6 +161,7 @@ export async function listingStats(
     totals.enquiries += found.enquiries;
     totals.shortlistAdds += found.shortlistAdds;
     totals.badgeClicks += found.badgeClicks;
+    totals.quoteRequests += found.quoteRequests;
     return found;
   });
 
@@ -213,7 +217,7 @@ export async function applyStatDeltas(
     isUuid(d.listingId)
     && isDayKey(d.day)
     && (d.views > 0 || d.impressions > 0 || d.enquiries > 0
-      || d.shortlistAdds > 0 || d.badgeClicks > 0));
+      || d.shortlistAdds > 0 || d.badgeClicks > 0 || d.quoteRequests > 0));
   if (valid.length === 0) return 0;
 
   const rows = sql.join(
@@ -221,17 +225,18 @@ export async function applyStatDeltas(
       ${d.listingId}::uuid, ${d.day}::date,
       ${Math.trunc(d.views)}::int, ${Math.trunc(d.impressions)}::int,
       ${Math.trunc(d.enquiries)}::int, ${Math.trunc(d.shortlistAdds)}::int,
-      ${Math.trunc(d.badgeClicks)}::int
+      ${Math.trunc(d.badgeClicks)}::int, ${Math.trunc(d.quoteRequests)}::int
     )`),
     sql`, `,
   );
 
   const written = (await tx.execute(sql`
     insert into listing_stats_daily
-      (listing_id, day, views, impressions, enquiries, shortlist_adds, badge_clicks)
-    select v.listing_id, v.day, v.views, v.impressions, v.enquiries, v.shortlist_adds, v.badge_clicks
+      (listing_id, day, views, impressions, enquiries, shortlist_adds, badge_clicks, quote_requests)
+    select v.listing_id, v.day, v.views, v.impressions, v.enquiries, v.shortlist_adds, v.badge_clicks,
+           v.quote_requests
       from (values ${rows})
-        as v(listing_id, day, views, impressions, enquiries, shortlist_adds, badge_clicks)
+        as v(listing_id, day, views, impressions, enquiries, shortlist_adds, badge_clicks, quote_requests)
       join listings l on l.id = v.listing_id and l.status = 'published'
     on conflict (listing_id, day) do update set
       views          = listing_stats_daily.views          + excluded.views,
@@ -239,6 +244,7 @@ export async function applyStatDeltas(
       enquiries      = listing_stats_daily.enquiries      + excluded.enquiries,
       shortlist_adds = listing_stats_daily.shortlist_adds + excluded.shortlist_adds,
       badge_clicks   = listing_stats_daily.badge_clicks   + excluded.badge_clicks,
+      quote_requests = listing_stats_daily.quote_requests + excluded.quote_requests,
       updated_at     = now()
     returning listing_stats_daily.id
   `)) as unknown as unknown[];

@@ -21,6 +21,7 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/admin/cities", label: "Towns" },
   { href: "/admin/reports", label: "Reports" },
   { href: "/admin/removals", label: "Removals" },
+  { href: "/admin/quotes", label: "Quotes" },
   { href: "/admin/audit", label: "Audit log" },
 ];
 

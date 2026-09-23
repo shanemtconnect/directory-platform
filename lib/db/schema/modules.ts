@@ -3,7 +3,7 @@ import {
   uniqueIndex, index,
 } from "drizzle-orm/pg-core";
 import { base } from "./_base";
-import { reviewStatus, jobStatus, campaignChannel } from "./enums";
+import { reviewStatus, jobStatus, campaignChannel, quoteOutcome } from "./enums";
 import { listings } from "./listings";
 import { cities, categories } from "./geo";
 
@@ -98,7 +98,11 @@ export const quoteRequests = pgTable("quote_requests", {
   cityId: uuid("city_id").references(() => cities.id),
   categoryId: uuid("category_id").references(() => categories.id),
   ip: text("ip"),
-});
+  /** When the requester ticked the consent box. The form refuses without it. */
+  consentAt: timestamp("consent_at", { withTimezone: true }),
+  /** Admin's flag. A spam request drops off every owner's leads page. */
+  isSpam: boolean("is_spam").notNull().default(false),
+}, (t) => [index("quote_requests_created_idx").on(t.createdAt)]);
 
 export const quoteRecipients = pgTable("quote_recipients", {
   ...base,
@@ -108,7 +112,13 @@ export const quoteRecipients = pgTable("quote_recipients", {
   contactMasked: boolean("contact_masked").notNull().default(true),
   openedAt: timestamp("opened_at", { withTimezone: true }),
   repliedAt: timestamp("replied_at", { withTimezone: true }),
-}, (t) => [uniqueIndex("quote_recipients_key").on(t.quoteRequestId, t.listingId)]);
+  /** Won or lost, as the owner records it. The honest conversion figure. */
+  outcome: quoteOutcome("outcome").notNull().default("open"),
+  outcomeAt: timestamp("outcome_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("quote_recipients_key").on(t.quoteRequestId, t.listingId),
+  index("quote_recipients_listing_idx").on(t.listingId),
+]);
 
 export const jobs = pgTable("jobs", {
   ...base,

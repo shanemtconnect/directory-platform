@@ -77,6 +77,12 @@
       "version": "7",
       "when": 1789742625324,
       "tag": "0012_slug_kind_region",
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790064262373,
+      "tag": "0013_quote_broadcast",
       "breakpoints": true
     }
   ]

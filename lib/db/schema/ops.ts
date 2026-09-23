@@ -55,6 +55,8 @@ export const listingStatsDaily = pgTable("listing_stats_daily", {
   enquiries: integer("enquiries").notNull().default(0),
   shortlistAdds: integer("shortlist_adds").notNull().default(0),
   badgeClicks: integer("badge_clicks").notNull().default(0),
+  /** Broadcast quote requests this listing was chosen for (quoteBroadcast). */
+  quoteRequests: integer("quote_requests").notNull().default(0),
 }, (t) => [uniqueIndex("listing_stats_daily_key").on(t.listingId, t.day)]);
 
 export const badges = pgTable("badges", {

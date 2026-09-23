@@ -197,11 +197,11 @@ describe("drainStats", () => {
     expect(deltas).toEqual([
       {
         listingId: A, day: DAY,
-        views: 2, impressions: 1, enquiries: 1, shortlistAdds: 1, badgeClicks: 1,
+        views: 2, impressions: 1, enquiries: 1, shortlistAdds: 1, badgeClicks: 1, quoteRequests: 0,
       },
       {
         listingId: B, day: dayKey(new Date("2026-09-11T10:00:00Z")),
-        views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
+        views: 1, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0,
       },
     ]);
   });

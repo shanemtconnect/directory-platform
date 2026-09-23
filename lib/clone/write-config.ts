@@ -291,6 +291,12 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     footerCitiesPerCategory: ${a.seoFooterCitiesPerCategory},
   },
 
+  // The get-quotes broadcast (feature flag quoteBroadcast): how many listings
+  // one request is sent to, at most.
+  quotes: {
+    maxRecipients: 5,
+  },
+
   stats: {
     // Days of listing_stats_daily the worker keeps. At least 30 and at least
     // the longest tier statsWindowDays above; the build checks.

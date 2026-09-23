@@ -74,12 +74,13 @@ export interface StatDelta {
   enquiries: number;
   shortlistAdds: number;
   badgeClicks: number;
+  quoteRequests: number;
 }
 
 function emptyDelta(listingId: string, day: string): StatDelta {
   return {
     listingId, day,
-    views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0,
+    views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0,
   };
 }
 
@@ -90,6 +91,7 @@ function add(delta: StatDelta, metric: StatMetric, n: number): void {
     case "enquiry": delta.enquiries += n; break;
     case "shortlist_add": delta.shortlistAdds += n; break;
     case "badge_click": delta.badgeClicks += n; break;
+    case "quote_request": delta.quoteRequests += n; break;
   }
 }
 

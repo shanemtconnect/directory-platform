@@ -21,6 +21,16 @@ describe("buildRoutes", () => {
   it("omits every flagged route when all flags are off", () => {
     const hrefs = buildRoutes(allOff, "niche-national").map((r) => r.href);
     expect(hrefs).not.toContain("/shortlist");
+    expect(hrefs).not.toContain("/get-quotes");
+  });
+
+  it("advertises /get-quotes on every surface only when quoteBroadcast is on", () => {
+    const off = buildRoutes({ ...allOff, quoteBroadcast: false }, "niche-national");
+    expect(off.map((r) => r.href)).not.toContain("/get-quotes");
+
+    const on = buildRoutes({ ...allOff, quoteBroadcast: true }, "niche-national");
+    const entry = on.find((r) => r.href === "/get-quotes");
+    expect(entry).toMatchObject({ inNav: true, inFooter: true, inSitemap: true });
   });
 
   it("never advertises a route that has no route file, under any flags or mode", () => {
@@ -87,7 +97,8 @@ describe("buildRoutes", () => {
 
   it("does not advertise the unbuilt features even with every flag on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
-    for (const unbuilt of ["/cost", "/get-quotes", "/jobs", "/awards", "/affiliates", "/tools"]) {
+    // /get-quotes left this list when app/get-quotes/page.tsx shipped (Task 47).
+    for (const unbuilt of ["/cost", "/jobs", "/awards", "/affiliates", "/tools"]) {
       expect(hrefs).not.toContain(unbuilt);
     }
   });

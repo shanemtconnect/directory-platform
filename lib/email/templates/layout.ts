@@ -1,4 +1,5 @@
 import { siteConfig } from "@/config/site.config";
+import { unsubscribeUrl } from "@/lib/email/unsubscribe";
 import { siteUrl } from "@/lib/schema/builders";
 
 /**
@@ -97,4 +98,18 @@ export function layout(input: { subject: string; heading: string; blocks: Block[
   const text = [input.heading, "", ...input.blocks.map(textBlock), "", "—", footerText].join("\n");
 
   return { html, text };
+}
+
+/**
+ * The opt-out line for an email sent to an address nobody gave us for that
+ * purpose (the quote broadcast to unclaimed listings, outreach). The token
+ * comes from `signUnsubscribe` in lib/email/unsubscribe.ts; the link works
+ * with one click and no sign-in.
+ */
+export function unsubscribeBlock(token: string): Block {
+  return {
+    label: "Don't want these emails?",
+    value: "Unsubscribe with one click",
+    href: unsubscribeUrl(token),
+  };
 }

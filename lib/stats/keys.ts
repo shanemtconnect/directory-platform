@@ -17,6 +17,8 @@ export const STAT_METRICS = [
   "enquiry",
   "shortlist_add",
   "badge_click",
+  /** Chosen as a recipient of a broadcast quote request (quoteBroadcast). */
+  "quote_request",
 ] as const;
 
 export type StatMetric = (typeof STAT_METRICS)[number];
@@ -28,6 +30,7 @@ export const METRIC_COLUMN: Record<StatMetric, string> = {
   enquiry: "enquiries",
   shortlist_add: "shortlist_adds",
   badge_click: "badge_clicks",
+  quote_request: "quote_requests",
 };
 
 /**

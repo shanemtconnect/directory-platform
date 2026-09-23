@@ -8,6 +8,7 @@ import {
   NOTIFY_DECISION,
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
+  NOTIFY_QUOTE,
   NOTIFY_REMOVAL,
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
@@ -135,16 +136,23 @@ const CLAIMANT = "claimant";
  * accumulates before its mail is configured, and lose them.
  */
 async function deliver(d: Delivery, key: string, message: EmailMessage): Promise<void> {
+  await deliverCounted(d, key, message);
+}
+
+/** `deliver`, reporting whether the provider took it — for the one caller that counts sends. */
+async function deliverCounted(d: Delivery, key: string, message: EmailMessage): Promise<boolean> {
   // Already sent on an earlier attempt: the retry is for the ones that failed.
-  if (d.done.has(key)) return;
+  if (d.done.has(key)) return true;
 
   const result = await sendEmail(message);
   if (!result.sent && result.reason === "rejected") {
     throw new Retryable(result.error ?? "the mail provider rejected the message");
   }
   // Anything that is not a rejection is as done as this recipient will get:
-  // the job will not be retried on its account.
+  // the job will not be retried on its account. Whether it actually reached
+  // the provider is returned for the one caller that counts sends.
   d.fresh.push(key);
+  return result.sent;
 }
 
 async function runEnquiry(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
@@ -413,6 +421,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runAuthEmail(db, d, job.payload, passwordReset, passwordResetLink);
     case NOTIFY_AUTH_VERIFY:
       return runAuthEmail(db, d, job.payload, verifyEmailAddress, verifyEmailLink);
+    // Appended by the quotes module; the handler is at the foot of the file.
+    case NOTIFY_QUOTE:
+      return runQuote(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -631,4 +642,72 @@ async function runAuthEmail(
     to: recipient.email,
     ...build({ name: recipient.name, url, expiresInMinutes: TOKEN_TTL_MINUTES }),
   });
+}
+
+/* ------------------------------------------------------- quotes (Task 47) */
+
+import { quoteNotification } from "@/lib/db/queries/quotes";
+import { quoteAcknowledgement, quoteToRecipient } from "@/lib/email/templates/quotes";
+import { signUnsubscribe } from "@/lib/email/unsubscribe";
+
+/**
+ * One request, many recipients, one job.
+ *
+ * Each recipient is its own delivery key — `recipient:<listingId>`, stable
+ * across attempts — and a rejection is caught per recipient so a bad address
+ * on the second of five never holds up the third, the fourth, the fifth or
+ * the requester. The first rejection is rethrown once everyone else has been
+ * tried, so the retry (with `d.fresh` already recorded) sends only the
+ * rejected ones again. The requester's acknowledgement goes LAST and says
+ * how many actually reached the provider: the number on the form was the
+ * number chosen, and an unsubscribe, a lost address, a rejection or a mailer
+ * that is not configured is not something to pad over.
+ */
+async function runQuote(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const quoteRequestId = readId(payload, "quoteRequestId");
+  if (quoteRequestId === null) throw new Retryable("The job carries no quoteRequestId");
+
+  const data = await quoteNotification(db, ADMIN_VIEWER, quoteRequestId);
+  // Flagged as spam, or gone: nothing to send, and the job is done.
+  if (!data) return;
+
+  let delivered = 0;
+  let firstFailure: Error | null = null;
+  for (const r of data.recipients) {
+    // No address (the listing lost its email, or its owner's account went) or
+    // an unsubscribe: skipped, not retried. The next tick would find the same.
+    if (r.email === null || r.unsubscribed) continue;
+    try {
+      const sent = await deliverCounted(d, `recipient:${r.listingId}`, {
+        to: r.email,
+        ...quoteToRecipient({
+          listingName: r.listingName,
+          leadsUrl: siteUrl(`/account/listings/${r.listingId}/leads`),
+          pricingUrl: siteUrl("/pricing"),
+          cityName: data.cityName,
+          categoryName: data.categoryName,
+          contactVisible: r.contactVisible,
+          requester: data.requester,
+          message: data.message,
+          unsubscribeToken: signUnsubscribe({ email: r.email, listingId: r.listingId }),
+        }),
+      });
+      if (sent) delivered++;
+    } catch (e) {
+      firstFailure ??= e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
+  await deliver(d, REQUESTER, {
+    to: data.requester.email,
+    ...quoteAcknowledgement({
+      requesterName: data.requester.name,
+      cityName: data.cityName,
+      categoryName: data.categoryName,
+      recipientCount: delivered,
+      message: data.message,
+    }),
+  });
+
+  if (firstFailure !== null) throw firstFailure;
 }

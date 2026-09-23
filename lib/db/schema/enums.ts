@@ -46,3 +46,6 @@ export const reviewStatus = pgEnum("review_status", [
 ]);
 export const jobStatus = pgEnum("job_status", ["pending", "published", "expired", "removed"]);
 export const campaignChannel = pgEnum("campaign_channel", ["email", "sms"]);
+
+/** What became of a broadcast quote request at one recipient. Owner-set. */
+export const quoteOutcome = pgEnum("quote_outcome", ["open", "won", "lost"]);

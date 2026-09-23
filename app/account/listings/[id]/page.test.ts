@@ -64,7 +64,7 @@ const STATS: ListingStatsResult = {
   capDays: 365,
   capped: false,
   days: [],
-  totals: { views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0 },
+  totals: { views: 0, impressions: 0, enquiries: 0, shortlistAdds: 0, badgeClicks: 0, quoteRequests: 0 },
 };
 
 async function render() {

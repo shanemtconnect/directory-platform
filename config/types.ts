@@ -170,6 +170,12 @@ export interface SiteConfig {
     readonly footerCitiesPerCategory: number;
   };
 
+  /** The get-quotes broadcast (feature flag `quoteBroadcast`). */
+  readonly quotes: {
+    /** How many listings one request is sent to, at most. */
+    readonly maxRecipients: number;
+  };
+
   readonly stats: {
     /**
      * How many days of `listing_stats_daily` the worker keeps; older rows are
