@@ -110,12 +110,13 @@ describe("processNotifications — quotes", () => {
     });
   });
 
-  it("retries only the recipient that was rejected", async () => {
+  it("a rejected address blocks nobody: the rest and the requester go out, and only it retries", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      // Named so the send order (createdAt, then name) is fixed: first, then bad.
-      await makeListing(tx, ctx, { name: "Alpha Hall", email: "first@example.com", tier: "premium" });
-      await makeListing(tx, ctx, { name: "Beta Hall", email: "bad@example.com", tier: "essential" });
+      // Named so the send order (createdAt, then name) is fixed: bad FIRST.
+      await makeListing(tx, ctx, { name: "Alpha Hall", email: "bad@example.com", tier: "premium" });
+      await makeListing(tx, ctx, { name: "Beta Hall", email: "second@example.com", tier: "essential" });
+      await makeListing(tx, ctx, { name: "Gamma Hall", email: "third@example.com" });
       await queuedRequest(tx, ctx);
       sendEmail.mockImplementation(async (m) =>
         String(m.to) === "bad@example.com"
@@ -124,16 +125,60 @@ describe("processNotifications — quotes", () => {
       );
 
       expect(await processNotifications(tx)).toBe(0);
-      expect(sent().map((m) => m.to)).toEqual(["first@example.com", "bad@example.com"]);
+      // Everyone after the rejection was still written to on this tick, and
+      // the requester was told the number that actually went out.
+      expect(sent().map((m) => m.to)).toEqual([
+        "bad@example.com", "second@example.com", "third@example.com", "sam@example.co.uk",
+      ]);
+      expect(sent()[3]!.subject).toMatch(/went to 2 /);
       const job = await jobRow(tx);
       expect(job.status).toBe("pending");
-      expect(job.delivered).toEqual([expect.stringMatching(/^recipient:/)]);
+      expect(job.lastError).toContain("no such mailbox");
+      expect([...job.delivered].sort()).toEqual([
+        expect.stringMatching(/^recipient:/), expect.stringMatching(/^recipient:/), "requester",
+      ]);
 
-      // Next tick: the good address is not written to twice, the requester finally hears.
+      // Next tick: only the rejected address is written to again.
       sendEmail.mockClear().mockResolvedValue({ sent: true, id: "eml_2" });
       await tx.update(jobQueue).set({ runAfter: new Date(Date.now() - 60_000) });
       expect(await processNotifications(tx)).toBe(1);
-      expect(sent().map((m) => m.to)).toEqual(["bad@example.com", "sam@example.co.uk"]);
+      expect(sent().map((m) => m.to)).toEqual(["bad@example.com"]);
+    });
+  });
+
+  it("does not count a send the provider never saw", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com", tier: "premium" });
+      await makeListing(tx, ctx, { email: "b@example.com" });
+      await queuedRequest(tx, ctx);
+      // The mailer is unconfigured for the recipients and (for the sake of
+      // reading the count) configured for the requester.
+      sendEmail.mockImplementation(async (m) =>
+        String(m.to) === "sam@example.co.uk"
+          ? { sent: true, id: "eml_1" }
+          : { sent: false, reason: "not-configured" },
+      );
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sent().at(-1)!.subject).toMatch(/went to 0 /);
+    });
+  });
+
+  it("puts a signed unsubscribe link in each recipient's email", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      await queuedRequest(tx, ctx);
+      process.env.EMAIL_UNSUBSCRIBE_SECRET = "unit-test-secret";
+
+      await processNotifications(tx);
+
+      const text = sent()[0]!.text;
+      const match = /https:\/\/example\.co\.uk\/unsubscribe\?t=([A-Za-z0-9_.-]+)/.exec(text);
+      expect(match, "the recipient email must carry an unsubscribe link").not.toBeNull();
+      const { verifyUnsubscribe } = await import("@/lib/email/unsubscribe");
+      expect(verifyUnsubscribe(decodeURIComponent(match![1]!))?.email).toBe("a@example.com");
     });
   });
 
