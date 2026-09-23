@@ -51,18 +51,30 @@ export interface PhotoQuota {
   tier: "free" | "essential" | "premium";
 }
 
-/** The listing's id and tier, if the viewer owns it. The gate every write starts with. */
+/**
+ * The listing's id and tier, if the viewer owns it. The gate every write
+ * starts with.
+ *
+ * `lock: true` takes the row FOR UPDATE, and that is the concurrency control
+ * for everything below: the tier cap is a count-then-insert, and reorder and
+ * delete are read-then-renumber loops. Under READ COMMITTED two confirms at
+ * `max - 1` would each count `max - 1` and both insert; with the listing row
+ * locked the second waits for the first to commit and then counts `max`.
+ * Reads never lock.
+ */
 async function ownedListing(
   tx: Db,
   viewer: Exclude<Viewer, { role: "public" }>,
   listingId: string,
+  opts: { lock: boolean } = { lock: false },
 ): Promise<{ id: string; tier: PhotoQuota["tier"] } | null> {
   if (!UUID.test(listingId)) return null;
-  const [row] = await tx
+  const query = tx
     .select({ id: listings.id, tier: listings.tier })
     .from(listings)
     .where(and(eq(listings.id, listingId), ownedByViewer(viewer)))
     .limit(1);
+  const [row] = await (opts.lock ? query.for("update") : query);
   return row ?? null;
 }
 
@@ -140,9 +152,9 @@ export type CreatePhotoResult =
 /**
  * Records where an upload landed, once the browser's POST to R2 succeeded.
  *
- * The cap is checked HERE, against the count inside the transaction, not only
- * in the action that signed the upload: two tabs can each be told "2 of 3
- * used" and both confirm. The key is checked against the one shape the server
+ * The cap is checked HERE, with the listing row locked, not only in the
+ * action that signed the upload: two tabs can each be told "2 of 3 used" and
+ * both confirm, and without the lock both would pass. The key is checked against the one shape the server
  * mints for THIS listing — a row pointing at another listing's object would
  * serve their photo under this name once the worker had processed it.
  */
@@ -152,7 +164,7 @@ export async function createOwnerPhoto(
   input: { listingId: string; storagePath: string; ip: string | null },
 ): Promise<CreatePhotoResult> {
   assertSignedIn(viewer);
-  const listing = await ownedListing(tx, viewer, input.listingId);
+  const listing = await ownedListing(tx, viewer, input.listingId, { lock: true });
   if (!listing) return { outcome: "not-found" };
   if (!isListingPhotoKey(listing.id.toLowerCase(), input.storagePath)) return { outcome: "bad-key" };
 
@@ -174,11 +186,15 @@ export async function createOwnerPhoto(
     })
     .returning({ id: listingImages.id });
 
+  // The original's key is deliberately NOT in the audit row. Until the worker
+  // has run it is a phone photo with its EXIF intact in a public bucket; the
+  // row already holds the key for as long as that is true, and an audit
+  // trail that outlives the object should not be a second place to find it.
   await writeAudit(tx, viewer, {
     action: "photo.uploaded",
     entityType: "listing_image",
     entityId: row!.id,
-    meta: { listingId: listing.id, storagePath: input.storagePath },
+    meta: { listingId: listing.id },
     ip: input.ip,
   });
 
@@ -206,7 +222,7 @@ export async function reorderOwnerPhotos(
   ip: string | null,
 ): Promise<ReorderResult> {
   assertSignedIn(viewer);
-  const listing = await ownedListing(tx, viewer, listingId);
+  const listing = await ownedListing(tx, viewer, listingId, { lock: true });
   if (!listing) return { outcome: "not-found" };
 
   const current = await tx
@@ -237,7 +253,9 @@ export async function reorderOwnerPhotos(
   return { outcome: "saved", paths: await resolveListingPaths(tx, listing.id) };
 }
 
-export type AltResult = { outcome: "saved"; paths: string[] } | { outcome: "not-found" };
+export type AltResult =
+  | { outcome: "saved"; listingId: string; paths: string[] }
+  | { outcome: "not-found" };
 
 /** The photo's listing, if the viewer owns it. Photo ids are scoped the same way listing ids are. */
 async function ownedPhoto(
@@ -285,12 +303,17 @@ export async function setOwnerPhotoAlt(
     ip,
   });
 
-  return { outcome: "saved", paths: await resolveListingPaths(tx, photo.listingId) };
+  return {
+    outcome: "saved",
+    listingId: photo.listingId,
+    paths: await resolveListingPaths(tx, photo.listingId),
+  };
 }
 
 export type DeletePhotoResult =
   | {
       outcome: "deleted";
+      listingId: string;
       /** The original and every derivative: what the action removes from the bucket once committed. */
       keys: string[];
       paths: string[];
@@ -314,6 +337,9 @@ export async function deleteOwnerPhoto(
   assertSignedIn(viewer);
   const photo = await ownedPhoto(tx, viewer, photoId);
   if (!photo) return { outcome: "not-found" };
+  // Serialises the renumbering below against a concurrent confirm or reorder.
+  const listing = await ownedListing(tx, viewer, photo.listingId, { lock: true });
+  if (!listing) return { outcome: "not-found" };
 
   const keys = [photo.storagePath];
   if (typeof photo.derivatives === "object" && photo.derivatives !== null) {
@@ -342,9 +368,14 @@ export async function deleteOwnerPhoto(
     action: "photo.deleted",
     entityType: "listing_image",
     entityId: photo.id,
-    meta: { listingId: photo.listingId, storagePath: photo.storagePath },
+    meta: { listingId: photo.listingId },
     ip,
   });
 
-  return { outcome: "deleted", keys, paths: await resolveListingPaths(tx, photo.listingId) };
+  return {
+    outcome: "deleted",
+    listingId: photo.listingId,
+    keys,
+    paths: await resolveListingPaths(tx, photo.listingId),
+  };
 }
