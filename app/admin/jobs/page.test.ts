@@ -25,17 +25,21 @@ vi.mock("@/lib/features/flags", () => ({
     return { jobBoard: flagOn };
   },
 }));
-vi.mock("@/lib/db/queries/admin/dashboard", () => ({
-  adminQueueCounts: () =>
-    Promise.resolve({
+vi.mock("@/lib/db/queries/admin/dashboard", () => {
+  const counts = {
       pendingSubmissions: 0,
       citiesAwaitingIntro: 0,
       pendingClaims: 0,
       openReports: 0,
       openRemovals: 0,
       reviewsAwaitingModeration: 0,
-    }),
-}));
+    };
+  return {
+    adminQueueCounts: () => Promise.resolve(counts),
+    // The nav reads the one-statement version (components/admin/nav-counts.ts).
+    adminQueueCountsInOneQuery: () => Promise.resolve(counts),
+  };
+});
 vi.mock("@/lib/auth/viewer", () => ({ currentViewer: () => currentViewer() }));
 vi.mock("@/lib/db/queries/job-board", () => ({
   pendingJobs: () => pendingJobs(),
