@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   LISTING_PHOTO_MAX_BYTES,
+  deleteListingPhotoObject,
   isAllowedListingPhotoType,
   isListingPhotoKey,
   listingPhotoKey,
@@ -122,7 +123,9 @@ describe("presignListingPhotoUpload", () => {
     const key = listingPhotoKey(LISTING, "image/png");
     const { url, fields } = await presignListingPhotoUpload(key, "image/png");
     const policy = policyOf(fields);
-    expect(policy.conditions).toContainEqual(["starts-with", "$Content-Type", "image/png"]);
+    // Equality, not a prefix: `image/png` admits nothing else, not even `image/pngx`.
+    expect(policy.conditions).toContainEqual(["eq", "$Content-Type", "image/png"]);
+    expect(policy.conditions.some((c) => Array.isArray(c) && c[0] === "starts-with")).toBe(false);
     expect(policy.conditions).toContainEqual(["content-length-range", 1, LISTING_PHOTO_MAX_BYTES]);
     expect(LISTING_PHOTO_MAX_BYTES).toBe(8 * 1024 * 1024);
     expect(fields["key"]).toBe(key);
@@ -140,5 +143,19 @@ describe("presignListingPhotoUpload", () => {
     await expect(
       presignListingPhotoUpload(`listings/${LISTING}/photo-0123456789abcdef.jpg`, "image/jpeg"),
     ).rejects.toThrow(/not configured/i);
+  });
+});
+
+describe("deleteListingPhotoObject", () => {
+  it("rejects rather than throws when storage is not configured, so a .catch can see it", async () => {
+    let thrown: unknown = null;
+    let promise: Promise<void> | null = null;
+    try {
+      promise = deleteListingPhotoObject(`listings/${LISTING}/photo-0123456789abcdef.jpg`);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeNull();
+    await expect(promise).rejects.toThrow(/not configured/i);
   });
 });

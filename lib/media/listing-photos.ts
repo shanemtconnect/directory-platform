@@ -85,10 +85,11 @@ export function isListingPhotoKey(listingId: string, key: string): boolean {
 }
 
 /**
- * The exact content type is pinned in the policy rather than the `image/`
- * prefix `presignUpload` defaults to: `image/svg+xml` starts with `image/`,
- * and an SVG is a script. The worker still sniffs the bytes — a declared type
- * is a claim, not a fact — but R2 should refuse the obvious case at upload.
+ * The exact content type is pinned in the policy (an `eq` condition, not the
+ * `image/` prefix `presignUpload` defaults to): `image/svg+xml` starts with
+ * `image/`, and an SVG is a script. The worker still sniffs the bytes — a
+ * declared type is a claim, not a fact — but R2 should refuse the obvious
+ * case at upload.
  */
 // `async` so a refusal comes back as a rejected promise: every caller awaits
 // this inside a try.
@@ -101,12 +102,17 @@ export async function presignListingPhotoUpload(
     throw new Error(`File type ${contentType} is not allowed here`);
   }
   return presignUpload(bucket, key, {
-    contentTypePrefix: contentType,
+    contentType,
     maxBytes: LISTING_PHOTO_MAX_BYTES,
   });
 }
 
-/** Removes an original or a derivative. Best-effort at the call site: the row is the truth. */
-export function deleteListingPhotoObject(key: string): Promise<void> {
-  return deleteObject(listingPhotosEnv(), key);
+/**
+ * Removes an original or a derivative. Best-effort at the call site: the row
+ * is the truth. `async` so that an unconfigured bucket is a REJECTION the
+ * caller's `.catch` sees, not a synchronous throw from the call expression —
+ * the row is already gone by the time this runs, and staging has no R2.
+ */
+export async function deleteListingPhotoObject(key: string): Promise<void> {
+  await deleteObject(listingPhotosEnv(), key);
 }

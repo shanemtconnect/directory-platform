@@ -10,6 +10,7 @@ import {
   savePhotoAlt,
 } from "@/lib/actions/photos";
 import type { PhotoStatus } from "@/lib/db/queries/photos";
+import { LISTING_PHOTO_ALT_MAX, MAX_UPLOAD_BYTES } from "@/lib/media/validate";
 import { Notice } from "@/components/ui/Notice";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 
@@ -29,8 +30,6 @@ import { SubmitButton } from "@/components/ui/SubmitButton";
  */
 
 const ACCEPT = "image/jpeg,image/png,image/webp";
-const MAX_BYTES = 8 * 1024 * 1024;
-const ALT_MAX = 250;
 
 export interface ManagedPhoto {
   id: string;
@@ -90,7 +89,7 @@ export function PhotoManager(props: PhotoManagerProps) {
     if (!(file instanceof File) || file.size === 0) return setError("Please choose a photo.");
     // Checked again by the POST policy R2 enforces; this is only so the
     // reader is told before spending a minute uploading.
-    if (file.size > MAX_BYTES) return setError("That photo is larger than 8 MB.");
+    if (file.size > MAX_UPLOAD_BYTES) return setError("That photo is larger than 8 MB.");
 
     setUploading(true);
     try {
@@ -132,12 +131,12 @@ export function PhotoManager(props: PhotoManagerProps) {
   function onAlt(photoId: string, event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const alt = String(new FormData(event.currentTarget).get("alt") ?? "");
-    run("Description saved.", () => savePhotoAlt({ listingId: props.listingId, photoId, alt }));
+    run("Description saved.", () => savePhotoAlt({ photoId, alt }));
   }
 
   function remove(photoId: string): void {
     if (!window.confirm("Delete this photo? This cannot be undone.")) return;
-    run("Photo deleted.", () => deletePhoto({ listingId: props.listingId, photoId }));
+    run("Photo deleted.", () => deletePhoto({ photoId }));
   }
 
   const busy = pending || uploading;
@@ -242,7 +241,7 @@ export function PhotoManager(props: PhotoManagerProps) {
                   id={`alt-${photo.id}`}
                   name="alt"
                   defaultValue={photo.alt}
-                  maxLength={ALT_MAX}
+                  maxLength={LISTING_PHOTO_ALT_MAX}
                   className="mb-1"
                 />
                 <SubmitButton pending={pending} pendingLabel="Saving…" variant="secondary">

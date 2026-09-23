@@ -19,6 +19,7 @@ import {
   listingPhotosConfigured,
   presignListingPhotoUpload,
 } from "@/lib/media/listing-photos";
+import { LISTING_PHOTO_ALT_MAX } from "@/lib/media/validate";
 import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import { clientIp } from "@/lib/spam/client-ip";
 import type { Db } from "@/lib/db/client";
@@ -44,9 +45,6 @@ export type PreparePhotoResult =
 const SIGN_IN = "Please sign in.";
 const NOT_FOUND = "That listing could not be found.";
 const GENERIC = "Something went wrong. Please try again.";
-
-/** What an alt attribute can usefully hold; longer is a caption, not alt text. */
-const ALT_MAX = 250;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -137,11 +135,11 @@ export async function confirmPhotoUpload(input: {
  * The row goes first, inside the transaction; the objects go after it has
  * returned, best-effort. An object deleted before a rollback is gone for
  * good, while an orphan in the bucket is a few kilobytes nobody can reach.
+ *
+ * No listing id is taken: the photo's row says which listing it belongs to,
+ * and that is what the owner's page is revalidated for.
  */
-export async function deletePhoto(input: {
-  listingId: string;
-  photoId: string;
-}): Promise<PhotoActionResult> {
+export async function deletePhoto(input: { photoId: string }): Promise<PhotoActionResult> {
   const viewer = await currentViewer();
   if (viewer.role === "public") return { ok: false, message: SIGN_IN };
 
@@ -151,10 +149,12 @@ export async function deletePhoto(input: {
   );
   if (result.outcome === "not-found") return { ok: false, message: "That photo could not be found." };
 
+  // Best-effort and never fatal: the row is gone and audited. Unconfigured
+  // storage (staging) rejects here rather than throwing, so the catch holds.
   for (const key of result.keys) {
     await deleteListingPhotoObject(key).catch(() => {});
   }
-  bust(result.paths, input.listingId.toLowerCase());
+  bust(result.paths, result.listingId);
   return { ok: true };
 }
 
@@ -183,7 +183,6 @@ export async function reorderPhotos(input: {
 }
 
 export async function savePhotoAlt(input: {
-  listingId: string;
   photoId: string;
   alt: string;
 }): Promise<PhotoActionResult> {
@@ -191,8 +190,11 @@ export async function savePhotoAlt(input: {
   if (viewer.role === "public") return { ok: false, message: SIGN_IN };
 
   const alt = input.alt.replace(/[\r\n]+/g, " ").trim();
-  if (alt.length > ALT_MAX) {
-    return { ok: false, message: `Please keep the description under ${ALT_MAX} characters.` };
+  if (alt.length > LISTING_PHOTO_ALT_MAX) {
+    return {
+      ok: false,
+      message: `Please keep the description under ${LISTING_PHOTO_ALT_MAX} characters.`,
+    };
   }
 
   const ip = clientIp(await headers());
@@ -201,6 +203,6 @@ export async function savePhotoAlt(input: {
   );
   if (result.outcome === "not-found") return { ok: false, message: "That photo could not be found." };
 
-  bust(result.paths, input.listingId.toLowerCase());
+  bust(result.paths, result.listingId);
   return { ok: true };
 }

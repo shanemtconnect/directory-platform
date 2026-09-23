@@ -57,7 +57,13 @@ export interface PresignedUpload {
 export function presignUpload(
   bucket: string,
   key: string,
-  opts: { contentTypePrefix?: string; maxBytes?: number; ttlSeconds?: number } = {},
+  opts: {
+    contentTypePrefix?: string;
+    /** Exact match, which wins over the prefix: `image/png` and nothing else. */
+    contentType?: string;
+    maxBytes?: number;
+    ttlSeconds?: number;
+  } = {},
 ): Promise<PresignedUpload> {
   return createPresignedPost(client(), {
     Bucket: bucket,
@@ -67,7 +73,9 @@ export function presignUpload(
       // A zero-byte lower bound would let an empty file through and leave a
       // row the worker retries for ever.
       ["content-length-range", 1, opts.maxBytes ?? MAX_UPLOAD_BYTES],
-      ["starts-with", "$Content-Type", opts.contentTypePrefix ?? "image/"],
+      opts.contentType === undefined
+        ? ["starts-with", "$Content-Type", opts.contentTypePrefix ?? "image/"]
+        : ["eq", "$Content-Type", opts.contentType],
     ],
   });
 }

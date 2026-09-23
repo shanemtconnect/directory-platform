@@ -174,10 +174,12 @@ describe("deletePhoto", () => {
       return fn(HANDLE);
     });
     deleteListingPhotoObject.mockImplementation(async (key) => { order.push(`delete ${key}`); });
-    deleteOwnerPhoto.mockResolvedValue({ outcome: "deleted", keys: [KEY, "a/thumb.webp"], paths: PATHS });
+    deleteOwnerPhoto.mockResolvedValue({
+      outcome: "deleted", listingId: LISTING_ID, keys: [KEY, "a/thumb.webp"], paths: PATHS,
+    });
 
     const { deletePhoto } = await import("./photos");
-    expect(await deletePhoto({ listingId: LISTING_ID, photoId: PHOTO_ID })).toEqual({ ok: true });
+    expect(await deletePhoto({ photoId: PHOTO_ID })).toEqual({ ok: true });
     expect(deleteOwnerPhoto).toHaveBeenCalledWith(HANDLE, OWNER, PHOTO_ID, "203.0.113.9");
     expect(order).toEqual(["transaction", `delete ${KEY}`, "delete a/thumb.webp"]);
     expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
@@ -185,17 +187,36 @@ describe("deletePhoto", () => {
   });
 
   it("still succeeds when the bucket refuses: the row is the truth", async () => {
-    deleteOwnerPhoto.mockResolvedValue({ outcome: "deleted", keys: [KEY], paths: PATHS });
+    deleteOwnerPhoto.mockResolvedValue({ outcome: "deleted", listingId: LISTING_ID, keys: [KEY], paths: PATHS });
     deleteListingPhotoObject.mockRejectedValue(new Error("no such bucket"));
     const { deletePhoto } = await import("./photos");
-    expect(await deletePhoto({ listingId: LISTING_ID, photoId: PHOTO_ID })).toEqual({ ok: true });
+    expect(await deletePhoto({ photoId: PHOTO_ID })).toEqual({ ok: true });
     expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
+  });
+
+  /**
+   * Staging runs with no R2 at all. The row is gone and audited by the time
+   * the bucket is asked, so the real (unmocked) delete must reject into the
+   * catch rather than throw out of the loop and leave the paths stale.
+   */
+  it("resolves and revalidates when storage is not configured, using the real delete", async () => {
+    const real = await vi.importActual<typeof import("@/lib/media/listing-photos")>("@/lib/media/listing-photos");
+    deleteListingPhotoObject.mockImplementation(real.deleteListingPhotoObject);
+    delete process.env.R2_ACCOUNT_ID;
+    delete process.env.R2_BUCKET_MEDIA;
+    deleteOwnerPhoto.mockResolvedValue({ outcome: "deleted", listingId: LISTING_ID, keys: [KEY, "a/thumb.webp"], paths: PATHS });
+
+    const { deletePhoto } = await import("./photos");
+    expect(await deletePhoto({ photoId: PHOTO_ID })).toEqual({ ok: true });
+    expect(deleteOwnerPhoto).toHaveBeenCalledWith(HANDLE, OWNER, PHOTO_ID, "203.0.113.9");
+    expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
+    expect(revalidatePath).toHaveBeenCalledWith(`/account/listings/${LISTING_ID}/photos`);
   });
 
   it("is a not-found for a stranger's photo, with nothing deleted from the bucket", async () => {
     deleteOwnerPhoto.mockResolvedValue({ outcome: "not-found" });
     const { deletePhoto } = await import("./photos");
-    const result = await deletePhoto({ listingId: LISTING_ID, photoId: PHOTO_ID });
+    const result = await deletePhoto({ photoId: PHOTO_ID });
     expect(result.ok).toBe(false);
     expect(deleteListingPhotoObject).not.toHaveBeenCalled();
   });
@@ -219,13 +240,15 @@ describe("reorderPhotos and savePhotoAlt", () => {
   });
 
   it("save alt text, capped, and bust the paths", async () => {
-    setOwnerPhotoAlt.mockResolvedValue({ outcome: "saved", paths: PATHS });
+    setOwnerPhotoAlt.mockResolvedValue({ outcome: "saved", listingId: LISTING_ID, paths: PATHS });
     const { savePhotoAlt } = await import("./photos");
-    expect(await savePhotoAlt({ listingId: LISTING_ID, photoId: PHOTO_ID, alt: "The front door" })).toEqual({ ok: true });
+    expect(await savePhotoAlt({ photoId: PHOTO_ID, alt: "The front door" })).toEqual({ ok: true });
     expect(setOwnerPhotoAlt).toHaveBeenCalledWith(HANDLE, OWNER, PHOTO_ID, "The front door", "203.0.113.9");
     expect(revalidateListingPaths).toHaveBeenCalledWith(PATHS);
+    // The owner's page is the ROW's listing, not one the caller named.
+    expect(revalidatePath).toHaveBeenCalledWith(`/account/listings/${LISTING_ID}/photos`);
 
-    const long = await savePhotoAlt({ listingId: LISTING_ID, photoId: PHOTO_ID, alt: "x".repeat(300) });
+    const long = await savePhotoAlt({ photoId: PHOTO_ID, alt: "x".repeat(300) });
     expect(long.ok).toBe(false);
   });
 });
