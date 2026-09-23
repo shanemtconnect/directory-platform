@@ -1,4 +1,5 @@
 import { MAX_BEACON_EVENTS } from "@/lib/stats/keys";
+import { FEATURED_CLICK_METRIC } from "@/lib/spots/clicks";
 
 /**
  * The entire client side of the stats feature.
@@ -15,10 +16,25 @@ import { MAX_BEACON_EVENTS } from "@/lib/stats/keys";
  * Written as a string rather than as a client component on purpose — a "use
  * client" component for this would ship React, the router and a hydration pass
  * to every visitor of every page, to send one POST.
+ *
+ * The click listener (Task 45) is the second thing it does: a click on a
+ * link inside a featured card — a `[data-position]` card under a list that
+ * names its spot in `data-dp-spot` — posts one `featured_click` for that
+ * spot and listing. The listing id is read from the card's own impression
+ * marker, so the card component needs nothing added to it.
  */
 export const BEACON_SCRIPT = `
 (function(){
   if(window.__dpBeacon)return;window.__dpBeacon=1;
+  function post(body){
+    try{
+      if(navigator.sendBeacon){
+        navigator.sendBeacon('/api/beacon',new Blob([body],{type:'application/json'}));
+      }else{
+        fetch('/api/beacon',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:body}).catch(function(){});
+      }
+    }catch(e){}
+  }
   function send(){
     var nodes=document.querySelectorAll('[data-dp-stat][data-dp-listing]');
     var events=[],seen=Object.create(null);
@@ -32,15 +48,16 @@ export const BEACON_SCRIPT = `
       events.push({listingId:l,metric:m});
     }
     if(!events.length)return;
-    var body=JSON.stringify({events:events});
-    try{
-      if(navigator.sendBeacon){
-        navigator.sendBeacon('/api/beacon',new Blob([body],{type:'application/json'}));
-      }else{
-        fetch('/api/beacon',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:body}).catch(function(){});
-      }
-    }catch(e){}
+    post(JSON.stringify({events:events}));
   }
+  document.addEventListener('click',function(ev){
+    var t=ev.target;if(!t||!t.closest)return;
+    var a=t.closest('a');if(!a)return;
+    var li=a.closest('[data-dp-spot] [data-position]');if(!li)return;
+    var ul=li.closest('[data-dp-spot]'),mk=li.querySelector('[data-dp-listing]');
+    if(!ul||!mk)return;
+    post(JSON.stringify({listingId:mk.getAttribute('data-dp-listing'),metric:'${FEATURED_CLICK_METRIC}',spotId:ul.getAttribute('data-dp-spot')}));
+  },true);
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',send);}else{send();}
 })();
 `.trim();

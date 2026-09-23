@@ -244,3 +244,10 @@ schedule("spots-digest", SPOTS_DIGEST_CRON, async (tx) => {
   const { runSpotsDigest } = await import("./jobs/spots-digest");
   await runSpotsDigest(tx);
 }, spotsDigestCronOptions());
+
+// Clicks on featured cards (Task 45) live in Redis between flushes like the
+// other counters; five minutes, beside flush-stats and flush-sponsor-stats.
+schedule("flush-featured-clicks", "*/5 * * * *", async (tx) => {
+  const { flushFeaturedClicks } = await import("./jobs/flush-featured-clicks");
+  await flushFeaturedClicks(tx);
+});

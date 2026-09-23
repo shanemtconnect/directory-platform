@@ -31,12 +31,20 @@ describe("BEACON_SCRIPT", () => {
   });
 
   it("is small enough to inline on every page", () => {
-    expect(BEACON_SCRIPT.length).toBeLessThan(1200);
+    // 1200 before the featured-click listener (Task 45); still well under 2 KB.
+    expect(BEACON_SCRIPT.length).toBeLessThan(1700);
   });
 
   it("sends one batched request rather than one per marker", () => {
     expect(BEACON_SCRIPT.match(/sendBeacon\(/g)).toHaveLength(1);
     expect(BEACON_SCRIPT).toContain("JSON.stringify({events:events})");
+  });
+
+  it("posts a featured click for the spot the card was in, read from the card's own marker (Task 45)", () => {
+    expect(BEACON_SCRIPT).toContain("document.addEventListener('click'");
+    expect(BEACON_SCRIPT).toContain("closest('[data-dp-spot] [data-position]')");
+    expect(BEACON_SCRIPT).toContain("metric:'featured_click'");
+    expect(BEACON_SCRIPT).toContain("spotId:ul.getAttribute('data-dp-spot')");
   });
 
   it("uses a null-prototype map for the dedupe keys", () => {

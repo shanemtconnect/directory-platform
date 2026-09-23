@@ -5,6 +5,7 @@ import {
   categories,
   cities,
   featuredBids,
+  featuredClicksDaily,
   featuredSpots,
   featuredSubscriptions,
   listingCategories,
@@ -22,6 +23,8 @@ import type { TestDb } from "@/lib/db/types";
 import type { PillarScope } from "@/lib/routing/scope";
 import { slugify } from "@/lib/routing/slugify";
 import type { BidStatus, ChargeableBid, RankableBid, RankedBid } from "@/lib/spots/rank";
+import type { FeaturedClickDelta } from "@/lib/spots/clicks";
+import { dayKey, isDayKey } from "@/lib/stats/keys";
 import { writeAuditAs } from "./audit";
 import { LIVE_SUBSCRIPTION_STATUSES } from "./billing";
 import { publicListingColumns, publishedListings, type PublicListing } from "./listings";
@@ -830,6 +833,8 @@ export interface FeaturedListing extends PublicListing {
   readonly position: number;
   /** The listing's OWN city — a listing featured on another town's page still links home. */
   readonly citySlug: string;
+  /** The spot the position is in: the click beacon and the leaderboard link name it (Task 45). */
+  readonly spotId: string;
 }
 
 /**
@@ -855,7 +860,7 @@ export async function featuredForScope(
       return [];
   }
   const rows = await tx
-    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug })
+    .select({ ...publicListingColumns, position: featuredBids.position, citySlug: cities.slug, spotId: featuredSpots.id })
     .from(featuredBids)
     .innerJoin(featuredSpots, eq(featuredSpots.id, featuredBids.spotId))
     .innerJoin(listings, eq(listings.id, featuredBids.listingId))
@@ -1353,4 +1358,62 @@ export async function digestSentForMonth(tx: TestDb, viewer: Viewer, month: stri
     .where(and(eq(auditLog.action, "spots.digest_sent"), sql`${auditLog.meta}->>'month' = ${month}`))
     .limit(1);
   return row !== undefined;
+}
+
+/* ---------------------------------------------- appended: Task 45 clicks */
+
+/** Additive upsert; a delta for a spot or listing that is gone is dropped, not fatal. */
+export async function applyFeaturedClickDeltas(
+  tx: TestDb,
+  viewer: Viewer,
+  deltas: readonly FeaturedClickDelta[],
+): Promise<number> {
+  assertWorker(viewer);
+  const valid = deltas.filter((d) => UUID.test(d.spotId) && UUID.test(d.listingId) && isDayKey(d.day) && d.clicks > 0);
+  if (valid.length === 0) return 0;
+  const rows = sql.join(
+    valid.map((d) => sql`(${d.spotId}::uuid, ${d.listingId}::uuid, ${d.day}::date, ${Math.trunc(d.clicks)}::int)`),
+    sql`, `,
+  );
+  const written = (await tx.execute(sql`
+    insert into featured_clicks_daily (spot_id, listing_id, day, clicks)
+    select v.spot_id, v.listing_id, v.day, v.clicks
+      from (values ${rows}) as v(spot_id, listing_id, day, clicks)
+      join featured_spots s on s.id = v.spot_id
+      join listings l on l.id = v.listing_id
+    on conflict (spot_id, listing_id, day) do update set
+      clicks     = featured_clicks_daily.clicks + excluded.clicks,
+      updated_at = now()
+    returning featured_clicks_daily.id
+  `)) as unknown as unknown[];
+  return written.length;
+}
+
+/**
+ * The owner's featured clicks per spot over the last `days` days. Scoped by
+ * the listing's owner (constraint 24): somebody else's listing reads as an
+ * empty map.
+ */
+export async function featuredClicksForListing(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { listingId: string; profileId: string; days: number },
+  at: Date = now(),
+): Promise<Map<string, number>> {
+  assertSignedIn(viewer);
+  if (!UUID.test(input.listingId) || !UUID.test(input.profileId)) return new Map();
+  const since = new Date(at.getTime() - input.days * 24 * 60 * 60 * 1000);
+  const rows = await tx
+    .select({ spotId: featuredClicksDaily.spotId, clicks: sql<number>`sum(${featuredClicksDaily.clicks})::int` })
+    .from(featuredClicksDaily)
+    .innerJoin(listings, eq(listings.id, featuredClicksDaily.listingId))
+    .where(
+      and(
+        eq(featuredClicksDaily.listingId, input.listingId),
+        eq(listings.ownerId, input.profileId),
+        gte(featuredClicksDaily.day, dayKey(since)),
+      ),
+    )
+    .groupBy(featuredClicksDaily.spotId);
+  return new Map(rows.map((r) => [r.spotId, r.clicks]));
 }

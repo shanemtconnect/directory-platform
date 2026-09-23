@@ -10,6 +10,9 @@ import {
 import { claimDailyView, recordStats, type StatEvent } from "@/lib/stats/counters";
 import { MAX_BEACON_SPONSOR_IMPRESSIONS, SPONSOR_BEACON_METRIC } from "@/lib/ads/keys";
 import { recordSponsorImpressions } from "@/lib/ads/counters";
+import {
+  FEATURED_CLICK_METRIC, MAX_BEACON_FEATURED_CLICKS, recordFeaturedClicks, type FeaturedClickEvent,
+} from "@/lib/spots/clicks";
 import { clientIp } from "@/lib/spam/client-ip";
 import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 
@@ -73,6 +76,8 @@ interface BeaconBody {
   listingId?: unknown;
   metric?: unknown;
   events?: unknown;
+  /** Featured clicks (Task 45) name the spot the card was in. */
+  spotId?: unknown;
 }
 
 /**
@@ -90,21 +95,34 @@ interface ReadEvents {
   listings: StatEvent[];
   /** Sponsor campaign ids that were shown (Task 43); the script sends them as `listingId`. */
   sponsors: string[];
+  /** Clicks on featured cards (Task 45): the spot and the listing. */
+  featuredClicks: FeaturedClickEvent[];
 }
 
 function readEvents(body: BeaconBody): ReadEvents | null {
   const raw = Array.isArray(body.events)
     ? body.events
-    : [{ listingId: body.listingId, metric: body.metric }];
+    : [{ listingId: body.listingId, metric: body.metric, spotId: body.spotId }];
 
   const events: StatEvent[] = [];
   const sponsors: string[] = [];
+  const featuredClicks: FeaturedClickEvent[] = [];
   const seen = new Set<string>();
   let views = 0;
   let impressions = 0;
   for (const item of raw.slice(0, MAX_BEACON_EVENTS)) {
     if (typeof item !== "object" || item === null) continue;
-    const { listingId: rawId, metric } = item as BeaconBody;
+    const { listingId: rawId, metric, spotId: rawSpot } = item as BeaconBody;
+    if (metric === FEATURED_CLICK_METRIC) {
+      // One (spot, listing) pair per beacon, three at most: a page has three
+      // featured cards, and a click is on one of them.
+      if (!isUuid(rawId) || !isUuid(rawSpot) || featuredClicks.length >= MAX_BEACON_FEATURED_CLICKS) continue;
+      const click = { spotId: rawSpot.toLowerCase(), listingId: rawId.toLowerCase() };
+      if (!featuredClicks.some((c) => c.spotId === click.spotId && c.listingId === click.listingId)) {
+        featuredClicks.push(click);
+      }
+      continue;
+    }
     if (metric === SPONSOR_BEACON_METRIC) {
       if (!isUuid(rawId) || sponsors.length >= MAX_BEACON_SPONSOR_IMPRESSIONS) continue;
       const campaignId = rawId.toLowerCase();
@@ -130,7 +148,9 @@ function readEvents(body: BeaconBody): ReadEvents | null {
     }
     events.push({ listingId, metric });
   }
-  return events.length > 0 || sponsors.length > 0 ? { listings: events, sponsors } : null;
+  return events.length > 0 || sponsors.length > 0 || featuredClicks.length > 0
+    ? { listings: events, sponsors, featuredClicks }
+    : null;
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -207,6 +227,7 @@ export async function POST(request: Request): Promise<Response> {
   // is always better than a failed request.
   if (counted.length > 0) await recordStats(counted);
   if (read.sponsors.length > 0) await recordSponsorImpressions(read.sponsors);
+  if (read.featuredClicks.length > 0) await recordFeaturedClicks(read.featuredClicks);
   return ignored();
 }
 
