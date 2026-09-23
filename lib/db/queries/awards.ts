@@ -60,6 +60,11 @@ export function parseAwardYear(value: string): number | null {
   return year >= 2000 && year < 2200 ? year : null;
 }
 
+/** The calendar year `at` falls in, in the site's timezone — not the server's. */
+export function awardYearFor(at: Date): number {
+  return Number(new Intl.DateTimeFormat("en-GB", { timeZone: siteConfig.timezone, year: "numeric" }).format(at));
+}
+
 /** Where the winners of a year in a town are listed. */
 export const awardsCityPath = (year: number, citySlug: string): string => `/awards/${year}/${citySlug}`;
 

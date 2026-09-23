@@ -1,8 +1,8 @@
-import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";
 import { listingPaths } from "@/lib/db/queries/paths";
 import {
   awardsCityPath,
+  awardYearFor,
   computeAwardsForYear,
   type ComputeAwardsResult,
 } from "@/lib/db/queries/awards";
@@ -24,14 +24,8 @@ import type { Db } from "@/lib/db/client";
  * a decided slot alone, so a re-run is a no-op that reports `skipped`.
  */
 
-/** The calendar year `at` falls in, in the site's timezone — not the server's. */
-export function awardYearFor(at: Date): number {
-  const year = new Intl.DateTimeFormat("en-GB", {
-    timeZone: siteConfig.timezone,
-    year: "numeric",
-  }).format(at);
-  return Number(year);
-}
+/** Re-exported for the tests and the log line; the definition lives with the query module so the admin action shares it. */
+export { awardYearFor };
 
 /**
  * Everything a run left stale: the index, the year page, each town page that
