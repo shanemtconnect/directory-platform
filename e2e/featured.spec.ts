@@ -64,6 +64,13 @@ async function verifiedListing(sql: postgres.Sql, s: Seeded, profileId: string |
     (id, name, slug, city_id, vertical_id, primary_category_id, status, tier, claim_status, owner_id, source)
     values (${id}, ${name}, ${`e2e-featured-${id.slice(0, 8)}`}, ${s.cityId}, ${s.verticalId}, ${s.categoryId},
       'published', 'premium', 'verified', ${profileId}, 'seed')`;
+  // The slug registry is what the public route resolves through: without this
+  // row the listing shows in the city grid but its own page is a 404 — and as a
+  // premium, verified listing it sorts first, so every other spec that clicks
+  // "the first listing" would land on it.
+  await sql`insert into slugs (parent_scope, slug, kind, entity_id)
+    values (${s.cityId}, ${`e2e-featured-${id.slice(0, 8)}`}, 'listing', ${id})
+    on conflict do nothing`;
   await sql`insert into subscriptions (listing_id, user_id, tier, interval, status, provider_plan_id)
     values (${id}, ${profileId}, 'premium', 'monthly', 'active', 'P-E2E')`;
   return id;
@@ -73,6 +80,7 @@ async function cleanup(sql: postgres.Sql, listingIds: string[], spotId: string |
   await sql`delete from featured_bids where listing_id = any(${listingIds})`;
   await sql`delete from featured_subscriptions where listing_id = any(${listingIds})`;
   if (spotId !== null) await sql`delete from featured_spots where id = ${spotId}`;
+  await sql`delete from slugs where kind = 'listing' and entity_id = any(${listingIds})`;
   await sql`delete from listings where id = any(${listingIds})`;
 }
 
