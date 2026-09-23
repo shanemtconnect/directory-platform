@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import { siteConfig } from "@/config/site.config";
 import {
+  categories,
   cities,
   featuredBids,
   featuredSpots,
@@ -590,6 +591,7 @@ export interface FeaturedSubscription {
   readonly quantity: number;
   readonly requestedQuantity: number;
   readonly reviseRequestedAt: Date | null;
+  readonly approveUrl: string | null;
   readonly currentPeriodEnd: Date | null;
   readonly createdAt: Date;
 }
@@ -604,6 +606,7 @@ const subColumns = {
   quantity: featuredSubscriptions.quantity,
   requestedQuantity: featuredSubscriptions.requestedQuantity,
   reviseRequestedAt: featuredSubscriptions.reviseRequestedAt,
+  approveUrl: featuredSubscriptions.approveUrl,
   currentPeriodEnd: featuredSubscriptions.currentPeriodEnd,
   createdAt: featuredSubscriptions.createdAt,
 } as const;
@@ -676,12 +679,12 @@ export async function attachFeaturedProvider(
   tx: TestDb,
   viewer: Viewer,
   id: string,
-  providerSubscriptionId: string,
+  provider: { providerSubscriptionId: string; approveUrl: string | null },
 ): Promise<void> {
   assertSignedIn(viewer);
   await tx
     .update(featuredSubscriptions)
-    .set({ providerSubscriptionId, updatedAt: now() })
+    .set({ ...provider, updatedAt: now() })
     .where(eq(featuredSubscriptions.id, id));
 }
 
@@ -690,6 +693,7 @@ export interface FeaturedSubscriptionPatch {
   readonly quantity?: number;
   readonly requestedQuantity?: number;
   readonly reviseRequestedAt?: Date | null;
+  readonly approveUrl?: string | null;
   readonly currentPeriodEnd?: Date | null;
 }
 
@@ -870,4 +874,102 @@ export async function spotPaths(tx: TestDb, viewer: Viewer, spotId: string): Pro
 async function actorFor(tx: TestDb, viewer: Viewer): Promise<string | null> {
   if (viewer.role === "public" || isAdmin(viewer)) return null;
   return (await ensureProfile(tx, viewer)).id;
+}
+
+/* ------------------------------------------------------- appended: bidding */
+
+/** Whether a spot's area is real: a published city, or a region some city is in. */
+export async function spotAreaExists(tx: TestDb, _viewer: Viewer, key: SpotKey): Promise<boolean> {
+  if (key.areaKind === "city") {
+    if (!UUID.test(key.areaId)) return false;
+    const [row] = await tx
+      .select({ id: cities.id })
+      .from(cities)
+      .where(and(eq(cities.id, key.areaId), eq(cities.isPublished, true)))
+      .limit(1);
+    return row !== undefined;
+  }
+  const rows = await tx
+    .selectDistinct({ region: cities.region })
+    .from(cities)
+    .where(and(isNotNull(cities.region), eq(cities.isPublished, true)));
+  return rows.some((r) => r.region !== null && slugify(r.region) === key.areaId);
+}
+
+/** A raise or a first bid the buyer has not yet approved at PayPal. */
+export async function hasPendingBids(tx: TestDb, viewer: Viewer, listingId: string): Promise<boolean> {
+  assertWorker(viewer);
+  const [row] = await tx
+    .select({ id: featuredBids.id })
+    .from(featuredBids)
+    .where(
+      and(
+        eq(featuredBids.listingId, listingId),
+        or(eq(featuredBids.status, "pending"), isNotNull(featuredBids.pendingAmountCents)),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
+export interface SpotArea {
+  readonly key: SpotKey;
+  readonly areaName: string;
+  readonly categoryName: string | null;
+}
+
+/**
+ * Names for the owner's table: the city or region, and the category. Every
+ * key is answered — an unknown id gets its raw key back rather than a hole
+ * in the table.
+ */
+export async function describeSpotKeys(
+  tx: TestDb,
+  _viewer: Viewer,
+  keys: readonly SpotKey[],
+): Promise<SpotArea[]> {
+  const cityIds = [...new Set(keys.filter((k) => k.areaKind === "city").map((k) => k.areaId))].filter((id) =>
+    UUID.test(id),
+  );
+  const categoryIds = [...new Set(keys.map((k) => k.categoryId).filter((c): c is string => c !== null))];
+  const cityRows =
+    cityIds.length === 0
+      ? []
+      : await tx.select({ id: cities.id, name: cities.name }).from(cities).where(inArray(cities.id, cityIds));
+  const catRows =
+    categoryIds.length === 0
+      ? []
+      : await tx
+          .select({ id: categories.id, name: categories.name })
+          .from(categories)
+          .where(inArray(categories.id, categoryIds));
+  const regionRows = await tx
+    .selectDistinct({ region: cities.region })
+    .from(cities)
+    .where(isNotNull(cities.region));
+  const cityName = new Map(cityRows.map((c) => [c.id, c.name]));
+  const catName = new Map(catRows.map((c) => [c.id, c.name]));
+  const regionName = new Map(
+    regionRows.filter((r): r is { region: string } => r.region !== null).map((r) => [slugify(r.region), r.region]),
+  );
+  return keys.map((key) => ({
+    key,
+    areaName:
+      key.areaKind === "city" ? (cityName.get(key.areaId) ?? key.areaId) : (regionName.get(key.areaId) ?? key.areaId),
+    categoryName: key.categoryId === null ? null : (catName.get(key.categoryId) ?? null),
+  }));
+}
+
+/** The listing's uncancelled bids, for the system (no owner in the loop). */
+export async function listingBidsForSystem(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<OwnerBid[]> {
+  assertWorker(viewer);
+  const rows = await tx
+    .select({ ...bidColumns, spotId: featuredBids.spotId })
+    .from(featuredBids)
+    .where(and(eq(featuredBids.listingId, listingId), ne(featuredBids.status, "cancelled")));
+  return rows.map((r) => ({ ...toBid(r), spotId: r.spotId }));
 }
