@@ -77,6 +77,7 @@
       "version": "7",
       "when": 1789742625324,
       "tag": "0012_slug_kind_region",
+      "breakpoints": true
     },
     {
       "idx": 13,
