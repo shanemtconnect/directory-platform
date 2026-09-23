@@ -131,14 +131,15 @@ test.describe("rails on (ADS_ENABLED=true)", () => {
     expect(html).not.toMatch(/<script[^>]+src="https?:\/\/(?!localhost)/);
   });
 
-  test("a city pillar page carries the rails too; the script is still inlined once", async ({ request }) => {
+  test("a city pillar page carries the rails too; the script is still inlined once", async ({ page }) => {
     const city = await busiestCity();
-    const res = await request.get(city.path);
-    expect(res.ok()).toBe(true);
-    const html = await res.text();
-    expect(html).toContain('data-testid="sponsor-rail-left"');
-    expect(html).toContain('data-testid="sponsor-rail-right"');
-    expect(html).toContain('data-testid="sponsor-inline"');
-    expect((html.match(/window\.__dpBeacon/g) ?? []).length).toBe(1);
+    await page.goto(city.path);
+    await expect(page.locator('[data-testid="sponsor-rail-left"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="sponsor-rail-right"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="sponsor-inline"]')).toHaveCount(1);
+    // Sponsor cards and listing cards share one beacon script (see e2e/stats.spec.ts
+    // for why the flight payload makes a plain text count read double).
+    const scripts = await page.locator("script:not([src])").allTextContents();
+    expect(scripts.filter((s) => s.trimStart().startsWith("(function(){"))).toHaveLength(1);
   });
 });

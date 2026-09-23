@@ -63,8 +63,4 @@ export function sponsorLogoUrl(
   return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
-/** The letter a card shows when there is no logo. */
-export function sponsorInitial(name: string): string {
-  const first = name.trim().match(/\p{L}|\p{N}/u);
-  return first ? first[0].toUpperCase() : "•";
-}
+export { sponsorInitial } from "./initial";

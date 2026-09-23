@@ -21,7 +21,7 @@ import { notifySponsorSubmitted } from "@/lib/email/notify";
 import { isUuid } from "@/lib/actions/validation";
 import type { TestDb } from "@/lib/db/types";
 
-export const SPONSOR_PAGE = "/advertise/sponsor";
+const SPONSOR_PAGE = "/advertise/sponsor";
 
 export interface SponsorFormState {
   status: "idle" | "submitted" | "error";

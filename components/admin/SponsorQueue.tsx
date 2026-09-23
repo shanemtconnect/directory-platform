@@ -11,7 +11,7 @@ import {
   type SponsorQueueState,
 } from "@/lib/actions/admin-sponsors";
 import { SPONSOR_REJECTION_MIN_LENGTH, type AdminSponsorCampaign } from "@/lib/db/queries/ads";
-import { sponsorInitial } from "@/lib/ads/logo";
+import { sponsorInitial } from "@/lib/ads/initial";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SubmitButton } from "@/components/ui/SubmitButton";
