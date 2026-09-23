@@ -187,3 +187,8 @@ schedule("purge-stats", "0 4 * * *", async (tx) => {
   const { purgeStats } = await import("./jobs/purge-stats");
   await purgeStats(tx);
 });
+
+schedule("flush-sponsor-stats", "*/5 * * * *", async (tx) => {
+  const { flushSponsorStats } = await import("./jobs/flush-sponsor-stats");
+  await flushSponsorStats(tx);
+});

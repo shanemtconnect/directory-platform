@@ -8,6 +8,8 @@ import {
   isUuid,
 } from "@/lib/stats/keys";
 import { claimDailyView, recordStats, type StatEvent } from "@/lib/stats/counters";
+import { MAX_BEACON_SPONSOR_IMPRESSIONS, SPONSOR_BEACON_METRIC } from "@/lib/ads/keys";
+import { recordSponsorImpressions } from "@/lib/ads/counters";
 import { clientIp } from "@/lib/spam/client-ip";
 import { BEACON_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 
@@ -84,18 +86,31 @@ interface BeaconBody {
  * the whole page's counts rather than the tail; a forged batch gets nothing
  * to react to either way.
  */
-function readEvents(body: BeaconBody): StatEvent[] | null {
+interface ReadEvents {
+  listings: StatEvent[];
+  /** Sponsor campaign ids that were shown (Task 43); the script sends them as `listingId`. */
+  sponsors: string[];
+}
+
+function readEvents(body: BeaconBody): ReadEvents | null {
   const raw = Array.isArray(body.events)
     ? body.events
     : [{ listingId: body.listingId, metric: body.metric }];
 
   const events: StatEvent[] = [];
+  const sponsors: string[] = [];
   const seen = new Set<string>();
   let views = 0;
   let impressions = 0;
   for (const item of raw.slice(0, MAX_BEACON_EVENTS)) {
     if (typeof item !== "object" || item === null) continue;
     const { listingId: rawId, metric } = item as BeaconBody;
+    if (metric === SPONSOR_BEACON_METRIC) {
+      if (!isUuid(rawId) || sponsors.length >= MAX_BEACON_SPONSOR_IMPRESSIONS) continue;
+      const campaignId = rawId.toLowerCase();
+      if (!sponsors.includes(campaignId)) sponsors.push(campaignId);
+      continue;
+    }
     // `isBeaconMetric` and not `isStatMetric`: enquiries and shortlist saves
     // are counted inside the transaction that writes the row, and must not be
     // forgeable from the internet.
@@ -115,7 +130,7 @@ function readEvents(body: BeaconBody): StatEvent[] | null {
     }
     events.push({ listingId, metric });
   }
-  return events.length > 0 ? events : null;
+  return events.length > 0 || sponsors.length > 0 ? { listings: events, sponsors } : null;
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -171,8 +186,9 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (typeof body !== "object" || body === null || Array.isArray(body)) return badRequest();
 
-  const events = readEvents(body as BeaconBody);
-  if (!events) return badRequest();
+  const read = readEvents(body as BeaconBody);
+  if (!read) return badRequest();
+  const events = read.listings;
 
   // One address is one view of one listing per day. A reload is not a second
   // visitor, and neither is a script posting the same beacon in a loop — the
@@ -190,6 +206,7 @@ export async function POST(request: Request): Promise<Response> {
   // Fire-and-forget by contract: `recordStats` never throws, and a lost count
   // is always better than a failed request.
   if (counted.length > 0) await recordStats(counted);
+  if (read.sponsors.length > 0) await recordSponsorImpressions(read.sponsors);
   return ignored();
 }
 

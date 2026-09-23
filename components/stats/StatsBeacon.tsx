@@ -1,5 +1,6 @@
 import { cache } from "react";
 import type { BeaconMetric } from "@/lib/stats/keys";
+import type { SponsorBeaconMetric } from "@/lib/ads/keys";
 import { BEACON_SCRIPT } from "./beacon-script";
 
 /**
@@ -44,7 +45,8 @@ export interface StatsBeaconProps {
    * `view` — this page is about this listing.
    * `impression` — this listing appeared in a list on this page.
    */
-  metric?: BeaconMetric;
+  /** `sponsor_impression` counts a sponsor campaign (Task 43); `listingId` is then the campaign id. */
+  metric?: BeaconMetric | SponsorBeaconMetric;
 }
 
 export function StatsBeacon({ listingId, metric = "view" }: StatsBeaconProps) {
