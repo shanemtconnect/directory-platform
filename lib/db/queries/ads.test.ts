@@ -351,3 +351,21 @@ describe("sponsorNotification", () => {
     });
   });
 });
+
+describe("self-serve helpers", () => {
+  it("setSponsorLogo and advertiserCampaignBySubscription are owner scoped", async () => {
+    await withTestDb(async (tx) => {
+      const a = await makePerson(tx);
+      const b = await makePerson(tx);
+      const id = await created(tx, a.viewer, a.profileId);
+      const { setSponsorLogo, advertiserCampaignBySubscription } = await import("./ads");
+      expect(await setSponsorLogo(tx, b.viewer, { campaignId: id, profileId: b.profileId, logoPath: "x" })).toBe(false);
+      expect(await setSponsorLogo(tx, a.viewer, { campaignId: id, profileId: a.profileId, logoPath: "sponsors/x/logo.webp" })).toBe(true);
+      await attachSponsorSubscription(tx, a.viewer, { campaignId: id, profileId: a.profileId, providerSubscriptionId: "I-OWN" });
+      expect(await advertiserCampaignBySubscription(tx, a.viewer, { profileId: a.profileId, providerSubscriptionId: "I-OWN" }))
+        .toEqual({ id, billingStatus: "approval_pending" });
+      expect(await advertiserCampaignBySubscription(tx, b.viewer, { profileId: b.profileId, providerSubscriptionId: "I-OWN" })).toBeNull();
+      await expect(advertiserCampaignBySubscription(tx, PUBLIC_VIEWER, { profileId: a.profileId, providerSubscriptionId: "I-OWN" })).rejects.toThrow("FORBIDDEN");
+    });
+  });
+});

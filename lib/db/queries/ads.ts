@@ -578,3 +578,41 @@ export async function sponsorNotification(
     .limit(1);
   return row ?? null;
 }
+
+/* ----------------------------------------------- self-serve helpers (owner scoped) */
+
+/** Records where the processed logo went; the key is minted after the row exists. */
+export async function setSponsorLogo(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { campaignId: string; profileId: string; logoPath: string },
+): Promise<boolean> {
+  assertSignedIn(viewer);
+  if (!isUuid(input.campaignId)) return false;
+  const rows = await tx
+    .update(sponsorCampaigns)
+    .set({ logoPath: input.logoPath, updatedAt: now() })
+    .where(and(eq(sponsorCampaigns.id, input.campaignId), eq(sponsorCampaigns.advertiserId, input.profileId)))
+    .returning({ id: sponsorCampaigns.id });
+  return rows.length === 1;
+}
+
+/** The advertiser's own campaign for a PayPal subscription id, or null — the return page's gate. */
+export async function advertiserCampaignBySubscription(
+  tx: TestDb,
+  viewer: Viewer,
+  input: { profileId: string; providerSubscriptionId: string },
+): Promise<{ id: string; billingStatus: SponsorBillingStatus } | null> {
+  assertSignedIn(viewer);
+  const [row] = await tx
+    .select({ id: sponsorCampaigns.id, billingStatus: sponsorCampaigns.billingStatus })
+    .from(sponsorCampaigns)
+    .where(
+      and(
+        eq(sponsorCampaigns.subscriptionId, input.providerSubscriptionId),
+        eq(sponsorCampaigns.advertiserId, input.profileId),
+      ),
+    )
+    .limit(1);
+  return row ? { id: row.id, billingStatus: row.billingStatus as SponsorBillingStatus } : null;
+}
