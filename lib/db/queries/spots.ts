@@ -662,6 +662,9 @@ export async function createFeaturedSubscription(
       status: "approval_pending",
       quantity: 0,
       requestedQuantity: input.quantity,
+      // Through lib/clock, so the sync's "unapproved for a day" is provable.
+      createdAt: now(),
+      updatedAt: now(),
     })
     .returning({ id: featuredSubscriptions.id });
   const id = row!.id;

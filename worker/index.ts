@@ -187,3 +187,11 @@ schedule("purge-stats", "0 4 * * *", async (tx) => {
   const { purgeStats } = await import("./jobs/purge-stats");
   await purgeStats(tx);
 });
+
+// Featured spots (lib/spots). Hourly, offset from the other billing jobs for
+// the same reason they are offset from each other; a no-op without PayPal
+// credentials. See worker/jobs/spots-sync.ts.
+schedule("spots-sync", "47 * * * *", async (tx) => {
+  const { syncFeaturedSubscriptions } = await import("./jobs/spots-sync");
+  return syncFeaturedSubscriptions(tx);
+});
