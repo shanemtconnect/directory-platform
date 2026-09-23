@@ -16,6 +16,8 @@ import {
   NOTIFY_REPORT,
   NOTIFY_REVIEW_SUBMITTED,
   NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_SPOT_DIGEST,
+  NOTIFY_SPOT_OUTBID,
   NOTIFY_SUBMISSION,
 } from "@/lib/email/notify";
 import {
@@ -63,6 +65,14 @@ import { awardNotification, awardsCityPath } from "@/lib/db/queries/awards";
 import { awardWon } from "@/lib/email/templates/award";
 import { hashToken } from "@/lib/security/token-hash";
 import type { Db } from "@/lib/db/client";
+import { siteConfig } from "@/config/site.config";
+import { formatMoney } from "@/lib/pricing";
+import { signUnsubscribe } from "@/lib/email/unsubscribe";
+import { outbidNotification } from "@/lib/db/queries/spots";
+import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availability";
+import { minimumToEnter, minimumToTakeFirst, UNIT_CENTS } from "@/lib/spots/rank";
+import { leaderboardPath, prefilledBidPath } from "@/lib/spots/notify";
+import { spotDigestToAdmin, spotDigestToOwner, spotOutbid } from "@/lib/email/templates/spots";
 
 /**
  * Drains the notification queue.
@@ -430,6 +440,11 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     // Appended by the awards module; the handler is at the foot of the file.
     case NOTIFY_AWARD_WON:
       return runAwardWon(db, d, job.payload);
+    // Appended by the featured-spots module (Task 45); handlers at the foot.
+    case NOTIFY_SPOT_OUTBID:
+      return runSpotOutbid(db, d, job.payload);
+    case NOTIFY_SPOT_DIGEST:
+      return runSpotDigest(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -654,7 +669,6 @@ async function runAuthEmail(
 
 import { quoteNotification } from "@/lib/db/queries/quotes";
 import { quoteAcknowledgement, quoteToRecipient } from "@/lib/email/templates/quotes";
-import { signUnsubscribe } from "@/lib/email/unsubscribe";
 
 /**
  * One request, many recipients, one job.
@@ -747,6 +761,94 @@ async function runAwardWon(db: Db, d: Delivery, payload: Record<string, unknown>
       cityName: data.cityName,
       categoryName: data.categoryName,
       badgeUrl: siteUrl("/advertise/badge"),
+    }),
+  });
+}
+
+/* ------------------------------------------------ featured spots (Task 45) */
+
+const spotMoney = (cents: number) => formatMoney(cents / UNIT_CENTS, siteConfig.locale, siteConfig.currency);
+const spotLabelOf = (areaName: string, categoryName: string | null) =>
+  categoryName === null ? areaName : `${categoryName} in ${areaName}`;
+
+/**
+ * The outbid email, from the bid AS IT STANDS when the job runs. The payload
+ * names the event; the amount is what it would take now, and a bid that has
+ * regained what it lost (or was cancelled, or has nobody to write to) sends
+ * nothing and completes.
+ */
+async function runSpotOutbid(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const bidId = readId(payload, "bidId");
+  const kind = payload.kind;
+  if (bidId === null || (kind !== "lost-first" && kind !== "dropped-out")) {
+    throw new Retryable("The job carries no bidId or kind");
+  }
+  const data = await outbidNotification(db, ADMIN_VIEWER, bidId);
+  if (data === null) throw new Retryable(`No bid ${bidId}`);
+  if (data.status === "cancelled" || data.status === "pending") return;
+  if (kind === "lost-first" && data.position === 1) return;
+  if (kind === "dropped-out" && data.position !== null) return;
+  if (data.ownerEmail === null) {
+    console.warn(`[worker] featured bid ${bidId} has no owner address to write to`);
+    return;
+  }
+  const standing = { floorCents: data.spot.floorCents, positions: data.spot.positions, featured: data.featuredOthers };
+  const amountCents = kind === "lost-first" ? minimumToTakeFirst(standing) : minimumToEnter(standing);
+  const keyString = `${data.spotKey.areaKind}:${data.spotKey.areaId}:${data.spotKey.categoryId ?? "-"}`;
+  await deliver(d, OWNER, {
+    to: data.ownerEmail,
+    ...spotOutbid({
+      listingName: data.listingName,
+      spotLabel: spotLabelOf(data.areaName, data.categoryName),
+      kind,
+      position: data.position,
+      positions: data.spot.positions,
+      amount: spotMoney(amountCents),
+      bidUrl: siteUrl(prefilledBidPath(data.listingId, keyString, amountCents / UNIT_CENTS)),
+      leaderboardUrl: siteUrl(leaderboardPath(data.spot.id)),
+    }),
+  });
+}
+
+/**
+ * The monthly digest, recomputed at send time. An owner job whose listing
+ * has no empty spot any more (or whose address has unsubscribed since the
+ * job was queued) completes without a send. The admin job is the site-wide
+ * table.
+ */
+async function runSpotDigest(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  if (payload.admin === true) {
+    const report = await emptySpotsReport(db, ADMIN_VIEWER);
+    const empty = report.filter((r) => r.status === "open" && r.filled < r.positions);
+    await deliver(d, ADMIN, {
+      to: adminAddress(),
+      ...spotDigestToAdmin({
+        total: empty.length,
+        rows: empty.map((r) => ({
+          label: spotLabelOf(r.areaName, r.categoryName),
+          filled: r.filled,
+          positions: r.positions,
+          floor: spotMoney(r.floorCents),
+          top: r.topCents === null ? "—" : spotMoney(r.topCents),
+        })),
+        csvUrl: siteUrl("/admin/spots/export"),
+      }),
+    });
+    return;
+  }
+  const listingId = readId(payload, "listingId");
+  if (listingId === null) throw new Retryable("The job carries no listingId");
+  const a = await availabilityForListing(db, ADMIN_VIEWER, listingId);
+  if (a === null || a.emptyCount === 0 || a.ownerEmail === null || a.unsubscribed) return;
+  const token = signUnsubscribe({ email: a.ownerEmail, listingId });
+  await deliver(d, OWNER, {
+    to: a.ownerEmail,
+    ...spotDigestToOwner({
+      listingName: a.listingName,
+      emptyCount: a.emptyCount,
+      fromAmount: spotMoney(a.fromCents),
+      bidUrl: siteUrl(`/account/listings/${listingId}/featured`),
+      unsubscribeToken: token,
     }),
   });
 }

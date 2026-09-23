@@ -9,8 +9,11 @@ import {
   featuredSubscriptions,
   listingCategories,
   listings,
+  profiles,
   slugs,
   subscriptions,
+  unsubscribes,
+  user,
 } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import { ensureProfile } from "@/lib/auth/profile";
@@ -1122,4 +1125,221 @@ export async function markOutbidNotified(
     )
     .returning({ id: featuredBids.id });
   return rows.length > 0;
+}
+
+export interface OutbidNotification {
+  readonly bidId: string;
+  readonly listingId: string;
+  readonly listingName: string;
+  readonly ownerEmail: string | null;
+  readonly status: BidStatus;
+  readonly position: number | null;
+  readonly amountCents: number;
+  readonly spot: SpotRow;
+  readonly spotKey: SpotKey;
+  readonly areaName: string;
+  readonly categoryName: string | null;
+  /** The OTHER listings' featured amounts, highest first — what the minimums derive from. */
+  readonly featuredOthers: number[];
+}
+
+/**
+ * Everything the outbid email needs, re-read at send time: the bid as it
+ * stands now, the owner's account address, and the spot's standing.
+ */
+export async function outbidNotification(
+  tx: TestDb,
+  viewer: Viewer,
+  bidId: string,
+): Promise<OutbidNotification | null> {
+  assertWorker(viewer);
+  if (!UUID.test(bidId)) return null;
+  const [row] = await tx
+    .select({
+      bidId: featuredBids.id,
+      spotId: featuredBids.spotId,
+      listingId: featuredBids.listingId,
+      listingName: listings.name,
+      ownerEmail: user.email,
+      status: featuredBids.status,
+      position: featuredBids.position,
+      amountCents: featuredBids.amountCents,
+    })
+    .from(featuredBids)
+    .innerJoin(listings, eq(listings.id, featuredBids.listingId))
+    .leftJoin(profiles, eq(profiles.id, listings.ownerId))
+    .leftJoin(user, eq(user.id, profiles.userId))
+    .where(eq(featuredBids.id, bidId))
+    .limit(1);
+  if (!row) return null;
+  const spot = await spotById(tx, viewer, row.spotId);
+  if (spot === null) return null;
+  const key: SpotKey = { areaKind: spot.areaKind, areaId: spot.areaId, categoryId: spot.categoryId };
+  const [area] = await describeSpotKeys(tx, viewer, [key]);
+  const bids = await spotBids(tx, viewer, spot.id);
+  return {
+    bidId: row.bidId,
+    listingId: row.listingId,
+    listingName: row.listingName,
+    ownerEmail: row.ownerEmail?.trim() ? row.ownerEmail : null,
+    status: row.status as BidStatus,
+    position: row.position,
+    amountCents: row.amountCents,
+    spot,
+    spotKey: key,
+    areaName: area?.areaName ?? spot.areaId,
+    categoryName: area?.categoryName ?? null,
+    featuredOthers: bids
+      .filter((b) => b.listingId !== row.listingId && b.status === "active" && b.position !== null)
+      .map((b) => b.amountCents)
+      .sort((a, b) => b - a),
+  };
+}
+
+/* --------------------------------------------- appended: Task 45 availability */
+
+export interface SystemListing extends BiddingListing {
+  readonly ownerEmail: string | null;
+}
+
+/**
+ * `listingForBidding` for the system: no owner in the loop, the owner's
+ * account address alongside. Same eligibility rule, so the digest writes
+ * only to listings that could actually bid.
+ */
+export async function listingForSystem(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<SystemListing | null> {
+  assertWorker(viewer);
+  if (!UUID.test(listingId)) return null;
+  const [row] = await tx
+    .select({
+      id: listings.id,
+      name: listings.name,
+      status: listings.status,
+      claimStatus: listings.claimStatus,
+      primaryCategoryId: listings.primaryCategoryId,
+      cityId: listings.cityId,
+      cityName: cities.name,
+      citySlug: cities.slug,
+      region: cities.region,
+      ownerEmail: user.email,
+    })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(profiles, eq(profiles.id, listings.ownerId))
+    .leftJoin(user, eq(user.id, profiles.userId))
+    .where(eq(listings.id, listingId))
+    .limit(1);
+  if (!row) return null;
+  const extra = await tx
+    .select({ categoryId: listingCategories.categoryId })
+    .from(listingCategories)
+    .where(eq(listingCategories.listingId, row.id));
+  const categoryIds = [row.primaryCategoryId, ...extra.map((c) => c.categoryId).filter((c) => c !== row.primaryCategoryId)];
+  const [live] = await tx
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.listingId, row.id),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        inArray(subscriptions.tier, ["essential", "premium"]),
+      ),
+    )
+    .limit(1);
+  const reason: IneligibleReason | null =
+    row.status !== "published" ? "not-published" : row.claimStatus !== "verified" ? "not-verified" : live === undefined ? "no-subscription" : null;
+  return {
+    id: row.id,
+    name: row.name,
+    cityId: row.cityId,
+    cityName: row.cityName,
+    citySlug: row.citySlug,
+    cityPath: `/${row.citySlug}`,
+    region: row.region,
+    categoryIds,
+    eligible: reason === null,
+    reason,
+    ownerEmail: row.ownerEmail?.trim() ? row.ownerEmail : null,
+  };
+}
+
+/** Every listing the digest may write to: published, Verified, on a live paid plan, with an owner address. */
+export async function eligibleListingIds(tx: TestDb, viewer: Viewer): Promise<string[]> {
+  assertWorker(viewer);
+  const rows = await tx
+    .selectDistinct({ id: listings.id })
+    .from(listings)
+    .innerJoin(profiles, eq(profiles.id, listings.ownerId))
+    .innerJoin(user, eq(user.id, profiles.userId))
+    .innerJoin(subscriptions, eq(subscriptions.listingId, listings.id))
+    .where(
+      and(
+        eq(listings.status, "published"),
+        eq(listings.claimStatus, "verified"),
+        inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        inArray(subscriptions.tier, ["essential", "premium"]),
+        sql`nullif(trim(${user.email}), '') is not null`,
+      ),
+    )
+    .orderBy(asc(listings.id));
+  return rows.map((r) => r.id);
+}
+
+/** Whether this address has opted out of marketing mail (`unsubscribes`). */
+export async function isUnsubscribed(tx: TestDb, viewer: Viewer, email: string): Promise<boolean> {
+  assertWorker(viewer);
+  const [row] = await tx
+    .select({ id: unsubscribes.id })
+    .from(unsubscribes)
+    .where(eq(unsubscribes.addressNormalised, email.trim().toLowerCase()))
+    .limit(1);
+  return row !== undefined;
+}
+
+/** Every spot row there is, for the admin table. */
+export async function allSpots(tx: TestDb, viewer: Viewer): Promise<SpotRow[]> {
+  assertWorker(viewer);
+  const rows = await tx.select(spotColumns).from(featuredSpots).orderBy(asc(featuredSpots.areaKind), asc(featuredSpots.areaId));
+  return rows.map(toSpot);
+}
+
+export interface SpotFill {
+  readonly filled: number;
+  readonly topCents: number | null;
+}
+
+/** Per spot: how many positions are held and the highest featured amount. */
+export async function spotFills(tx: TestDb, viewer: Viewer): Promise<Map<string, SpotFill>> {
+  assertWorker(viewer);
+  const rows = await tx
+    .select({
+      spotId: featuredBids.spotId,
+      filled: sql<number>`count(*)::int`,
+      topCents: sql<number | null>`max(${featuredBids.amountCents})::int`,
+    })
+    .from(featuredBids)
+    .where(and(eq(featuredBids.status, "active"), isNotNull(featuredBids.position)))
+    .groupBy(featuredBids.spotId);
+  return new Map(rows.map((r) => [r.spotId, { filled: r.filled, topCents: r.topCents }]));
+}
+
+export interface PublishedCityArea {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly region: string | null;
+}
+
+/** Published cities with their region — the areas an empty spot can be virtual for. */
+export async function publishedCityAreas(tx: TestDb, viewer: Viewer): Promise<PublishedCityArea[]> {
+  assertWorker(viewer);
+  return tx
+    .select({ id: cities.id, name: cities.name, slug: cities.slug, region: cities.region })
+    .from(cities)
+    .where(eq(cities.isPublished, true))
+    .orderBy(asc(cities.name));
 }

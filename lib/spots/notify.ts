@@ -88,3 +88,15 @@ export async function notifyOutbid(
   }
   return queued;
 }
+
+/* ----------------------------------------------------- the email's numbers */
+
+/** The bidding page with a spot and an amount prefilled — the email's one-click link. */
+export function prefilledBidPath(listingId: string, keyString: string, amountUnits: number): string {
+  const q = new URLSearchParams({ bid: keyString, amount: String(amountUnits) });
+  return `/account/listings/${listingId}/featured?${q.toString()}`;
+}
+
+export function leaderboardPath(spotId: string): string {
+  return `/spots/${spotId}`;
+}
