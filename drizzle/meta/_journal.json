@@ -73,27 +73,6 @@
       "breakpoints": true
     },
     {
-      "idx": 12,
-      "version": "7",
-      "when": 1789742625324,
-      "tag": "0012_slug_kind_region",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1790064262373,
-      "tag": "0013_quote_broadcast",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1790200000000,
-      "tag": "0016_awards_revocation",
-      "breakpoints": true
-    },
-    {
       "idx": 10,
       "version": "7",
       "when": 1790164470829,
@@ -108,10 +87,31 @@
       "breakpoints": true
     },
     {
+      "idx": 12,
+      "version": "7",
+      "when": 1790164471900,
+      "tag": "0012_slug_kind_region",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790164472900,
+      "tag": "0013_quote_broadcast",
+      "breakpoints": true
+    },
+    {
       "idx": 15,
       "version": "7",
       "when": 1790400000000,
       "tag": "0015_job_board",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790400001000,
+      "tag": "0016_awards_revocation",
       "breakpoints": true
     }
   ]
