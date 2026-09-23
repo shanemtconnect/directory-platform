@@ -6,6 +6,7 @@ CREATE TABLE "featured_bids" (
 	"listing_id" uuid NOT NULL,
 	"subscription_id" uuid,
 	"amount_cents" integer NOT NULL,
+	"amount_set_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"pending_amount_cents" integer,
 	"status" text DEFAULT 'pending' NOT NULL,
 	"position" integer,
@@ -44,9 +45,10 @@ CREATE TABLE "featured_subscriptions" (
 	"quantity" integer DEFAULT 0 NOT NULL,
 	"requested_quantity" integer DEFAULT 0 NOT NULL,
 	"revise_requested_at" timestamp with time zone,
+	"paused_at" timestamp with time zone,
 	"approve_url" text,
 	"current_period_end" timestamp with time zone,
-	CONSTRAINT "featured_subscriptions_status_check" CHECK ("featured_subscriptions"."status" in ('approval_pending', 'active', 'past_due', 'cancelled', 'suspended', 'expired')),
+	CONSTRAINT "featured_subscriptions_status_check" CHECK ("featured_subscriptions"."status" in ('approval_pending', 'active', 'past_due', 'paused', 'cancelled', 'suspended', 'expired')),
 	CONSTRAINT "featured_subscriptions_quantity_check" CHECK ("featured_subscriptions"."quantity" >= 0),
 	CONSTRAINT "featured_subscriptions_requested_check" CHECK ("featured_subscriptions"."requested_quantity" >= 0)
 );
@@ -56,9 +58,11 @@ ALTER TABLE "featured_bids" ADD CONSTRAINT "featured_bids_listing_id_listings_id
 ALTER TABLE "featured_bids" ADD CONSTRAINT "featured_bids_subscription_id_featured_subscriptions_id_fk" FOREIGN KEY ("subscription_id") REFERENCES "public"."featured_subscriptions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "featured_spots" ADD CONSTRAINT "featured_spots_category_id_categories_id_fk" FOREIGN KEY ("category_id") REFERENCES "public"."categories"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "featured_subscriptions" ADD CONSTRAINT "featured_subscriptions_listing_id_listings_id_fk" FOREIGN KEY ("listing_id") REFERENCES "public"."listings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "featured_subscriptions" ADD CONSTRAINT "featured_subscriptions_user_id_profiles_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "featured_bids_spot_idx" ON "featured_bids" USING btree ("spot_id","status");--> statement-breakpoint
 CREATE INDEX "featured_bids_listing_idx" ON "featured_bids" USING btree ("listing_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "featured_bids_live_key" ON "featured_bids" USING btree ("spot_id","listing_id") WHERE "featured_bids"."status" <> 'cancelled';--> statement-breakpoint
 CREATE UNIQUE INDEX "featured_spots_key" ON "featured_spots" USING btree ("area_kind","area_id",coalesce("category_id", '00000000-0000-0000-0000-000000000000'::uuid));--> statement-breakpoint
 CREATE INDEX "featured_subscriptions_listing_idx" ON "featured_subscriptions" USING btree ("listing_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "featured_subscriptions_provider_sub_key" ON "featured_subscriptions" USING btree ("provider_subscription_id");
+CREATE UNIQUE INDEX "featured_subscriptions_provider_sub_key" ON "featured_subscriptions" USING btree ("provider_subscription_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "featured_subscriptions_live_key" ON "featured_subscriptions" USING btree ("listing_id") WHERE "featured_subscriptions"."status" in ('approval_pending', 'active', 'past_due', 'paused');

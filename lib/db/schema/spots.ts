@@ -5,6 +5,7 @@ import {
 import { base } from "./_base";
 import { categories } from "./geo";
 import { listings } from "./listings";
+import { profiles } from "./ownership";
 
 /**
  * Featured spots: the paid positions above the organic grid.
@@ -66,15 +67,24 @@ export const featuredSpots = pgTable("featured_spots", {
 export const featuredSubscriptions = pgTable("featured_subscriptions", {
   ...base,
   listingId: uuid("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
-  /** profiles.id of the owner who started it. */
-  userId: uuid("user_id"),
+  /** profiles.id of the owner who started it (constraint 21). */
+  userId: uuid("user_id").references(() => profiles.id),
   provider: text("provider").notNull().default("paypal"),
   providerSubscriptionId: text("provider_subscription_id"),
   providerPlanId: text("provider_plan_id"),
+  /**
+   * `paused` is OUR suspension: every bid the listing holds is outbid, so
+   * PayPal is told to suspend (no consent needed) and told to activate again
+   * when a bid re-enters. PayPal's own SUSPENDED (payment failure) is
+   * `suspended` and is a lapse.
+   */
   status: text("status").notNull(),
+  /** Confirmed by PayPal: only ever written from a payload that carries a quantity. */
   quantity: integer("quantity").notNull().default(0),
+  /** The quantity last ASKED of PayPal (create or revise). */
   requestedQuantity: integer("requested_quantity").notNull().default(0),
   reviseRequestedAt: timestamp("revise_requested_at", { withTimezone: true }),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
   /**
    * Where the buyer approves the subscription (first time) or its latest
    * revision. Kept so an owner who closed the PayPal tab can be sent back to
@@ -85,9 +95,14 @@ export const featuredSubscriptions = pgTable("featured_subscriptions", {
 }, (t) => [
   index("featured_subscriptions_listing_idx").on(t.listingId),
   uniqueIndex("featured_subscriptions_provider_sub_key").on(t.providerSubscriptionId),
+  // One live subscription per listing: two first bids racing on two spots
+  // must not become two PayPal subscriptions.
+  uniqueIndex("featured_subscriptions_live_key")
+    .on(t.listingId)
+    .where(sql`${t.status} in ('approval_pending', 'active', 'past_due', 'paused')`),
   check(
     "featured_subscriptions_status_check",
-    sql`${t.status} in ('approval_pending', 'active', 'past_due', 'cancelled', 'suspended', 'expired')`,
+    sql`${t.status} in ('approval_pending', 'active', 'past_due', 'paused', 'cancelled', 'suspended', 'expired')`,
   ),
   check("featured_subscriptions_quantity_check", sql`${t.quantity} >= 0`),
   check("featured_subscriptions_requested_check", sql`${t.requestedQuantity} >= 0`),
@@ -110,6 +125,12 @@ export const featuredBids = pgTable("featured_bids", {
   listingId: uuid("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
   subscriptionId: uuid("subscription_id").references(() => featuredSubscriptions.id),
   amountCents: integer("amount_cents").notNull(),
+  /**
+   * When `amount_cents` was last set — the tie-break. A raise resets it, so
+   * raising to match the leader lands BEHIND the leader rather than jumping
+   * the queue on the bid's original date.
+   */
+  amountSetAt: timestamp("amount_set_at", { withTimezone: true }).notNull().defaultNow(),
   pendingAmountCents: integer("pending_amount_cents"),
   status: text("status").notNull().default("pending"),
   position: integer("position"),

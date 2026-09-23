@@ -1,6 +1,6 @@
 {
-  "id": "16c64534-47e6-40b3-b9f2-76cd1f2c29da",
-  "prevId": "0647cf58-2726-4a6d-9454-187dbccff204",
+  "id": "0c8fc6b1-01ac-4328-8fc4-343f3b6c78d9",
+  "prevId": "c787153f-a440-46cf-bc9d-f41fc8159e6b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5747,6 +5747,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "amount_set_at": {
+          "name": "amount_set_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
         "pending_amount_cents": {
           "name": "pending_amount_cents",
           "type": "integer",
@@ -6106,6 +6113,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "paused_at": {
+          "name": "paused_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "approve_url": {
           "name": "approve_url",
           "type": "text",
@@ -6149,6 +6162,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "featured_subscriptions_live_key": {
+          "name": "featured_subscriptions_live_key",
+          "columns": [
+            {
+              "expression": "listing_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"featured_subscriptions\".\"status\" in ('approval_pending', 'active', 'past_due', 'paused')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -6164,6 +6193,19 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "featured_subscriptions_user_id_profiles_id_fk": {
+          "name": "featured_subscriptions_user_id_profiles_id_fk",
+          "tableFrom": "featured_subscriptions",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6172,7 +6214,7 @@
       "checkConstraints": {
         "featured_subscriptions_status_check": {
           "name": "featured_subscriptions_status_check",
-          "value": "\"featured_subscriptions\".\"status\" in ('approval_pending', 'active', 'past_due', 'cancelled', 'suspended', 'expired')"
+          "value": "\"featured_subscriptions\".\"status\" in ('approval_pending', 'active', 'past_due', 'paused', 'cancelled', 'suspended', 'expired')"
         },
         "featured_subscriptions_quantity_check": {
           "name": "featured_subscriptions_quantity_check",
