@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
-  pgTable, uuid, text, integer, timestamp, uniqueIndex, index, check,
+  pgTable, uuid, text, integer, timestamp, date, uniqueIndex, index, check,
 } from "drizzle-orm/pg-core";
 import { base } from "./_base";
 import { categories } from "./geo";
@@ -135,6 +135,13 @@ export const featuredBids = pgTable("featured_bids", {
   status: text("status").notNull().default("pending"),
   position: integer("position"),
   cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  /**
+   * When the owner was last told this bid lost ground (Task 45). The outbid
+   * email is debounced to one per listing per spot per hour, and this is the
+   * hour's mark — a column rather than a queue lookup so the debounce holds
+   * across a purge of finished jobs.
+   */
+  outbidNotifiedAt: timestamp("outbid_notified_at", { withTimezone: true }),
 }, (t) => [
   index("featured_bids_spot_idx").on(t.spotId, t.status),
   index("featured_bids_listing_idx").on(t.listingId),
@@ -147,4 +154,26 @@ export const featuredBids = pgTable("featured_bids", {
     sql`${t.status} in ('pending', 'active', 'outbid', 'cancelled')`,
   ),
   check("featured_bids_position_check", sql`${t.position} is null or ${t.position} >= 1`),
+]);
+
+/* ------------------------------------------------- appended: Task 45 clicks */
+
+/**
+ * Clicks on a featured card, per spot per listing per day — the number the
+ * owner's bidding page puts beside each position it holds. Counted in Redis
+ * by the same beacon that counts impressions (`featured_click`, with the
+ * spot the card was in) and drained by `worker/jobs/flush-featured-clicks.ts`.
+ * Its own table rather than a column on `listing_stats_daily`: a click on a
+ * featured card belongs to the spot it was featured in, and that table has
+ * no spot.
+ */
+export const featuredClicksDaily = pgTable("featured_clicks_daily", {
+  ...base,
+  spotId: uuid("spot_id").notNull().references(() => featuredSpots.id, { onDelete: "cascade" }),
+  listingId: uuid("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
+  day: date("day").notNull(),
+  clicks: integer("clicks").notNull().default(0),
+}, (t) => [
+  uniqueIndex("featured_clicks_daily_key").on(t.spotId, t.listingId, t.day),
+  index("featured_clicks_daily_listing_idx").on(t.listingId, t.day),
 ]);

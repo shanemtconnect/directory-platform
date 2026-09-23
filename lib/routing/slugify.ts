@@ -28,6 +28,8 @@ export const RESERVED_SLUGS = [
   // flags, so a city or category can never shadow /report, /checkout or /login.
   "checkout", "login", "signup", "logout", "forgot-password", "reset-password",
   "verify-email", "remove", "report", "review", "reviews", "billing",
+  // Task 45: the public featured-spot leaderboard lives at /spots/<id>.
+  "spots",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

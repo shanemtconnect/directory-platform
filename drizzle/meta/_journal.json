@@ -106,6 +106,13 @@
       "when": 1790164470900,
       "tag": "0011_featured_spots",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790500000000,
+      "tag": "0017_featured_notify_clicks",
+      "breakpoints": true
     }
   ]
 }
