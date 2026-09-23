@@ -107,6 +107,30 @@ COPY --from=builder --chown=nextjs:nodejs /app/lib/cache/*.mjs ./lib/cache/
 # dangling symlink is what BuildKit refuses to do.
 RUN rm -rf node_modules
 COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+# Turbopack's hashed externals. Packages it leaves external (sharp, the S3
+# client, Sentry's *-in-the-middle hooks) are imported at runtime as
+# `sharp-<hash>`, resolved from `.next/node_modules/`, where `next build` writes
+# one symlink per package — into the BUILDER's pnpm layout,
+# `../../node_modules/.pnpm/sharp@<ver>_<peers>/node_modules/sharp`. The hoisted
+# tree above has no `.pnpm/<pkg>@<ver>_<peers>` path, so every one of those
+# links dangles and every page whose import graph reaches sharp or S3 (a city,
+# a listing, /advertise/sponsor) is a 500 with `Failed to load external module
+# sharp-<hash>`. Re-point each dangling link at the hoisted package, and refuse
+# to build if a package has no hoisted counterpart: a missing alias is a page
+# that renders in `next start` and 500s only in the image.
+RUN set -eu; \
+  [ -d .next/node_modules ] || exit 0; \
+  find .next/node_modules -type l | while IFS= read -r link; do \
+    [ -e "$link" ] && continue; \
+    rel=${link#.next/node_modules/}; \
+    pkg=$(printf '%s' "$rel" | sed -E 's/-[0-9a-f]{16}$//'); \
+    case "$rel" in */*) up=../../..;; *) up=../..;; esac; \
+    [ -e "node_modules/$pkg" ] \
+      || { echo "runner: hashed external $rel has no package at node_modules/$pkg" >&2; exit 1; }; \
+    ln -sfn "$up/node_modules/$pkg" "$link" && chown -h nextjs:nodejs "$link"; \
+    [ -e "$link" ] || { echo "runner: $link still dangles after relinking" >&2; exit 1; }; \
+    echo "runner: $rel -> $up/node_modules/$pkg"; \
+  done
 
 # The migrations, and the one script that can apply them without drizzle-kit.
 #
