@@ -1094,3 +1094,32 @@ export async function recentRaiseExpiry(
     .limit(1);
   return row?.at ?? null;
 }
+
+/* -------------------------------------------------- appended: Task 45 notify */
+
+/**
+ * Claims the right to email the owner about this bid: true when the bid has
+ * not been notified within the window, in which case the mark is set to now.
+ * One UPDATE, so two re-ranks in one instant cannot both claim it.
+ */
+export async function markOutbidNotified(
+  tx: TestDb,
+  viewer: Viewer,
+  bidId: string,
+  windowMs: number,
+): Promise<boolean> {
+  assertWorker(viewer);
+  const at = now();
+  const since = new Date(at.getTime() - windowMs);
+  const rows = await tx
+    .update(featuredBids)
+    .set({ outbidNotifiedAt: at, updatedAt: at })
+    .where(
+      and(
+        eq(featuredBids.id, bidId),
+        or(sql`${featuredBids.outbidNotifiedAt} is null`, lt(featuredBids.outbidNotifiedAt, since)),
+      ),
+    )
+    .returning({ id: featuredBids.id });
+  return rows.length > 0;
+}

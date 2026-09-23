@@ -451,3 +451,41 @@ export async function notifySponsorDecided(
   const payload: SponsorJobPayload = { campaignId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SPONSOR_DECIDED, payload });
 }
+
+/* ------------------------------------------------- featured spots (Task 45) */
+
+/**
+ * A bid lost first place or dropped out of the featured positions. The
+ * payload is the bid id and the EVENT (lost first, dropped out): the worker
+ * re-reads the bid and the spot's standing when it runs, so the amount in
+ * the email is what it would take NOW, and a bid that has since regained
+ * its place is not written to at all.
+ */
+export const NOTIFY_SPOT_OUTBID = "notify.spot.outbid";
+/**
+ * The monthly availability digest: one job per verified listing with empty
+ * spots near it, and one for the admin's site-wide table. Both recomputed at
+ * send time; an owner job whose listing no longer has an empty spot sends
+ * nothing.
+ */
+export const NOTIFY_SPOT_DIGEST = "notify.spot.digest";
+NOTIFY_KINDS.push(NOTIFY_SPOT_OUTBID, NOTIFY_SPOT_DIGEST);
+
+export type SpotOutbidJobPayload = { bidId: string; kind: "lost-first" | "dropped-out" };
+export type SpotDigestJobPayload = { listingId: string } | { admin: true };
+
+export async function notifySpotOutbid(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: SpotOutbidJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_OUTBID, payload });
+}
+
+export async function notifySpotDigest(
+  tx: TestDb,
+  viewer: Viewer,
+  payload: SpotDigestJobPayload,
+): Promise<void> {
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_DIGEST, payload });
+}

@@ -15,6 +15,7 @@ import {
 import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
 import { quantityFor, rankBids } from "./rank";
+import { notifyOutbid } from "./notify";
 
 /**
  * The two things that happen after ANY bid changes, in this order:
@@ -58,7 +59,10 @@ export async function rerankSpots(tx: TestDb, spotIds: readonly string[]): Promi
     const spot = await spotById(tx, viewer, spotId);
     if (spot === null) continue;
     const bids = await spotBids(tx, viewer, spotId);
-    await applyRanking(tx, viewer, spotId, rankBids(bids, spot.positions));
+    const ranked = rankBids(bids, spot.positions);
+    await applyRanking(tx, viewer, spotId, ranked);
+    // Task 45: the owners who lost ground hear about it (debounced).
+    await notifyOutbid(tx, spotId, bids, ranked);
     for (const path of await spotPaths(tx, viewer, spotId)) paths.add(path);
   }
   return { listingIds: await listingsInSpots(tx, viewer, unique), paths: [...paths] };
