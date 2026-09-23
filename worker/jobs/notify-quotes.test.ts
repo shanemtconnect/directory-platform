@@ -113,8 +113,9 @@ describe("processNotifications — quotes", () => {
   it("retries only the recipient that was rejected", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
-      await makeListing(tx, ctx, { email: "first@example.com", tier: "premium" });
-      await makeListing(tx, ctx, { email: "bad@example.com", tier: "essential" });
+      // Named so the send order (createdAt, then name) is fixed: first, then bad.
+      await makeListing(tx, ctx, { name: "Alpha Hall", email: "first@example.com", tier: "premium" });
+      await makeListing(tx, ctx, { name: "Beta Hall", email: "bad@example.com", tier: "essential" });
       await queuedRequest(tx, ctx);
       sendEmail.mockImplementation(async (m) =>
         String(m.to) === "bad@example.com"
