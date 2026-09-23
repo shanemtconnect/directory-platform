@@ -1,4 +1,5 @@
 import { enqueueJob } from "@/lib/db/queries/jobs";
+import { now } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 
@@ -12,6 +13,11 @@ import type { TestDb } from "@/lib/db/types";
  * worker's `run` switch is left untouched by a module it knows nothing about.
  *
  * Payloads are ids, never copies: the worker re-reads the row when it runs.
+ *
+ * `runAfter: now()` on every enqueue: the producer and the consumer read the
+ * same clock. Left to the database default, run_after is the wall clock while
+ * claimNextJob compares against lib/clock — a job queued under a moved clock
+ * is never due.
  */
 
 /** A new post is waiting in the admin queue. */
@@ -31,15 +37,15 @@ export type JobBoardJobPayload = { jobId: string };
 
 export async function notifyJobSubmitted(tx: TestDb, viewer: Viewer, jobId: string): Promise<void> {
   const payload: JobBoardJobPayload = { jobId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_JOB_SUBMITTED, payload });
+  await enqueueJob(tx, viewer, { kind: NOTIFY_JOB_SUBMITTED, payload, runAfter: now() });
 }
 
 export async function notifyJobDecided(tx: TestDb, viewer: Viewer, jobId: string): Promise<void> {
   const payload: JobBoardJobPayload = { jobId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_JOB_DECIDED, payload });
+  await enqueueJob(tx, viewer, { kind: NOTIFY_JOB_DECIDED, payload, runAfter: now() });
 }
 
 export async function notifyJobExpiring(tx: TestDb, viewer: Viewer, jobId: string): Promise<void> {
   const payload: JobBoardJobPayload = { jobId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_JOB_EXPIRING, payload });
+  await enqueueJob(tx, viewer, { kind: NOTIFY_JOB_EXPIRING, payload, runAfter: now() });
 }

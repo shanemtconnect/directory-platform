@@ -659,6 +659,8 @@ export interface JobNotifyContext {
   readonly posterName: string | null;
   readonly posterEmail: string | null;
   readonly status: string;
+  readonly paymentStatus: string;
+  readonly cityName: string | null;
   readonly expiresAt: Date | null;
   readonly rejectedReason: string | null;
   readonly path: string;
@@ -676,10 +678,13 @@ export async function jobNotifyContext(tx: TestDb, viewer: Viewer, jobId: string
       posterName: jobs.posterName,
       posterEmail: jobs.posterEmail,
       status: jobs.status,
+      paymentStatus: jobs.paymentStatus,
+      cityName: cities.name,
       expiresAt: jobs.expiresAt,
       rejectedReason: jobs.rejectedReason,
     })
     .from(jobs)
+    .leftJoin(cities, eq(cities.id, jobs.cityId))
     .where(eq(jobs.id, jobId))
     .limit(1);
   return row ? withCard(row) : null;
