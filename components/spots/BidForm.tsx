@@ -49,9 +49,15 @@ export function BidForm({ listingId, spot, keyString, defaultAmount, currencySym
           className="w-24"
           data-testid="bid-amount"
         />
-        <SubmitButton pending={pending} pendingLabel="Sending…" testId="bid-submit" variant={hasBid ? "secondary" : "primary"}>
-          {hasBid ? "Change bid" : "Bid"}
-        </SubmitButton>
+        {disabled ? (
+          <button type="button" className="btn btn-secondary" disabled data-testid="bid-submit">
+            {hasBid ? "Change bid" : "Bid"}
+          </button>
+        ) : (
+          <SubmitButton pending={pending} pendingLabel="Sending…" testId="bid-submit" variant={hasBid ? "secondary" : "primary"}>
+            {hasBid ? "Change bid" : "Bid"}
+          </SubmitButton>
+        )}
       </div>
       {state.message && state.keyString === keyString && (
         <Notice variant={state.status === "error" ? "error" : "success"} testId="bid-message">
