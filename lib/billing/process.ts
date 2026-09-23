@@ -8,6 +8,7 @@ import {
 import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
 import type { PayPalClient } from "./paypal";
+import { processFeaturedEvent } from "@/lib/spots/webhook";
 import { customIdFor, decide, HANDLED_EVENTS, parseEvent, providerSubscriptionIdFor } from "./webhooks";
 import { applySponsorBillingEvent } from "@/lib/ads/billing";
 
@@ -124,6 +125,21 @@ export async function processPayPalWebhook(
     if (sponsor.outcome !== "unknown-subscription") {
       return { status: 200, outcome: sponsor.outcome, detail: sponsor.detail };
     }
+    // Not a tier subscription. A featured-spots subscription (lib/spots)
+    // shares this endpoint and this verification; its ids never collide
+    // with the tier table's, so "not there" is the only way to tell them
+    // apart. It applies its own transitions and never writes listings.tier.
+    const featured = await processFeaturedEvent(tx, { event, client: req.client, env: req.env });
+    if (featured.outcome === "applied") {
+      return {
+        status: 200,
+        outcome: "applied",
+        detail: `featured.${featured.action}`,
+        revalidate: { paths: featured.paths },
+      };
+    }
+    if (featured.outcome === "ignored") return { status: 200, outcome: "ignored", detail: featured.reason };
+
     // Another site sharing the PayPal account, or a subscription created
     // before this database existed. Not an error, and not ours to act on.
     console.warn(`[billing] ${event.type} names a subscription this site does not hold`);

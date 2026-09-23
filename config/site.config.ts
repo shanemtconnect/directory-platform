@@ -237,6 +237,16 @@ export const siteConfig = {
   awards: {
     minReviews: 5,
   },
+  // Featured spots. Three positions per pillar page; the floor is the lowest
+  // monthly bid a spot accepts. Region spots cover every city in a county, so
+  // they start higher.
+  featured: {
+    positions: 3,
+    floors: {
+      city: 50,
+      region: 100,
+    },
+  },
 } as const satisfies SiteConfig;
 
 /**

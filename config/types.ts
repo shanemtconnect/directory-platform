@@ -247,4 +247,20 @@ export interface SiteConfig {
   readonly awards?: {
     readonly minReviews: number;
   };
+
+  /**
+   * Featured spots — the three paid positions above the organic grid on every
+   * city and city × category pillar page (and, once region pages exist, on
+   * region pages). Owners of verified, paying listings bid a monthly amount
+   * per spot; the top `positions` bids are shown and charged, the rest are
+   * "outbid" and pay nothing. Floors are in major units of `currency` and set
+   * the lowest bid a spot will take; a clone prices its own market here.
+   */
+  readonly featured: {
+    readonly positions: number;
+    readonly floors: {
+      readonly city: number;
+      readonly region: number;
+    };
+  };
 }

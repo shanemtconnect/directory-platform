@@ -5,6 +5,8 @@ import { siteConfig } from "@/config/site.config";
 import { sanitiseRichText } from "@/lib/html/sanitise";
 import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
+import { FeaturedRow } from "./FeaturedRow";
+import type { FeaturedListing } from "@/lib/db/queries/spots";
 import { ListingMap } from "@/components/map/ListingMap";
 
 
@@ -13,6 +15,8 @@ export interface FaqEntry { question: string; answer: string }
 interface Props {
   heading: PillarHeading;
   featured: Listing[];
+  /** The spot's featured bids (lib/spots), page 1 only. Not in `listings`. */
+  featuredBids?: readonly FeaturedListing[];
   listings: Listing[];
   categories: CategoryIndexRow[];
   nearby: CityIndexRow[];
@@ -42,7 +46,7 @@ interface Props {
  *    what is visibly on the page
  */
 export function PillarPage({
-  heading, featured, listings, categories, nearby, faq,
+  heading, featured, featuredBids = [], listings, categories, nearby, faq,
   total, page, totalPages, basePath, cityPath, awardYears,
 }: Props) {
   const e = siteConfig.entity;
@@ -73,7 +77,19 @@ export function PillarPage({
         />
       )}
 
-      {isFirstPage && featured.length > 0 && (
+      {/* ONE Featured section: the paid spots when any bid holds a position
+          (lib/spots), otherwise the premium-tier row the page always had.
+          The route builds `featured` from the grid, so nothing is on the page
+          twice. Empty spot and no premium: no row, no placeholder. */}
+      {isFirstPage && featuredBids.length > 0 && (
+        <FeaturedRow
+          featured={featuredBids}
+          nounPlural={heading.nounPlural}
+          place={heading.place}
+        />
+      )}
+
+      {isFirstPage && featuredBids.length === 0 && featured.length > 0 && (
         <section aria-labelledby="featured" data-testid="featured">
           <h2 id="featured">Featured {heading.nounPlural} in {heading.place}</h2>
           <ul className="card-grid">

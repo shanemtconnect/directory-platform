@@ -11,13 +11,14 @@ import { AwardPill } from "@/components/awards/AwardPill";
  * and would poison the ISR cache for everyone who sees it afterwards.
  */
 export function ListingCard({
-  listing, basePath, featured = false, awardYears = [],
+  listing, basePath, featured = false, position, awardYears = [],
 }: {
   listing: Listing;
   basePath: string;
   featured?: boolean;
   /** Years this listing won an award (Task 50), from the `awards` table via the route. */
   awardYears?: readonly number[];
+  position?: number;
 }) {
   const tier = siteConfig.tiers[listing.tier];
   const summary =
@@ -30,8 +31,20 @@ export function ListingCard({
       data-tier={listing.tier}
       data-claim-status={listing.claimStatus}
       data-featured={featured}
+      data-position={position}
       className={`card card-hover flex flex-col gap-2 ${featured ? "border-primary" : ""}`}
     >
+      {/* The word, not the border: a PAID placement (a featured-spot bid,
+          which always carries a position) is disclosed as one. The premium
+          row's cards are `featured` for the border only and keep no pill. */}
+      {position !== undefined && (
+        <span
+          data-testid="featured-label"
+          className="inline-flex w-fit items-center rounded-full bg-accent px-2 py-0.5 text-xs font-semibold text-ink"
+        >
+          Featured
+        </span>
+      )}
       {/* The name is the whole click target and the first anchor in the card —
           both the crawl and the e2e suite read it as the listing's link. */}
       <a

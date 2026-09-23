@@ -23,6 +23,8 @@ import {
 } from "@/lib/db/queries/reviews";
 import { ReviewsPage } from "@/components/reviews/ReviewsPage";
 import { categoriesInCity, nearbyCities } from "@/lib/db/queries/indexes";
+import { featuredForScope } from "@/lib/db/queries/spots";
+import { pageRows } from "@/lib/spots/grid";
 import { displayedDescription, displayedSocials } from "@/lib/listing/display";
 import { galleryImages } from "@/lib/media/public-url";
 import { pageOpenGraph } from "@/lib/seo/open-graph";
@@ -258,23 +260,31 @@ export default async function CatchAllPage({ params }: Props) {
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
 
-      const [rows, total, categories, nearby] = await Promise.all([
+      const [rows, total, categories, nearby, featuredBids] = await Promise.all([
         listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
         countListings(db as never, PUBLIC_VIEWER, result.scope),
         cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+        // Page 1 only: the paid row sits above the grid and nowhere else.
+        result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
       ]);
+
+      // A featured listing is not listed twice, and the page has ONE
+      // Featured section: the paid row when any bid holds a position, the
+      // premium-tier row otherwise (from the grid, never from `rows`). The
+      // ItemList below keeps every row it is handed — the featured cards are
+      // on the page too.
+      const { grid, premium } = pageRows(
+        rows,
+        featuredBids,
+        result.page === 1 && siteConfig.tiers.premium.homepageSlot,
+      );
 
       const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
       // A page number past the end has nothing on it and must not be a soft 404
       // — /leeds/page/999 rendered an empty, indexable page.
       if (result.page > totalPages) notFound();
 
-      // Premium listings shown as a featured row on page 1. They also appear in
-      // the main grid — the row is prominence, not a separate inventory.
-      const featured = result.page === 1
-        ? rows.filter((l) => l.tier === "premium" && siteConfig.tiers.premium.homepageSlot).slice(0, 3)
-        : [];
 
       // Awards (Task 50): the "Winner <year>" pill on each card, from the
       // table, one query for the page. Empty (and tree-shaken) with the flag off.
@@ -315,8 +325,9 @@ export default async function CatchAllPage({ params }: Props) {
           <SponsorRails placement={placementForScope(result.scope)} />
           <PillarPage
             heading={heading}
-            featured={featured}
-            listings={rows}
+            featured={premium}
+            featuredBids={featuredBids}
+            listings={grid}
             categories={categories}
             nearby={nearby}
             faq={faq}

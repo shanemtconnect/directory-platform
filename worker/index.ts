@@ -227,3 +227,11 @@ schedule("notify-sponsors", "15,45 * * * * *", async (tx) => {
   const { processSponsorNotifications } = await import("./jobs/notify-sponsors");
   await processSponsorNotifications(tx);
 });
+
+// Featured spots (lib/spots). Hourly, offset from the other billing jobs for
+// the same reason they are offset from each other; a no-op without PayPal
+// credentials. See worker/jobs/spots-sync.ts.
+schedule("spots-sync", "47 * * * *", async (tx) => {
+  const { syncFeaturedSubscriptions } = await import("./jobs/spots-sync");
+  return syncFeaturedSubscriptions(tx);
+});
