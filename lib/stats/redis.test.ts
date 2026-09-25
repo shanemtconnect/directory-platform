@@ -6,13 +6,13 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
  * as `counters.test.ts`: `takeAll`'s whole job is how it behaves when GETDEL
  * itself misbehaves, which a fake client cannot be trusted to reproduce.
  */
-process.env.REDIS_URL = "redis://localhost:6380/7";
+process.env.REDIS_URL = "redis://localhost:6380/2";
 
 const { closeStatsRedis, statsRedis } = await import("./redis");
 
 async function flush(): Promise<void> {
   const c = await statsRedis();
-  if (!c) throw new Error("redis db 7 is not reachable — start docker compose");
+  if (!c) throw new Error("redis db 2 is not reachable — start docker compose");
   await c.flushDb();
 }
 
@@ -48,7 +48,7 @@ describe("takeAll", () => {
     // No method on StatsRedisClient writes a non-string value — deliberately,
     // per the interface's own comment — so this uses a raw client for the one
     // write that has to hold a list.
-    const raw: RedisClientType = createClient({ url: "redis://localhost:6380/7" }) as RedisClientType;
+    const raw: RedisClientType = createClient({ url: "redis://localhost:6380/2" }) as RedisClientType;
     raw.on("error", () => {});
     await raw.connect();
     await raw.lPush("stats:wrong-type", "x");

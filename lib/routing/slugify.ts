@@ -30,6 +30,21 @@ export const RESERVED_SLUGS = [
   "verify-email", "remove", "report", "review", "reviews", "billing",
   // Task 45: the public featured-spot leaderboard lives at /spots/<id>.
   "spots",
+  // Task 52: held for a future neighbourhood index; neighbourhoods themselves
+  // live under their town at /<city>/<area>.
+  "neighbourhoods",
+  // Task 53: `/verified/<segments>` is the internal, always-dynamic route
+  // next.config.ts rewrites `?verified=1` pillar requests to — a city or
+  // vertical named "Verified" would otherwise shadow it. `out` and
+  // `unsubscribe` were pre-existing top-level routes (the click-tracking
+  // redirect and the digest opt-out) missing from this list; the same
+  // rewrite's regex matches their first segment too, so without these here a
+  // city named "Out" or "Unsubscribe" would have collided with them, and
+  // `/out/<id>?verified=1` / `/unsubscribe?verified=1` would 404 instead of
+  // reaching their real routes.
+  "verified", "out", "unsubscribe",
+  // Wave G: the pay-per-lead board lives at /leads.
+  "leads",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

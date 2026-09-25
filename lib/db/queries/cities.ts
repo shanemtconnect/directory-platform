@@ -24,6 +24,11 @@ export interface PillarHeading {
   isIndexable: boolean;
   /** The WHOLE scope parent's count. Never the count for this page's scope. */
   listingCount: number;
+  /**
+   * The place this one sits inside, for the breadcrumb and the JSON-LD
+   * `containedInPlace` — set on a neighbourhood page only (Task 52).
+   */
+  parent?: { name: string; slug: string };
 }
 
 /**
@@ -57,6 +62,26 @@ export async function pillarHeading(
 ): Promise<PillarHeading | null> {
   const indexability = await scopeIndexability(tx, viewer, scope);
   if (!indexability) return null;
+
+  if (scope.type === "city-area") {
+    const [row] = await tx
+      .select({ area: areas, city: { name: cities.name, slug: cities.slug } })
+      .from(areas)
+      .innerJoin(cities, eq(cities.id, areas.cityId))
+      .where(and(eq(areas.id, scope.areaId), eq(areas.cityId, scope.cityId)))
+      .limit(1);
+    if (!row) return null;
+    return {
+      title: `${entity.Plural} in ${row.area.name}, ${row.city.name}`,
+      place: row.area.name,
+      nounSingular: entity.singular,
+      nounPlural: entity.plural,
+      introHtml: row.area.introHtml,
+      ...indexability,
+      faq: row.area.faq,
+      parent: row.city,
+    };
+  }
 
   if (scope.type === "city" || scope.type === "city-category") {
     const [city] = await tx.select().from(cities).where(eq(cities.id, scope.cityId)).limit(1);

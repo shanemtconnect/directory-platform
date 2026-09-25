@@ -3,19 +3,26 @@ import {
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
   NOTIFY_AWARD_WON,
+  NOTIFY_CREDIT_TOPUP,
   NOTIFY_CLAIM_DECIDED,
   NOTIFY_CLAIM_LINK,
   NOTIFY_CLAIM_SUBMITTED,
   NOTIFY_DECISION,
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
+  NOTIFY_LEAD_BOARD_DIGEST,
+  NOTIFY_LEAD_REFUND_DECIDED,
+  NOTIFY_LEAD_TOPUP,
+  NOTIFY_LEAD_WON,
   NOTIFY_QUOTE,
+  NOTIFY_QUOTE_VERIFY,
   NOTIFY_REMOVAL,
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
   NOTIFY_REPORT,
   NOTIFY_REVIEW_SUBMITTED,
   NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_SAVED_SEARCH,
   NOTIFY_SPOT_CLOSED,
   NOTIFY_SPOT_DIGEST,
   NOTIFY_SPOT_OUTBID,
@@ -74,6 +81,18 @@ import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availabili
 import { minimumToEnter, minimumToTakeFirst, UNIT_CENTS } from "@/lib/spots/rank";
 import { leaderboardPath, prefilledBidPath } from "@/lib/spots/notify";
 import { spotClosedToOwner, spotDigestToAdmin, spotDigestToOwner, spotOutbid } from "@/lib/email/templates/spots";
+import { markSavedSearchSent, newMatchesFor, savedSearchForDigest } from "@/lib/db/queries/saved-searches";
+import { savedSearchDigest } from "@/lib/email/templates/alerts";
+import { savedSearchPath } from "@/lib/alerts/paths";
+import { features } from "@/lib/features/flags";
+import { now } from "@/lib/clock";
+import { topupNotification } from "@/lib/db/queries/credits";
+import { topupReceipt } from "@/lib/email/templates/credits";
+import {
+  boardDigestAccount, leadRefundNotification, leadTopupNotification, leadWonNotification,
+} from "@/lib/db/queries/lead-market";
+import { boardDigest, leadRefundDecided, leadTopup, leadWon } from "@/lib/email/templates/leads";
+import { REFUND_REASON_LABELS } from "@/lib/leads/market";
 
 /**
  * Drains the notification queue.
@@ -438,6 +457,8 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     // Appended by the quotes module; the handler is at the foot of the file.
     case NOTIFY_QUOTE:
       return runQuote(db, d, job.payload);
+    case NOTIFY_QUOTE_VERIFY:
+      return runQuoteVerify(db, d, job.payload);
     // Appended by the awards module; the handler is at the foot of the file.
     case NOTIFY_AWARD_WON:
       return runAwardWon(db, d, job.payload);
@@ -448,6 +469,21 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runSpotDigest(db, d, job.payload);
     case NOTIFY_SPOT_CLOSED:
       return runSpotClosed(db, d, job.payload);
+    // Appended by the saved-searches module (Task 54); handler at the foot.
+    case NOTIFY_SAVED_SEARCH:
+      return runSavedSearch(db, d, job.payload);
+    // Appended by the lead-credit module (Task 57); the handler is at the foot.
+    case NOTIFY_CREDIT_TOPUP:
+      return runCreditTopup(db, d, job.payload);
+    // Appended by the lead market (Task 58); the handlers are at the foot.
+    case NOTIFY_LEAD_WON:
+      return runLeadWon(db, d, job.payload);
+    case NOTIFY_LEAD_TOPUP:
+      return runLeadTopup(db, d, job.payload);
+    case NOTIFY_LEAD_REFUND_DECIDED:
+      return runLeadRefundDecided(db, d, job.payload);
+    case NOTIFY_LEAD_BOARD_DIGEST:
+      return runLeadBoardDigest(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -670,8 +706,43 @@ async function runAuthEmail(
 
 /* ------------------------------------------------------- quotes (Task 47) */
 
-import { quoteNotification } from "@/lib/db/queries/quotes";
-import { quoteAcknowledgement, quoteToRecipient } from "@/lib/email/templates/quotes";
+import { QUOTE_VERIFY_TTL_HOURS, quoteNotification, quoteVerification } from "@/lib/db/queries/quotes";
+import { isEnabled } from "@/lib/features/flags";
+import { quoteAcknowledgement, quoteToRecipient, quoteVerifyEmail } from "@/lib/email/templates/quotes";
+
+/**
+ * The requester's verification link (Task 56).
+ *
+ * Re-reads the request: one already clicked, expired or flagged, or whose
+ * live digest is not this payload's token, is a completed job with nothing
+ * to send — never a retry of a link that no longer works. The link is built
+ * here from our own origin, never carried in the payload.
+ */
+async function runQuoteVerify(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const quoteRequestId = readId(payload, "quoteRequestId");
+  if (quoteRequestId === null) throw new Retryable("The job carries no quoteRequestId");
+
+  const data = await quoteVerification(db, ADMIN_VIEWER, quoteRequestId);
+  if (!data || data.status !== "pending" || data.tokenHash === null) return;
+
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+  if (hashToken(token) !== data.tokenHash) return;
+
+  await deliver(d, REQUESTER, {
+    to: data.email,
+    ...quoteVerifyEmail({
+      requesterName: data.name ?? data.email,
+      cityName: data.cityName,
+      categoryName: data.categoryName,
+      listingName: data.listingName,
+      // The landing page, not the confirmation: the page's button POSTs.
+      verifyUrl: siteUrl(`/get-quotes/verify/${encodeURIComponent(token)}`),
+      expiresHours: QUOTE_VERIFY_TTL_HOURS,
+      source: data.source,
+    }),
+  });
+}
 
 /**
  * One request, many recipients, one job.
@@ -729,6 +800,7 @@ async function runQuote(db: Db, d: Delivery, payload: Record<string, unknown>): 
       categoryName: data.categoryName,
       recipientCount: delivered,
       message: data.message,
+      leadMarketplace: isEnabled("leadMarketplace"),
     }),
   });
 
@@ -878,6 +950,186 @@ async function runSpotDigest(db: Db, d: Delivery, payload: Record<string, unknow
       emptyCount: a.emptyCount,
       fromAmount: spotMoney(a.fromCents),
       bidUrl: siteUrl(`/account/listings/${listingId}/featured`),
+      unsubscribeToken: token,
+    }),
+  });
+}
+
+/* ------------------------------------------------ saved searches (Task 54) */
+
+/** The person who saved the search. One recipient, one stable key. */
+const SUBSCRIBER = "subscriber";
+
+/**
+ * One saved search's digest. Everything is re-read here rather than trusted
+ * from the dispatch an hour ago: a search deleted, unsubscribed or whose
+ * owner is no longer verified completes with nothing sent, and the matches
+ * are recomputed through the public query, so a listing unpublished in
+ * between never reaches the email. Nothing new by now: nothing sent, and
+ * the watermark stays where it was.
+ *
+ * The watermark moves to the newest go-live (`coalesce(published_at,
+ * created_at)`) the digest covered — not to "now" — so a row published while
+ * this ran is still new next time. `last_sent_at` is the dispatch tick from
+ * the payload, so the cadence does not slip by however long the job waited.
+ */
+async function runSavedSearch(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  // Flag off since the job was queued: the module is gone, and so is the mail.
+  if (!features.savedSearches) return;
+  const savedSearchId = readId(payload, "savedSearchId");
+  if (savedSearchId === null) throw new Retryable("The job carries no savedSearchId");
+
+  const data = await savedSearchForDigest(db, ADMIN_VIEWER, savedSearchId);
+  if (data === null) return;
+  if (data.search.kind === "jobs" && !features.jobBoard) return;
+
+  const matches = await newMatchesFor(db, data.search, data.search.lastSeenPublishedAt);
+  if (matches.length === 0) return;
+
+  // Every digest carries its unsubscribe link; one that cannot is not sent.
+  const token = signUnsubscribe({ savedSearchId, email: data.email });
+  if (token === null) throw new Retryable("No unsubscribe key (EMAIL_UNSUBSCRIBE_SECRET / BETTER_AUTH_SECRET)");
+
+  await deliver(d, SUBSCRIBER, {
+    to: data.email,
+    ...savedSearchDigest({
+      kind: data.search.kind,
+      label: data.search.label,
+      matches: matches.map((m) => ({ title: m.title, url: siteUrl(m.path), place: m.place })),
+      total: matches.total,
+      searchUrl: siteUrl(savedSearchPath(data.search.kind, data.search.params)),
+      manageUrl: siteUrl("/account/alerts"),
+      unsubscribeToken: token,
+    }),
+  });
+
+  const newest = matches.reduce((max, m) => (m.liveAt > max ? m.liveAt : max), matches[0]!.liveAt);
+  const dispatched = typeof payload.dispatchedAt === "string" ? new Date(payload.dispatchedAt) : null;
+  const sentAt = dispatched !== null && !Number.isNaN(dispatched.getTime()) ? dispatched : now();
+  await markSavedSearchSent(db, ADMIN_VIEWER, savedSearchId, { sentAt, lastSeenPublishedAt: newest });
+}
+
+/* ------------------------------------------------- lead credit (Task 57) */
+
+const BUYER = "buyer";
+
+const creditMoney = (cents: number) => formatMoney(cents / 100, siteConfig.locale, siteConfig.currency);
+
+/**
+ * The top-up receipt, with the balance as it stands when the job runs. An
+ * order that is gone or not captured, or an account with no address, sends
+ * nothing and completes.
+ */
+async function runCreditTopup(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const creditOrderId = readId(payload, "creditOrderId");
+  if (creditOrderId === null) throw new Retryable("The job carries no creditOrderId");
+  const data = await topupNotification(db, ADMIN_VIEWER, creditOrderId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...topupReceipt({
+      name: data.name,
+      amount: creditMoney(data.packCents),
+      balance: creditMoney(data.balanceCents),
+      creditUrl: siteUrl("/account/credit"),
+    }),
+  });
+}
+
+/* ------------------------------------------------- lead market (Task 58) */
+
+/**
+ * The won email: the full contact details, re-read now. A lead deleted since
+ * the sale (or a buyer with no address) sends nothing and completes. Sent
+ * whatever the flag says now — the buyer has paid for it.
+ */
+async function runLeadWon(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const purchaseId = readId(payload, "purchaseId");
+  if (purchaseId === null) throw new Retryable("The job carries no purchaseId");
+  const data = await leadWonNotification(db, ADMIN_VIEWER, purchaseId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...leadWon({
+      buyerName: data.buyerName,
+      listingName: data.listingName,
+      viaStandingOrder: data.viaStandingOrder,
+      price: creditMoney(data.priceCents),
+      name: data.name,
+      email: data.leadEmail,
+      phone: data.phone,
+      message: data.message,
+      town: data.cityName,
+      category: data.categoryName,
+      leadUrl: siteUrl(`/leads/${data.leadId}`),
+    }),
+  });
+}
+
+/** The order is still paused for credit, or nothing is sent (the owner has already resumed it). */
+async function runLeadTopup(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const standingOrderId = readId(payload, "standingOrderId");
+  if (standingOrderId === null) throw new Retryable("The job carries no standingOrderId");
+  const data = await leadTopupNotification(db, ADMIN_VIEWER, standingOrderId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...leadTopup({
+      name: data.name,
+      listingName: data.listingName,
+      price: creditMoney(data.priceCents),
+      balance: creditMoney(data.balanceCents),
+      creditUrl: siteUrl("/account/credit"),
+      ordersUrl: siteUrl("/account/leads"),
+    }),
+  });
+}
+
+async function runLeadRefundDecided(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const refundId = readId(payload, "refundId");
+  if (refundId === null) throw new Retryable("The job carries no refundId");
+  const data = await leadRefundNotification(db, ADMIN_VIEWER, refundId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...leadRefundDecided({
+      name: data.name,
+      approved: data.status === "approved",
+      blocklisted: data.blocklisted,
+      price: creditMoney(data.priceCents),
+      reason: REFUND_REASON_LABELS[data.reason],
+      firstName: data.firstName,
+      brief: data.brief,
+      note: data.decisionNote,
+      leadsUrl: siteUrl("/account/leads"),
+    }),
+  });
+}
+
+/**
+ * The weekly board digest. The count was worked out at dispatch from one
+ * read of the open leads (worker/jobs/leads.ts); the account is re-read now,
+ * so one that has opted out since, or lost its address, is sent nothing.
+ * Every digest carries its one-click unsubscribe; one that cannot is not sent.
+ */
+async function runLeadBoardDigest(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  if (!features.leadMarketplace) return;
+  const profileId = readId(payload, "profileId");
+  if (profileId === null) throw new Retryable("The job carries no profileId");
+  const openCount = typeof payload.openCount === "number" && Number.isInteger(payload.openCount) ? payload.openCount : 0;
+  if (openCount <= 0) return;
+  const account = await boardDigestAccount(db, ADMIN_VIEWER, profileId);
+  if (account === null) return;
+  const data = { ...account, openCount };
+  const token = signUnsubscribe({ userId: profileId, email: data.email });
+  if (token === null) throw new Retryable("No unsubscribe key (EMAIL_UNSUBSCRIBE_SECRET / BETTER_AUTH_SECRET)");
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...boardDigest({
+      name: data.name,
+      openCount: data.openCount,
+      boardUrl: siteUrl("/leads"),
+      ordersUrl: siteUrl("/account/leads"),
       unsubscribeToken: token,
     }),
   });

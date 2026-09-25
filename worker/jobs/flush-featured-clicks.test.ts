@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 
-process.env.REDIS_URL = "redis://localhost:6380/12";
+process.env.REDIS_URL = "redis://localhost:6380/5";
 
 const { closeStatsRedis, statsRedis } = await import("@/lib/stats/redis");
 const { recordFeaturedClicks } = await import("@/lib/spots/clicks");
@@ -19,7 +19,7 @@ const AT = new Date("2026-09-22T10:00:00Z");
 
 async function flush(): Promise<void> {
   const c = await statsRedis();
-  if (!c) throw new Error("redis db 12 is not reachable — start docker compose");
+  if (!c) throw new Error("redis db 5 is not reachable — start docker compose");
   await c.flushDb();
 }
 beforeEach(flush);

@@ -248,3 +248,28 @@ export function uniquePhone(): string {
   }
   return chars.join("");
 }
+
+/**
+ * A number a LEAD may carry (Task 56). `uniquePhone()` deliberately draws
+ * from the fiction range, which the lead rules refuse (lib/geo/phone.ts
+ * `FICTIONAL_RANGES`), so a spec that expects a lead to be created needs a
+ * real-shaped number outside it. GB: 01632 97NNNN — the 01632 area code is
+ * unallocated outside Ofcom's 960xxx drama block, so this is nobody's line.
+ * Other countries would need their own unallocated block here.
+ */
+export function leadPhone(): string {
+  const n4 = () => String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
+  switch (country.code) {
+    case "GB":
+      return `01632 97${n4()}`;
+    case "US":
+      // 555-01XX is the fiction block the rules refuse; 555-0200 upward is
+      // reserved for information services and assigned to nobody.
+      return `(202) 555-${String(200 + Math.floor(Math.random() * 9_800)).padStart(4, "0")}`;
+    case "AU":
+      // 02 5550 xxxx is the ACMA drama block; 5551 is outside it.
+      return `02 5551 ${n4()}`;
+    default:
+      throw new Error(`leadPhone() has no unallocated block for ${country.code}; add one in e2e/fixtures.ts`);
+  }
+}

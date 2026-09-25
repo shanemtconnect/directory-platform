@@ -18,10 +18,26 @@ export interface SearchParams {
   /** Values for customFields marked searchable, keyed by field key. */
   fields?: Record<string, string>;
   page?: number;
+  /**
+   * Only listings that went live (`liveAt`) strictly after this instant. Not
+   * a URL facet: it is how a saved search's alert asks for what is NEW
+   * (lib/db/queries/saved-searches.ts).
+   */
+  publishedAfter?: Date;
+  /** `claim_status = 'verified'` only. Absent or false: every claim status. */
+  verified?: boolean;
 }
 
+/**
+ * When a listing went live: its publish time, or its creation time for a row
+ * that never had one stamped (seeded, imported). A submitted listing is
+ * created pending and published on approval, so "new" is judged on this —
+ * never on `created_at` alone.
+ */
+export const listingLiveAt = sql<Date>`coalesce(${listings.publishedAt}, ${listings.createdAt})`.mapWith(listings.createdAt);
+
 export interface SearchResult {
-  rows: (PublicListing & { cityName: string; citySlug: string })[];
+  rows: (PublicListing & { cityName: string; citySlug: string; liveAt: Date })[];
   total: number;
   page: number;
   totalPages: number;
@@ -51,6 +67,13 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
 
   if (params.city) clauses.push(eq(cities.slug, params.city));
   if (params.category) clauses.push(eq(categories.slug, params.category));
+  if (params.publishedAfter) {
+    // "+ 1 ms" rather than ">": Postgres keeps microseconds and a JS Date does
+    // not, so a watermark read back from a row would otherwise find that row
+    // new again, for ever. The column side is left bare so an index can serve it.
+    clauses.push(sql`coalesce(${listings.publishedAt}, ${listings.createdAt}) >= ${params.publishedAfter.toISOString()}::timestamptz + interval '1 millisecond'`);
+  }
+  if (params.verified) clauses.push(eq(listings.claimStatus, "verified"));
 
   // Custom fields live in jsonb. Only keys declared searchable in site.config
   // are honoured — an arbitrary key from a query string must never reach SQL.
@@ -78,6 +101,27 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
   return clauses.length > 0 ? and(...clauses)! : sql`true`;
 }
 
+/**
+ * The count `search()` itself already runs, exposed on its own — for the
+ * verified toggle, which needs to know whether turning the filter on would
+ * find anything BEFORE it decides whether to render at all, and has no use
+ * for a page of rows to get that answer.
+ */
+export async function searchCount(
+  tx: Db,
+  viewer: Viewer,
+  params: Omit<SearchParams, "page">,
+): Promise<number> {
+  const where = buildWhere(viewer, params);
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))
+    .where(where);
+  return row?.n ?? 0;
+}
+
 export async function search(
   tx: Db,
   viewer: Viewer,
@@ -92,6 +136,7 @@ export async function search(
         listing: publicListingColumns,
         cityName: cities.name,
         citySlug: cities.slug,
+        liveAt: listingLiveAt,
       })
       .from(listings)
       .innerJoin(cities, eq(cities.id, listings.cityId))
@@ -110,7 +155,7 @@ export async function search(
 
   const total = countRows[0]?.n ?? 0;
   return {
-    rows: rows.map((r) => ({ ...r.listing, cityName: r.cityName, citySlug: r.citySlug })),
+    rows: rows.map((r) => ({ ...r.listing, cityName: r.cityName, citySlug: r.citySlug, liveAt: r.liveAt })),
     total,
     page,
     totalPages: Math.max(1, Math.ceil(total / SEARCH_PER_PAGE)),

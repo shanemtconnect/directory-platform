@@ -105,7 +105,7 @@ export function validateEnquiry(form: FormData): Result<EnquiryValues> {
  * an unauthenticated form otherwise attracts.
  */
 const DESCRIPTION_MIN = 50;
-const DESCRIPTION_MAX = 500;
+export const DESCRIPTION_MAX = 500;
 
 const SUBMISSION_MAX = {
   name: 200,
@@ -140,6 +140,24 @@ function normaliseWebsite(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The public submission form's fields by `name`, as the strings the form
+ * posts. What `SubmitListingForm` can be prefilled with (`initialValues`).
+ */
+export interface SubmissionFormValues {
+  name: string;
+  categoryId: string;
+  description: string;
+  addressLine1: string;
+  region: string;
+  city: string;
+  postcode: string;
+  phone: string;
+  website: string;
+  submitterName: string;
+  submitterEmail: string;
 }
 
 export function validateSubmission(form: FormData): Result<Omit<SubmissionInput, "ip">> {

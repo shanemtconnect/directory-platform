@@ -13,8 +13,10 @@ import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-deta
 import { awardText, awardYearsForListings, listingAwards } from "@/lib/db/queries/awards";
 import {
   listingSchema, pillarSchema, breadcrumbSchema, faqSchema, reviewsPageSchema,
-  type RenderedReview,
+  neighbourhoodPillarSchema, type RenderedReview,
 } from "@/lib/schema/builders";
+import { cityNeighbourhoods } from "@/lib/db/queries/neighbourhoods";
+import { neighbourhoodsEnabled } from "@/lib/geo/neighbourhoods";
 import { features } from "@/lib/features/flags";
 import { guardFeature } from "@/lib/features/guard";
 import {
@@ -106,10 +108,41 @@ function pillarBasePath(segments: string[]): string {
   return `/${rest.join("/")}`;
 }
 
-export default async function CatchAllPage({ params }: Props) {
+/**
+ * Task 53: the verified-only filter. `renderCatchAll` is the shared
+ * implementation; `opts.verified` is ALWAYS false through the `default`
+ * export below, which is the only thing Next itself ever calls (Next's own
+ * generated page-type validator requires that export's signature match
+ * `(props)` exactly, hence the wrapper rather than a default parameter on a
+ * function named `CatchAllPage`). It is only ever `true` when
+ * `app/verified/[...segments]/page.tsx` imports THIS named export directly
+ * and calls it with a second argument — which is what keeps the `default`
+ * route (the ISR-cached one, generateStaticParams above) from ever reading
+ * searchParams. See the note on generateStaticParams and Pagination's
+ * `verified` prop.
+ */
+export async function renderCatchAll(
+  { params }: Props,
+  opts: { verified?: boolean } = {},
+) {
+  const verified = opts.verified ?? false;
   const { segments } = await params;
 
   const result = await resolveRoute(db as never, segments, siteConfig.siteMode);
+
+  // Task 53 review fix: `?verified=1` only means something on a pillar grid.
+  // The rewrite that reaches this function with `verified: true` matches
+  // every catch-all kind (any first segment not in RESERVED_SLUGS), so a
+  // listing or reviews page reached this way would otherwise render — byte
+  // for byte identical to its normal self — through the uncached route,
+  // letting anyone bypass ISR on any of the site's listing/review URLs just
+  // by appending the param. Redirecting to the clean URL sends the browser
+  // straight back through the ISR-cached route instead. "not-found" and
+  // "redirect" already resolve to a target that never carries the param
+  // (see below), so only these two actually need it.
+  if (verified && (result.kind === "listing" || result.kind === "listing-reviews")) {
+    redirect(`/${segments.join("/")}`);
+  }
 
   switch (result.kind) {
     case "not-found":
@@ -260,25 +293,49 @@ export default async function CatchAllPage({ params }: Props) {
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
 
-      const [rows, total, categories, nearby, featuredBids] = await Promise.all([
-        listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
-        countListings(db as never, PUBLIC_VIEWER, result.scope),
-        cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
-        cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
-        // Page 1 only: the paid row sits above the grid and nowhere else.
-        result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
-      ]);
+      // The town pillar lists its neighbourhoods (Task 52); nothing else does,
+      // and nothing does with the module off.
+      const withNeighbourhoods = result.scope.type === "city" && neighbourhoodsEnabled();
+
+      const [rows, total, categories, nearby, featuredBids, neighbourhoods, verifiedCount, premiumSourceRows] =
+        await Promise.all([
+          listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page, verified }),
+          countListings(db as never, PUBLIC_VIEWER, result.scope, { verified }),
+          // Town-wide, so not on a neighbourhood page (see PillarPage).
+          cityId && result.scope.type !== "city-area"
+            ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId)
+            : Promise.resolve([]),
+          cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+          // Page 1 only: the paid row sits above the grid and nowhere else.
+          result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
+          withNeighbourhoods && cityId
+            ? cityNeighbourhoods(db as never, PUBLIC_VIEWER, cityId)
+            : Promise.resolve([]),
+          // Task 53: gates the toggle. Run alongside the grid rather than only
+          // when unfiltered, so the filtered view can still offer a way back
+          // even if a race emptied it since the toggle was rendered.
+          countListings(db as never, PUBLIC_VIEWER, result.scope, { verified: true }),
+          // Task 53 review fix: the premium-tier fallback row must be exactly
+          // what the UNFILTERED page would show, never the filtered grid — a
+          // paying premium listing that is not (yet) verified must not vanish
+          // from Featured just because a visitor ticked the toggle. `rows`
+          // already IS the unfiltered set when the filter is off, or when this
+          // isn't page 1 (no premium row there regardless), so the extra query
+          // only runs for the one case that needs it.
+          verified && result.page === 1
+            ? listListings(db as never, PUBLIC_VIEWER, result.scope, { page: 1, verified: false })
+            : Promise.resolve(null),
+        ]);
+      const hasVerified = verifiedCount > 0;
 
       // A featured listing is not listed twice, and the page has ONE
       // Featured section: the paid row when any bid holds a position, the
       // premium-tier row otherwise (from the grid, never from `rows`). The
       // ItemList below keeps every row it is handed — the featured cards are
       // on the page too.
-      const { grid, premium } = pageRows(
-        rows,
-        featuredBids,
-        result.page === 1 && siteConfig.tiers.premium.homepageSlot,
-      );
+      const premiumRowEnabled = result.page === 1 && siteConfig.tiers.premium.homepageSlot;
+      const { grid } = pageRows(rows, featuredBids, premiumRowEnabled);
+      const { premium } = pageRows(premiumSourceRows ?? rows, featuredBids, premiumRowEnabled);
 
       const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
       // A page number past the end has nothing on it and must not be a soft 404
@@ -300,24 +357,34 @@ export default async function CatchAllPage({ params }: Props) {
       // page 1 tells Google both pages are the same document.
       const pagePath = result.page === 1 ? basePath : `${basePath}/page/${result.page}`;
 
+      const collection = {
+        title: heading.title,
+        path: pagePath,
+        // The intro renders on page 1 only, so only page 1 describes
+        // itself with it.
+        description:
+          result.page === 1 && heading.introHtml ? stripTags(heading.introHtml) : null,
+        // A listing lives at /city/slug, never under the category or
+        // neighbourhood segment — /leeds/{category}/{listing} is a 404.
+        items: rows.map((l) => ({ name: l.name, path: `${cityPath}/${l.slug}` })),
+      };
+      // A neighbourhood (Task 52) names its town in the breadcrumb and in
+      // `containedInPlace`, both from the same row the visible crumb uses.
+      const town = heading.parent ? { name: heading.parent.name, path: `/${heading.parent.slug}` } : null;
+
       return (
         <>
           <JsonLd
-            data={pillarSchema({
-              title: heading.title,
-              path: pagePath,
-              // The intro renders on page 1 only, so only page 1 describes
-              // itself with it.
-              description:
-                result.page === 1 && heading.introHtml ? stripTags(heading.introHtml) : null,
-              // A listing lives at /city/slug, never under the category
-              // segment — /leeds/{category}/{listing} is a 404.
-              items: rows.map((l) => ({ name: l.name, path: `${cityPath}/${l.slug}` })),
-            })}
+            data={
+              town
+                ? neighbourhoodPillarSchema({ ...collection, neighbourhood: heading.place, city: town })
+                : pillarSchema(collection)
+            }
           />
           <JsonLd
             data={breadcrumbSchema([
               { name: "Home", path: "/" },
+              ...(town ? [town] : []),
               { name: heading.place, path: basePath },
             ])}
           />
@@ -337,16 +404,26 @@ export default async function CatchAllPage({ params }: Props) {
             basePath={basePath}
             cityPath={cityPath}
             awardYears={awardYears}
+            neighbourhoods={neighbourhoods}
             spotKey={
-              cityId === null
+              // A neighbourhood has no featured spot of its own; offering the
+              // town's there would sell a position the page does not show.
+              cityId === null || result.scope.type === "city-area"
                 ? undefined
                 : `city:${cityId}:${result.scope.type === "city-category" ? result.scope.categoryId : "-"}`
             }
+            verified={verified}
+            hasVerified={hasVerified}
           />
         </>
       );
     }
   }
+}
+
+/** The only export Next itself ever calls — see `renderCatchAll`'s comment. */
+export default async function CatchAllPage(props: Props) {
+  return renderCatchAll(props);
 }
 
 /** Trimmed to a length a SERP will actually show, on a word boundary. */
@@ -367,7 +444,11 @@ function metaDescription(text: string, max = 155): string {
  * and stays out of the sitemap. This is the single most important SEO rule in
  * the build — thin one-listing city pages drag the whole domain down.
  */
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
+export async function buildCatchAllMetadata(
+  { params }: Props,
+  opts: { verified?: boolean } = {},
+): Promise<Metadata> {
+  const verified = opts.verified ?? false;
   const { segments } = await params;
   const result = await resolveRoute(db as never, segments, siteConfig.siteMode);
 
@@ -440,8 +521,19 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title,
     description,
+    // Never the filtered URL: `path` is built from segments alone, never a
+    // query string, so this is already the unfiltered canonical on both
+    // routes — the verified view points at the exact page it is a view of.
     alternates: { canonical: path },
     openGraph: pageOpenGraph({ title, url: path }),
-    robots: heading.isIndexable ? undefined : { index: false, follow: true },
+    // Task 53: a `?verified=1` view is a filtered subset of its own
+    // canonical and must never compete with it in the index, regardless of
+    // whether the unfiltered page itself is indexable.
+    robots: heading.isIndexable && !verified ? undefined : { index: false, follow: true },
   };
+}
+
+/** The only export Next itself ever calls — see `renderCatchAll`'s comment. */
+export async function generateMetadata(props: Props): Promise<Metadata> {
+  return buildCatchAllMetadata(props);
 }

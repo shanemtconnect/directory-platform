@@ -340,6 +340,8 @@ export function selectPages({ sitemap, cityCategoryPath, listingId, hasSecondPag
   if (city !== null && hasSecondPage) add("pagination", `/${city}/page/2`);
   else skipped.push("pagination: no city in the sitemap has a second page of listings");
   add("search", `/search?q=${encodeURIComponent(city ?? "a")}`);
+  // Wave G: the verified-only view is a noindex, dynamic render of the same page.
+  add("search verified", `/search?q=${encodeURIComponent(city ?? "a")}&verified=1`);
   add("pricing", "/pricing");
   add("advertise badge", "/advertise/badge");
   add("login", "/login");

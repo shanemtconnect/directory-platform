@@ -36,6 +36,12 @@ afterEach(() => {
 });
 
 describe("renderSiteConfig", () => {
+  it("emits the pay-per-lead section with the documented defaults and the flag off", () => {
+    const source = renderSiteConfig(answers());
+    expect(source).toContain("    leadMarketplace: false,");
+    expect(source).toMatch(/leads: \{\n    floor: 25,\n    packs: \[50, 100, 300\],\n    halfPriceAfterDays: 7,\n    deleteAfterDays: 30,\n    refundWindowDays: 7,\n    retainSoldDays: 90,\n  \}/);
+  });
+
   it("renders a config that closes with the satisfies assertion the build relies on", () => {
     const source = renderSiteConfig(answers());
     expect(source).toContain('import type { CustomField, SiteConfig } from "./types";');
@@ -105,6 +111,7 @@ describe("renderSiteConfig", () => {
     const source = renderSiteConfig(answers({ feature_costGuides: true }));
     expect(source).toContain("costGuides: true");
     expect(source).toContain("jobBoard: false");
+    expect(source).toContain("savedSearches: false");
   });
 });
 
@@ -199,5 +206,19 @@ describe("renderSiteConfig — sponsor rails (Task 43)", () => {
 
   it("turns the rails on when the wizard was told to", () => {
     expect(renderSiteConfig(answers({ adsEnabled: "yes" }))).toContain("  ads: {\n    enabled: true,");
+  });
+});
+
+describe("renderSiteConfig — neighbourhoods (Task 52)", () => {
+  it("renders the geo.neighbourhoods block, off by default at the shipped numbers", () => {
+    expect(renderSiteConfig(answers())).toContain(
+      "  geo: {\n    neighbourhoods: {\n      enabled: false,\n      minListings: 5,\n      defaultRadiusKm: 2,\n    },\n  },",
+    );
+  });
+});
+
+describe("renderSiteConfig — URL import (Task 55)", () => {
+  it("ships the add-listing URL import switched on", () => {
+    expect(renderSiteConfig(answers())).toMatch(/listing: \{[^}]*importFromUrl: true,/);
   });
 });

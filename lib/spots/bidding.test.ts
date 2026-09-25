@@ -1,22 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import { eq, inArray } from "drizzle-orm";
-import * as schema from "@/lib/db/schema";
+import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import {
-  auditLog,
-  categories,
-  cities,
   featuredBids,
-  featuredSpots,
   featuredSubscriptions,
   listings,
-  profiles,
-  slugs,
   subscriptions,
   user,
-  verticals,
 } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import { makeCategoryInCity, makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
@@ -30,67 +20,18 @@ import {
   featuredForScope,
   findSpot,
   spotBids,
-  type SpotKey,
 } from "@/lib/db/queries/spots";
 import { processPayPalWebhook } from "@/lib/billing/process";
-import type { PayPalClient, PayPalSubscriptionView } from "@/lib/billing/paypal";
+import type { PayPalClient } from "@/lib/billing/paypal";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import { cancelOwnBid, placeBid } from "./bidding";
+import { ENV, bid, fakeClient, type Bidder } from "./bidding.fixtures";
 import { processFeaturedEvent, reconcileFeaturedSubscription } from "./webhook";
 import { parseEvent, type PayPalEvent } from "@/lib/billing/webhooks";
 
-const ENV = { PAYPAL_CLIENT_ID: "id", PAYPAL_CLIENT_SECRET: "s", PAYPAL_WEBHOOK_ID: "WH", PAYPAL_PLAN_FEATURED: "P-F" };
-
 afterEach(() => resetClock());
 
-/* ------------------------------------------------------------- fake PayPal */
-
-interface Calls {
-  created: { customId: string; quantity: number | null | undefined; planId: string }[];
-  revised: { id: string; quantity: number }[];
-  cancelled: string[];
-  suspended: string[];
-  activated: string[];
-}
-
-function fakeClient(opts: { view?: PayPalSubscriptionView | null; delayCreateMs?: number } = {}): { client: PayPalClient; calls: Calls } {
-  const calls: Calls = { created: [], revised: [], cancelled: [], suspended: [], activated: [] };
-  let n = 0;
-  const client: PayPalClient = {
-    createSubscription: async (input) => {
-      if (opts.delayCreateMs) await new Promise((r) => setTimeout(r, opts.delayCreateMs));
-      calls.created.push({ customId: input.customId, quantity: input.quantity, planId: input.planId });
-      n++;
-      return { id: `I-F${n}`, status: "APPROVAL_PENDING", approveUrl: `https://paypal.test/approve/${n}` };
-    },
-    getSubscription: async () => opts.view ?? null,
-    cancelSubscription: async (id) => {
-      calls.cancelled.push(id);
-    },
-    suspendSubscription: async (id) => {
-      calls.suspended.push(id);
-    },
-    activateSubscription: async (id) => {
-      calls.activated.push(id);
-    },
-    manageUrl: async () => null,
-    verifyWebhookSignature: async () => true,
-    reviseSubscription: async (id, input) => {
-      calls.revised.push({ id, quantity: input.quantity });
-      return { approveUrl: `https://paypal.test/revise/${id}/${input.quantity}` };
-    },
-  };
-  return { client, calls };
-}
-
 /* ------------------------------------------------------------------ seeding */
-
-interface Bidder {
-  viewer: { role: "user"; userId: string };
-  profileId: string;
-  listingId: string;
-  name: string;
-}
 
 async function makeBidder(tx: TestDb, ctx: ListingCtx, name: string, patch: Partial<typeof listings.$inferInsert> = {}, paid = true): Promise<Bidder> {
   const userId = `u_${randomUUID()}`;
@@ -111,12 +52,6 @@ async function makeBidder(tx: TestDb, ctx: ListingCtx, name: string, patch: Part
     await tx.update(subscriptions).set({ status: "active" }).where(eq(subscriptions.id, id));
   }
   return { viewer, profileId, listingId, name };
-}
-
-async function bid(tx: TestDb, client: PayPalClient, who: Bidder, spot: SpotKey, amountCents: number) {
-  return placeBid(tx, {
-    client, env: ENV, viewer: who.viewer, profileId: who.profileId, listingId: who.listingId, spot, amountCents, ip: "1.1.1.1",
-  });
 }
 
 /**
@@ -682,65 +617,5 @@ describe("through the shared webhook endpoint", () => {
       expect(await board(tx, ctx.cityId)).toEqual([]);
       expect(await spotBids(tx, PUBLIC_VIEWER, (await findSpot(tx, PUBLIC_VIEWER, citySpotKey(ctx.cityId, null)))!.id)).toEqual([]);
     });
-  });
-});
-
-describe("I8 — two first bids at once", () => {
-  const url = process.env.TEST_DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_test";
-  const conn = postgres(url, { max: 4 });
-  const database = drizzle(conn, { schema });
-  const stamp = randomUUID();
-  const userId = `u_${stamp}`;
-  const ids = { vertical: "", city: "", category: "", listing: "", profile: "" };
-
-  afterAll(async () => {
-    if (ids.listing !== "") {
-      const subs = await database.select({ id: featuredSubscriptions.id }).from(featuredSubscriptions).where(eq(featuredSubscriptions.listingId, ids.listing));
-      const bids = await database.select({ id: featuredBids.id }).from(featuredBids).where(eq(featuredBids.listingId, ids.listing));
-      const entityIds = [...subs, ...bids].map((r) => r.id);
-      if (entityIds.length > 0) await database.delete(auditLog).where(inArray(auditLog.entityId, entityIds));
-      await database.delete(featuredBids).where(eq(featuredBids.listingId, ids.listing));
-      await database.delete(featuredSubscriptions).where(eq(featuredSubscriptions.listingId, ids.listing));
-      await database.delete(featuredSpots).where(eq(featuredSpots.areaId, ids.city));
-      const tier = await database.select({ id: subscriptions.id }).from(subscriptions).where(eq(subscriptions.listingId, ids.listing));
-      if (tier.length > 0) await database.delete(auditLog).where(inArray(auditLog.entityId, tier.map((s) => s.id)));
-      await database.delete(subscriptions).where(eq(subscriptions.listingId, ids.listing));
-      await database.delete(listings).where(eq(listings.id, ids.listing));
-    }
-    const owned = [ids.listing, ids.category, ids.city, ids.vertical].filter((v) => v !== "");
-    if (owned.length > 0) await database.delete(slugs).where(inArray(slugs.entityId, owned));
-    if (ids.city !== "") await database.delete(cities).where(eq(cities.id, ids.city));
-    if (ids.category !== "") await database.delete(categories).where(eq(categories.id, ids.category));
-    if (ids.vertical !== "") await database.delete(verticals).where(eq(verticals.id, ids.vertical));
-    await database.delete(profiles).where(eq(profiles.userId, userId));
-    await database.delete(user).where(eq(user.id, userId));
-    await conn.end({ timeout: 5 });
-  });
-
-  it("serialise on the listing: one PayPal subscription, the second bid told to finish the first approval", async () => {
-    const db = database as unknown as TestDb;
-    const ctx = await makeScaffold(db);
-    ids.vertical = ctx.verticalId;
-    ids.city = ctx.cityId;
-    ids.category = ctx.primaryCategoryId;
-    await database.insert(user).values({ id: userId, name: "O", email: `${userId}@example.test` });
-    const viewer = { role: "user" as const, userId };
-    const { id: profileId } = await ensureProfile(db, viewer);
-    ids.profile = profileId;
-    ids.listing = await makeListing(db, ctx, { ownerId: profileId, claimStatus: "verified", tier: "premium" });
-    const tierSub = await createPendingSubscription(db, viewer, { listingId: ids.listing, profileId, tier: "premium", interval: "monthly", providerPlanId: "P-1", ip: null });
-    await database.update(subscriptions).set({ status: "active" }).where(eq(subscriptions.id, tierSub));
-
-    const { client, calls } = fakeClient({ delayCreateMs: 150 });
-    const who: Bidder = { viewer, profileId, listingId: ids.listing, name: "Racer" };
-    const [one, two] = await Promise.all([
-      database.transaction((tx) => bid(tx as unknown as TestDb, client, who, citySpotKey(ctx.cityId, null), 6000)),
-      database.transaction((tx) => bid(tx as unknown as TestDb, client, who, citySpotKey(ctx.cityId, ctx.primaryCategoryId), 5000)),
-    ]);
-    const outcomes = [one.outcome, two.outcome].sort();
-    expect(outcomes).toEqual(["approval", "awaiting-approval"]);
-    expect(calls.created).toHaveLength(1);
-    const subs = await database.select({ id: featuredSubscriptions.id }).from(featuredSubscriptions).where(eq(featuredSubscriptions.listingId, ids.listing));
-    expect(subs).toHaveLength(1);
   });
 });

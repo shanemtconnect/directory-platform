@@ -22,10 +22,11 @@ const createQuoteRequest = vi.fn<(...a: unknown[]) => Promise<QuoteRequestResult
 const markQuoteOutcome = vi.fn<(...a: unknown[]) => Promise<boolean>>();
 const flagQuoteRequestSpam = vi.fn<(...a: unknown[]) => Promise<boolean>>();
 const notifyQuoteRequest = vi.fn<(...a: unknown[]) => Promise<void>>();
+const notifyQuoteVerify = vi.fn<(...a: unknown[]) => Promise<void>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
 const verifyTurnstile = vi.fn<(...a: unknown[]) => Promise<TurnstileResult>>();
 const currentViewer = vi.fn<() => Promise<Viewer>>();
-const isEnabled = vi.fn<() => boolean>();
+const isEnabled = vi.fn<(flag: string) => boolean>();
 
 const HANDLE = { marker: "the transaction" };
 const transaction = vi.fn(
@@ -37,7 +38,7 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("@/lib/db/client", () => ({ db: { transaction: (fn: never) => transaction(fn) } }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/features/flags", () => ({ isEnabled: () => isEnabled() }));
+vi.mock("@/lib/features/flags", () => ({ isEnabled: (flag: string) => isEnabled(flag) }));
 vi.mock("@/lib/auth/viewer", () => ({
   currentViewer: () => currentViewer(),
   requireAdmin: async () => {
@@ -53,6 +54,7 @@ vi.mock("@/lib/db/queries/quotes", () => ({
 }));
 vi.mock("@/lib/email/notify", () => ({
   notifyQuoteRequest: (...args: unknown[]) => notifyQuoteRequest(...args),
+  notifyQuoteVerify: (...args: unknown[]) => notifyQuoteVerify(...args),
 }));
 vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/spam/write-limit")>()),
@@ -94,11 +96,15 @@ async function submit(fields: Record<string, string>) {
 
 beforeEach(() => {
   vi.resetModules();
-  isEnabled.mockReset().mockReturnValue(true);
-  createQuoteRequest.mockReset().mockResolvedValue({ outcome: "created", quoteRequestId: REQUEST_ID, recipientCount: 4 });
+  // quoteBroadcast on, leadMarketplace off: the site as it was before leads.
+  isEnabled.mockReset().mockImplementation((flag) => flag === "quoteBroadcast");
+  createQuoteRequest.mockReset().mockResolvedValue({
+    outcome: "created", quoteRequestId: REQUEST_ID, recipientCount: 4, token: "tok-raw",
+  });
   markQuoteOutcome.mockReset().mockResolvedValue(true);
   flagQuoteRequestSpam.mockReset().mockResolvedValue(true);
   notifyQuoteRequest.mockReset().mockResolvedValue(undefined);
+  notifyQuoteVerify.mockReset().mockResolvedValue(undefined);
   limitPublicWrite.mockReset().mockResolvedValue(allowed);
   verifyTurnstile.mockReset().mockResolvedValue({ ok: true, skipped: false });
   currentViewer.mockReset().mockResolvedValue({ role: "owner", userId: "user_owner" });
@@ -106,7 +112,7 @@ beforeEach(() => {
 });
 
 describe("submitQuoteRequest", () => {
-  it("writes the request with the ip, queues the job in the same transaction, and reports the count", async () => {
+  it("writes the request with the ip, queues the VERIFICATION email in the same transaction, and reports the count", async () => {
     const state = await submit(good);
 
     expect(state).toEqual({ status: "sent", recipientCount: 4 });
@@ -118,11 +124,51 @@ describe("submitQuoteRequest", () => {
       phone: "01632 960000",
       message: "Eighty people in June, with parking.",
       ip: "203.0.113.9",
+    }, { allowNoRecipients: false });
+    expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, {
+      outcome: "created", quoteRequestId: REQUEST_ID, recipientCount: 4, token: "tok-raw",
     });
-    expect(notifyQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, {
-      outcome: "created", quoteRequestId: REQUEST_ID, recipientCount: 4,
-    });
+    // Nobody but the requester is written to until the link is clicked.
+    expect(notifyQuoteRequest).not.toHaveBeenCalled();
     expect(limitPublicWrite).toHaveBeenCalledWith("quote", expect.any(Headers), { limit: 3, windowSeconds: 3600 });
+  });
+
+  it("with the lead marketplace on, keeps a request nobody local can receive — it becomes a lead on the click", async () => {
+    isEnabled.mockImplementation((flag) => flag === "quoteBroadcast" || flag === "leadMarketplace");
+    createQuoteRequest.mockResolvedValue({ outcome: "created", quoteRequestId: REQUEST_ID, recipientCount: 0, token: "t" });
+
+    const state = await submit(good);
+
+    expect(state).toEqual({ status: "sent", recipientCount: 0 });
+    expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: true });
+  });
+
+  it("with the lead marketplace on, tells the requester when a no-recipient request could not become a lead", async () => {
+    isEnabled.mockImplementation((flag) => flag === "quoteBroadcast" || flag === "leadMarketplace");
+    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "phone_invalid" });
+
+    const state = await submit({ ...good, phone: "" });
+
+    expect(state.status).toBe("error");
+    expect(state.fieldErrors?.phone).toMatch(/phone number we can call/);
+    expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: true });
+    // Handed the refusal, which queues nothing (notifyQuoteVerify ignores anything but "created").
+    expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, { outcome: "lead-refused", reason: "phone_invalid" });
+
+    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "duplicate" });
+    expect((await submit(good)).message).toMatch(/last 30 days/);
+  });
+
+  it("with the lead marketplace off, still refuses a request nobody can receive, as before", async () => {
+    createQuoteRequest.mockResolvedValue({ outcome: "no-recipients" });
+
+    const state = await submit({ ...good, phone: "" });
+
+    expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: false });
+    expect(state).toEqual({
+      status: "error",
+      message: "Nobody in that town and category can take a request right now. Try a nearby town.",
+    });
   });
 
   it("refuses when the feature flag is off, before anything else", async () => {

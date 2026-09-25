@@ -133,6 +133,60 @@ describe("countListings", () => {
   });
 });
 
+describe("verified filter", () => {
+  it("listListings returns only verified listings when verified is true", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: "verified one", claimStatus: "verified" });
+      await makeListing(tx, ctx, { name: "claimed one", claimStatus: "claimed" });
+      await makeListing(tx, ctx, { name: "unclaimed one", claimStatus: "unclaimed" });
+
+      const rows = await listListings(tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId }, { verified: true });
+      expect(rows.map((r) => r.name)).toEqual(["verified one"]);
+    });
+  });
+
+  it("listListings returns every claim status when verified is false or absent", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: "verified one", claimStatus: "verified" });
+      await makeListing(tx, ctx, { name: "unclaimed one", claimStatus: "unclaimed" });
+
+      expect(await listListings(tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId })).toHaveLength(2);
+      expect(
+        await listListings(tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId }, { verified: false }),
+      ).toHaveLength(2);
+    });
+  });
+
+  it("countListings counts only verified listings when verified is true", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: "verified one", claimStatus: "verified" });
+      await makeListing(tx, ctx, { name: "unclaimed one", claimStatus: "unclaimed" });
+
+      expect(await countListings(tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId }, { verified: true })).toBe(1);
+      expect(await countListings(tx, PUBLIC_VIEWER, { type: "city", cityId: ctx.cityId })).toBe(2);
+    });
+  });
+
+  it("verified combines with the scope filter, not just published status", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const second = await makeCategoryInCity(tx, ctx.verticalId, ctx.cityId, "Country Houses");
+      await makeListing(tx, ctx, { name: "a verified barn", claimStatus: "verified" });
+      await makeListing(tx, { ...ctx, primaryCategoryId: second }, { name: "a verified house", claimStatus: "verified" });
+
+      const rows = await listListings(
+        tx, PUBLIC_VIEWER,
+        { type: "city-category", cityId: ctx.cityId, categoryId: ctx.primaryCategoryId },
+        { verified: true },
+      );
+      expect(rows.map((r) => r.name)).toEqual(["a verified barn"]);
+    });
+  });
+});
+
 describe("publicListingColumns", () => {
   /**
    * The submitter's email, their IP, the moderator's rejection note and the

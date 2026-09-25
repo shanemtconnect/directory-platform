@@ -435,7 +435,7 @@ wait_for_200 "$BOOT_CONTAINER" "http://127.0.0.1:$BOOT_PORT/"
 # its module graph — lib/ads/logo -> sharp, lib/media/r2 -> S3 — is loaded
 # before the redirect runs, which is exactly the load that used to 500. The
 # redirect is followed too, so the login page it lands on is also proven.
-for spec in /:200 /areas:200 "/$CITY_SLUG:200" "/$CITY_SLUG/$LISTING_SLUG:200" /advertise/sponsor:307; do
+for spec in /:200 /areas:200 "/$CITY_SLUG:200" "/$CITY_SLUG/$LISTING_SLUG:200" "/search?verified=1:200" /advertise/sponsor:307; do
   route=${spec%:*}; want=${spec##*:}
   CODE=$(http_code "http://127.0.0.1:$BOOT_PORT$route")
   [ "$CODE" = "$want" ] \
@@ -489,6 +489,11 @@ CODE=$(http_code "http://127.0.0.1:$BOOT_PORT/jobs")
 [ "$CODE" = "200" ] \
   || fail "/jobs returned $CODE from the staging image — SITE_FLAGS_OVERRIDE=on is not reaching next build: $(docker logs "$BOOT_CONTAINER" 2>&1 | tail -20)"
 echo "ok: /jobs 200 in the staging image"
+# Wave G: the lead board is flag-gated too; signed out it serves its sign-in
+# teaser (200) rather than 404 — the proof that leadMarketplace reached the build.
+CODE=$(http_code "http://127.0.0.1:$BOOT_PORT/leads")
+[ "$CODE" = "200" ] || fail "/leads returned $CODE from the staging image, expected 200 with leadMarketplace on"
+echo "ok: /leads 200 in the staging image"
 docker rm -f "$BOOT_CONTAINER" > /dev/null 2>&1 || true
 BOOT_CONTAINER=""
 

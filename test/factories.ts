@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { verticals, cities, categories, listings } from "@/lib/db/schema";
+import { verticals, cities, categories, listings, areas } from "@/lib/db/schema";
 import { allocateSlug, ROOT_SCOPE } from "@/lib/routing/slugs";
 import type { TestDb } from "./db";
 
@@ -95,4 +95,22 @@ export async function makeScaffold(tx: TestDb): Promise<ListingCtx> {
   const cityId = await makeCity(tx);
   const primaryCategoryId = await makeCategoryInCity(tx, verticalId, cityId);
   return { cityId, verticalId, primaryCategoryId };
+}
+
+/**
+ * A neighbourhood under a town (Task 52): an `areas` row with `city_id`, its
+ * slug registered in the town's scope so /<city>/<slug> resolves.
+ */
+export async function makeNeighbourhood(
+  tx: TestDb,
+  cityId: string,
+  name = "Headingley",
+  patch: Partial<typeof areas.$inferInsert> = {},
+): Promise<string> {
+  const id = randomUUID();
+  const slug = await allocateSlug(tx, { parentScope: cityId, desired: name, kind: "area", entityId: id });
+  await tx.insert(areas).values({
+    id, name, slug, cityId, lat: 53.8, lng: -1.55, radiusKm: 2, isPublished: true, ...patch,
+  });
+  return id;
 }

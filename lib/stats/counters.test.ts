@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
  * the way the flush assumes, and a fake would assert my assumptions rather
  * than Redis's behaviour.
  */
-process.env.REDIS_URL = "redis://localhost:6380/7";
+process.env.REDIS_URL = "redis://localhost:6380/1";
 
 const { closeStatsRedis, statsRedis } = await import("./redis");
 const { COUNTER_TTL_SECONDS, SEEN_TTL_SECONDS, claimDailyView, drainStats, recordStat, recordStats, seenSalt } =
@@ -20,7 +20,7 @@ const DAY = dayKey(AT);
 
 async function flush(): Promise<void> {
   const c = await statsRedis();
-  if (!c) throw new Error("redis db 7 is not reachable — start docker compose");
+  if (!c) throw new Error("redis db 1 is not reachable — start docker compose");
   // Only database 7. Never a FLUSHALL: the other worktrees' counters and the
   // dev site's page cache live in the same server.
   await c.flushDb();

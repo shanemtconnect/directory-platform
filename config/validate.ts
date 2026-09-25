@@ -19,6 +19,9 @@ export class ConfigError extends Error {
 export const FEATURE_DEPENDENCIES: Partial<Record<FeatureFlag, readonly FeatureFlag[]>> = {
   awards: ["reviews"],
   quoteBroadcast: ["shortlist"],
+  // savedSearches needs nothing: listings search is always there, and its
+  // jobs kind is simply not offered while jobBoard is off.
+  leadMarketplace: ["quoteBroadcast"],
 };
 
 export function validateFeatureDependencies(features: FeatureMap): void {
@@ -316,6 +319,93 @@ export function validateStatsRetention(config: {
   if (problems.length > 0) {
     throw new ConfigError(
       `Stats retention configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
+/**
+ * The largest radius a neighbourhood may have (Task 52). A neighbourhood is
+ * part of a town; 25 km is already most of a large one, and a mistyped 200
+ * would otherwise swallow every listing in it. Here rather than in
+ * lib/geo/neighbourhoods.ts because next.config.ts loads this file, and it
+ * only takes relative imports; the CSV reader re-exports it.
+ */
+export const MAX_NEIGHBOURHOOD_RADIUS_KM = 25;
+
+/**
+ * `geo.neighbourhoods` (Task 52). Neighbourhoods hang off towns, which only a
+ * niche-national site has — a local-multi-vertical site's `areas` rows are its
+ * own top-level places and must keep `city_id` null. A threshold of zero would
+ * index an empty page; a radius of zero or less assigns nothing, silently.
+ */
+export function validateNeighbourhoods(config: {
+  siteMode: string;
+  geo: { neighbourhoods: { enabled: boolean; minListings: number; defaultRadiusKm: number } };
+}): void {
+  const n = config.geo.neighbourhoods;
+  const problems: string[] = [];
+  if (n.enabled && config.siteMode !== "niche-national") {
+    problems.push(`geo.neighbourhoods is on, but neighbourhoods exist on niche-national sites only (siteMode is ${config.siteMode})`);
+  }
+  if (!Number.isInteger(n.minListings) || n.minListings < 1) {
+    problems.push(`geo.neighbourhoods.minListings must be a whole number of at least 1, got ${String(n.minListings)}`);
+  }
+  if (!Number.isFinite(n.defaultRadiusKm) || n.defaultRadiusKm <= 0 || n.defaultRadiusKm > MAX_NEIGHBOURHOOD_RADIUS_KM) {
+    problems.push(
+      `geo.neighbourhoods.defaultRadiusKm must be a positive distance of at most ${MAX_NEIGHBOURHOOD_RADIUS_KM} km, got ${String(n.defaultRadiusKm)}`,
+    );
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Neighbourhood configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
+/**
+ * The pay-per-lead numbers. A floor below one currency unit is a lead given
+ * away; packs out of order are a top-up page whose "smallest" button is not
+ * the smallest; a non-positive day count halves or deletes a lead the moment
+ * it is created. All refused at build.
+ */
+export function validateLeads(config: {
+  leads: {
+    floor: number;
+    packs: readonly number[];
+    halfPriceAfterDays: number;
+    deleteAfterDays: number;
+    refundWindowDays: number;
+    retainSoldDays: number;
+  };
+}): void {
+  const l = config.leads;
+  const problems: string[] = [];
+  if (!Number.isFinite(l.floor) || l.floor < 1) {
+    problems.push(`leads.floor must be at least 1, got ${String(l.floor)}`);
+  }
+  if (l.packs.length === 0) problems.push("leads.packs must list at least one pack");
+  for (let i = 0; i < l.packs.length; i++) {
+    const p = l.packs[i]!;
+    if (!Number.isInteger(p) || p <= 0) problems.push(`leads.packs[${i}] must be a whole positive amount, got ${String(p)}`);
+    if (i > 0 && p <= l.packs[i - 1]!) {
+      problems.push(`leads.packs must be ascending; ${p} follows ${l.packs[i - 1]}`);
+    }
+  }
+  for (const key of ["halfPriceAfterDays", "deleteAfterDays", "refundWindowDays", "retainSoldDays"] as const) {
+    if (!Number.isInteger(l[key]) || l[key] < 1) {
+      problems.push(`leads.${key} must be a whole number of days, at least 1, got ${String(l[key])}`);
+    }
+  }
+  // The buyer's page is where a bad lead is reported; purging the details
+  // before the window closes would leave them nothing to report on.
+  if (l.retainSoldDays < l.refundWindowDays) {
+    problems.push(
+      `leads.retainSoldDays must be at least refundWindowDays (${String(l.refundWindowDays)}), got ${String(l.retainSoldDays)}`,
+    );
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Lead configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
     );
   }
 }

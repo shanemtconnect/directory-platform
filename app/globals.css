@@ -598,6 +598,13 @@
     color: var(--color-primary);
   }
   .sponsor-placeholder { border-style: dashed; background: var(--color-raised); }
+  /* The lead-capture house slot (Task 56): a card that opens into its form.
+     Open, the rail drops its centring and the other cards so the form has
+     the height it needs; the form scrolls inside itself, never the page. */
+  .lead-capture-rail > summary { cursor: pointer; list-style: none; }
+  .lead-capture-rail > summary::-webkit-details-marker { display: none; }
+  .lead-capture-rail form { margin-block-start: 0.75rem; font-size: 0.8125rem; }
+  .lead-capture-rail input:not([type="checkbox"]), .lead-capture-rail select, .lead-capture-rail textarea { width: 100%; }
 
   @media (min-width: 768px) and (max-width: 1279.98px) {
     .sponsor-inline {
@@ -618,6 +625,11 @@
        can tell (getClientRects) whether a reader could have seen it. */
     @media (max-height: 899.98px) { .sponsor-rail .sponsor-card:nth-child(n + 4) { display: none; } }
     @media (max-height: 699.98px) { .sponsor-rail .sponsor-card:nth-child(n + 3) { display: none; } }
+    .sponsor-rail:has(.lead-capture-rail[open]) {
+      top: 1rem; transform: none; width: 18rem;
+      max-height: calc(100vh - 2rem); overflow-y: auto;
+    }
+    .sponsor-rail:has(.lead-capture-rail[open]) .sponsor-card:not(.lead-capture-rail) { display: none; }
     .sponsor-rail-left { left: max(0.75rem, calc((100vw - 72rem) / 2 - var(--sponsor-rail-w) - var(--sponsor-rail-gap))); }
     .sponsor-rail-right { right: max(0.75rem, calc((100vw - 72rem) / 2 - var(--sponsor-rail-w) - var(--sponsor-rail-gap))); }
     /* Make room: the container narrows until the viewport is wide enough for both. */

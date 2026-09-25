@@ -3,7 +3,7 @@ import {
   uniqueIndex, index,
 } from "drizzle-orm/pg-core";
 import { base } from "./_base";
-import { reviewStatus, jobStatus, campaignChannel, quoteOutcome } from "./enums";
+import { reviewStatus, jobStatus, campaignChannel, quoteOutcome, quoteStatus, leadSource } from "./enums";
 import { listings } from "./listings";
 import { cities, categories } from "./geo";
 
@@ -102,7 +102,34 @@ export const quoteRequests = pgTable("quote_requests", {
   consentAt: timestamp("consent_at", { withTimezone: true }),
   /** Admin's flag. A spam request drops off every owner's leads page. */
   isSpam: boolean("is_spam").notNull().default(false),
-}, (t) => [index("quote_requests_created_idx").on(t.createdAt)]);
+  /**
+   * The requester's verification link (Task 56). Nobody is emailed and no
+   * lead is created until `status` is `verified`. The token itself is never
+   * stored: `verify_token_hash` is its SHA-256 (lib/security/token-hash.ts),
+   * and it is KEPT after the click so a second click finds the row and is
+   * told "already confirmed" rather than "unknown link".
+   */
+  status: quoteStatus("status").notNull().default("pending"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  verifyTokenHash: text("verify_token_hash"),
+  verifyExpiresAt: timestamp("verify_expires_at", { withTimezone: true }),
+  /**
+   * `quote` for the get-quotes form, `capture` for a lead-capture box (home
+   * page, rails) — which is never broadcast and becomes a lead on the click —
+   * and `enquiry` for an enquiry to an unclaimed listing with no address.
+   */
+  source: leadSource("source").notNull().default("quote"),
+  /**
+   * `enquiry` rows only: the unclaimed, no-email listing an enquiry was sent
+   * to. The row holds the enquirer's verification link; confirming it makes
+   * the enquiry lead (D6 — no unverified lead ever exists).
+   */
+  listingId: uuid("listing_id").references(() => listings.id, { onDelete: "set null" }),
+}, (t) => [
+  index("quote_requests_created_idx").on(t.createdAt),
+  uniqueIndex("quote_requests_verify_token_key").on(t.verifyTokenHash),
+  index("quote_requests_status_idx").on(t.status, t.verifyExpiresAt),
+]);
 
 export const quoteRecipients = pgTable("quote_recipients", {
   ...base,

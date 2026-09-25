@@ -23,7 +23,22 @@ export async function limitPublicWrite(
   opts: { limit: number; windowSeconds: number },
 ): Promise<RateLimitResult> {
   const subject = rateLimitSubject(clientIp(requestHeaders));
-  return rateLimit(subject && `${feature}:${subject}`, opts);
+  return rateLimit(subject && `${feature}:${subject}`, { ...opts, limit: opts.limit * writeLimitMultiplier() });
+}
+
+/**
+ * `PUBLIC_WRITE_LIMIT_MULTIPLIER` scales every budget below, and exists for
+ * one reason: the Playwright suite sends every public write from 127.0.0.1,
+ * and the quote-request specs alone make more submissions in a minute than a
+ * person is allowed in an hour. `playwright.config.ts` and
+ * `scripts/verify-clone.sh` set it for the server they boot; nothing else
+ * does, and an unset, empty or malformed value is 1 — the budgets as written.
+ */
+export function writeLimitMultiplier(env: Record<string, string | undefined> = process.env): number {
+  const raw = env["PUBLIC_WRITE_LIMIT_MULTIPLIER"];
+  if (raw === undefined || raw === "") return 1;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : 1;
 }
 
 /*
@@ -65,6 +80,17 @@ export const SUBMIT_LISTING_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as co
  * endless lists, or hammering a rename to fill the table with text.
  */
 export const SHORTLIST_RATE_LIMIT = { limit: 120, windowSeconds: 3600 } as const;
+
+/**
+ * Ten an hour, and deliberately not behind Turnstile.
+ *
+ * The add-listing URL import (lib/actions/import-listing.ts) writes nothing:
+ * it fetches one page and hands the fields back to the person's own form, which
+ * still has to pass Turnstile to submit. What it can be abused for is making us
+ * fetch pages for someone, so the budget is sized for a person who tries their
+ * site, their Facebook page and a typo — not for a crawler.
+ */
+export const IMPORT_URL_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as const;
 
 /**
  * Five an hour, like the enquiry form.
@@ -256,6 +282,22 @@ export const BADGE_BACKLINK_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as c
  * do — a typo must not cost one of the three.
  */
 export const QUOTE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
+ * Thirty a minute per address, on the get-quotes verification link (Task
+ * 56). Same shape and reasoning as the review and claim links: the token is
+ * 256 random bits, and the limit stops a guess loop being a free query per
+ * guess while costing a real requester nothing — they click once.
+ */
+export const QUOTE_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+
+/**
+ * Three an hour, on the lead-capture boxes (home page, rails). The same
+ * budget as the get-quotes form, in its own bucket: a capture request sends
+ * one verification email and is then offered to paying buyers, so a script
+ * filling it in is both mail signed with our domain and leads nobody asked for.
+ */
+export const LEAD_CAPTURE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
 
 /**
  * Thirty a minute per address, on the unsubscribe link — the page and the

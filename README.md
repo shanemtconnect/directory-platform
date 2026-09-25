@@ -43,6 +43,13 @@ one-listing city pages are how directories sink their own domain.
 (unclaimed → claimed → verified) and `tier` (free/essential/premium) are
 different columns, so a cancellation can drop a badge without touching a tier.
 
+**Import from a URL on `/add-listing`** (`siteConfig.listing.importFromUrl`,
+on by default). A "Paste the address" box above the form fetches the business's
+own page through the SSRF-guarded fetcher in `lib/net/safe-fetch.ts` (the same
+one the badge backlink check uses), reads its OpenGraph and JSON-LD, and
+prefills the form. It never submits: the person checks every field and the
+submission still passes Turnstile. Ten look-ups an hour per connection.
+
 **The ISR cache is per build, and that is deliberate.** It is Redis-backed and
 keyed `nextjs:<buildId>:`, so it is shared across replicas and survives a
 container restart, but a deploy starts cold. Cached HTML belongs to the build
@@ -171,8 +178,10 @@ config (`essential`, `premium`) that is the four below;
 | `STATIC_ASSETS_DIR` | boot | `docker-entrypoint.sh` — web role only | No asset retention across deploys. Set but not writable: **refuses to boot** |
 | `PORT` `HOSTNAME` | boot | the standalone server; Dockerfile sets `3000` / `0.0.0.0` | Those defaults |
 | `ADS_ENABLED` | boot (read per request) | `lib/ads/policy.ts` — the sponsor rails kill switch | Follows `siteConfig.ads.enabled` (off in the template). The literal `false` hides every rail whatever the config says; the literal `true` shows them over a config that has them off — for checking a staging build, and for the e2e suite. Rails never appear on the home page, and never with real cards unless `SITE_ENV=production` (staging shows a labelled placeholder) |
+| `NEIGHBOURHOODS_ENABLED` | boot (read per request), **web and worker, same value** | `lib/geo/neighbourhoods.ts` — the neighbourhoods switch | Follows `siteConfig.geo.neighbourhoods.enabled` (off in the template). `true` turns the module on over a config that has it off (staging review, the e2e suite); `false` turns it off. Never on for `local-multi-vertical`. Each process reads its own copy: set on the web app only, the pages exist but the worker never assigns a listing; set on the worker only, listings are assigned to pages that 404 |
 | `SITE_FLAGS_OVERRIDE` | **build** | `config/flag-variants.ts` | Features come from `site.config.ts`. `on`/`off` exist for the two CI builds (`build:flags-on`, `build:flags-off`) and for staging image builds (Coolify build arg, so every module renders for review). Ignored under `SITE_ENV=production` — enforced in `resolveFeatures()`, with a build-time warning — so it cannot flip flags on a real site |
 | `BETTER_AUTH_RATE_LIMIT` | boot | `lib/auth/server.ts` | Rate limiting on. Only the literal `off` disables it, and only `playwright.config.ts` sets that |
+| `PUBLIC_WRITE_LIMIT_MULTIPLIER` | boot | `lib/spam/write-limit.ts` | Scales every public-write budget by a whole number ≥ 1; unset = 1. Only `playwright.config.ts` and `scripts/verify-clone.sh` set it (20), because their suites send every write from one address |
 | `STATS_SEEN_SALT` | boot | `lib/stats/counters.ts` — salts the `sha256(ip, day, salt)` digest that stands in for a visitor's address in the one-view-per-day mark (`stats:seen:<day>:<digest>:<listing>`) | `BETTER_AUTH_SECRET` is used instead. Redis never holds a raw address either way; set this only to rotate the two independently |
 
 ### Monitoring variables
@@ -227,11 +236,22 @@ that holds all of them.
 | `directory_e2e` | Playwright | `corepack pnpm test:e2e:db` |
 
 ```bash
-corepack pnpm test                     # units, TEST_DATABASE_URL
+corepack pnpm test                     # units, then the race suite, TEST_DATABASE_URL
+corepack pnpm test:race                # only the race suite (*.race.test.ts)
 corepack pnpm test:e2e:db              # create/migrate/seed directory_e2e
 corepack pnpm test:e2e                 # Playwright, against directory_e2e
-corepack pnpm test:e2e:db -- --reset   # start that database again from the seeds
+bash scripts/e2e-db.sh --reset          # start that database again from the seeds (pnpm 12 passes "--" through, so call the script)
 ```
+
+Race tests run alone. A handful of tests (`*.race.test.ts`) must put two
+transactions in flight at once against committed rows — a row lock or an
+advisory lock never contends with itself inside one rolled-back transaction —
+so they commit real rows to `directory_test`. Run in parallel with the
+rolled-back suite, those rows skewed other files' global counts and collided on
+slugs, failing a different handful of files each run. So `vitest.config.ts`
+excludes them and `vitest.race.config.ts` runs them afterwards, one file at a
+time. Everything they commit is marked (`test/race.ts`) and swept after each
+file and before either suite, so even a killed run leaves nothing behind.
 
 The e2e suite **writes**. `e2e/location.spec.ts` submits a listing through the
 real form, which creates a city, a slug and a pending listing — that is the
@@ -602,10 +622,53 @@ nav; everything on it is waiting on a person.
 | `/admin/reports` | Reports from `/report/[id]` | Dismiss, or mark actioned |
 | `/admin/removals` | Removal requests from `/remove/[id]` | Mark actioned, or reject |
 | `/admin/audit`, `/admin/audit/[entityType]` | The audit log | Read-only |
+| `/admin/neighbourhoods` | Neighbourhoods under each town — only with `geo.neighbourhoods` on | Import a CSV, publish or unpublish, "Assign listings now". See below |
 
 Owners have `/account`, `/account/listings/[id]`, `…/enquiries`,
 `/account/settings` and `/account/billing`. Checkout is
 `/checkout/[tier]/[interval]?listing=<id>`, returning via `/checkout/return`.
+
+### Neighbourhoods under towns
+
+niche-national only, off by default: `geo.neighbourhoods` in
+`config/site.config.ts` (`enabled`, `minListings` 5, `defaultRadiusKm` 2), with
+`NEIGHBOURHOODS_ENABLED` as the env override — set it on the web app **and** the
+worker, or neither. Off means no admin page, no nav
+link, no `/<town>/<neighbourhood>` route (it 404s) and a worker job that does
+nothing.
+
+A neighbourhood is an `areas` row with `city_id` set (local-multi-vertical
+areas keep it null) and a `slugs` row of kind `area` in its town's scope, so
+its page is `/<town>/<slug>` and it shares the town's namespace with that
+town's categories and listings.
+
+1. **Import** on `/admin/neighbourhoods`: a CSV whose first line is exactly
+   `city_slug,name,slug,lat,lng,radius_km`. `lat`/`lng` are the centroid;
+   an empty `slug` is made from the name, an empty `radius_km` is
+   `defaultRadiusKm`; a radius over 25 km is refused. Rows are skipped and reported by line for an unknown
+   town, a bad coordinate or radius, a reserved word, a slug a category or
+   listing already holds in that town (or any category's national slug — the
+   category would route there later), or the same town and slug given twice
+   in one file (the first row stands). Slugs are unique per town, not site-wide
+   (`areas_city_slug_key`), so every town can have its own `city-centre`. A row
+   for a neighbourhood the town already has updates it. One audit row per upload.
+2. **Assign**: every listing in a town with neighbourhoods gets `area_id` =
+   the nearest centroid whose own radius reaches it (ties to the lower slug),
+   or null when none does or it has no coordinates. Each town runs in its own
+   savepoint, so one failing town is logged and rolled back without undoing
+   the rest; ids are written 5,000 per UPDATE. Nightly at 02:41:30
+   (`neighbourhoods.assign`), or within a minute of "Assign listings now",
+   which queues a `job_queue` row the worker drains.
+3. **Pages**: `/<town>/<neighbourhood>` renders the pillar with the
+   breadcrumb Home › Town › Neighbourhood and the town × category page's
+   `ItemList`, `about` the neighbourhood `containedInPlace` the town. It is
+   `noindex` and out of the sitemap below `minListings` published listings.
+   The town page gains a "Neighbourhoods in …" block linking every published
+   neighbourhood with at least one listing.
+
+Listings arrive with coordinates only where the import or the owner gave
+them; the seed has none, so a fresh site's neighbourhoods stay empty until
+listings are located.
 
 ### Making the first admin
 
@@ -659,6 +722,140 @@ services, restart. The next `subscription-sync` tick reconciles whatever was
 missed; nothing needs replaying by hand. `scripts/paypal-setup.ts` prints this
 reminder because it deliberately does not create the webhook.
 
+### Lead credit (flag `leadMarketplace`)
+
+Buyers of leads hold prepaid credit. **No new environment variables** — top-ups
+reuse the `PAYPAL_*` group above and the same webhook. `/account/credit` shows
+the balance, the ledger that explains it and one button per pack in
+`siteConfig.leads.packs` (major units of `siteConfig.currency`; the ledger
+stores minor units). A button creates a `credit_orders` row and a PayPal
+**Order** (one-off, `intent: CAPTURE`) for exactly that pack with
+`custom_id = credit:<row id>`, then sends the buyer to PayPal.
+`/account/credit/return` captures it: with `intent: CAPTURE`, approving moves
+no money, and **the return page is the only thing that captures**. A buyer who
+approves and then closes the tab before it loads is neither charged nor
+credited; the order simply expires at PayPal. The return page captures
+before it checks the session, so a buyer whose login lapsed at PayPal is
+still credited and then asked to sign in. The `PAYMENT.CAPTURE.COMPLETED`
+webhook is a backstop for a capture that happened but was not recorded (the
+return page's transaction failing after PayPal took the money) and for
+redeliveries: whichever of the two arrives first credits the account and
+the other finds it done (row lock + the ledger's unique `order_id`). A capture for any amount or currency other than the row's pack is
+refused, the order is marked `failed`, and a `credit.payment.mismatch` audit
+row is written for a manual refund; a capture naming an order this site does
+not hold is logged and ignored. The buyer gets a receipt
+(`notify.credit.topup`) with the new balance.
+
+Credit is spent by `debitForPurchase` and returned by `refundToCredit`
+(`lib/db/queries/credits.ts`), both under a per-account advisory lock so two
+simultaneous purchases cannot overspend one balance. It is never cashed out
+except by an admin at `/admin/credit`, where every adjustment needs a reason
+and is audited as `credit.adjusted`. The capture webhook deliberately does
+not check the flag: an order started while `leadMarketplace` was on and
+captured after it was turned off has taken the buyer's money, so it is still
+credited. Job-post orders share the same capture
+webhook: `applyCaptureEvent` dispatches on the `custom_id` prefix (`credit:`,
+`job:`, or a bare job id for orders created before the prefixes). The sandbox
+checks still owed before this takes real money are in
+`docs/PAYPAL-CREDIT-VERIFY.md`.
+### Quote verification and leads (Task 56)
+
+With `quoteBroadcast` on, a get-quotes request is written **pending** and the
+only email queued is `notify.quote-verify`, to the requester. Nobody else is
+written to, and nothing appears on an owner's leads page, until they click
+the link and press **Confirm** on the page it opens: the link
+(`/get-quotes/verify/<token>`; 32 random bytes, stored as a sha256 digest,
+single use, 48 hours) only previews the token — mail scanners GET links — and
+the button's `POST …/confirm` marks the request verified, queues the usual
+`notify.quote` delivery, and lands on `/get-quotes/confirmed`. The
+`quotes.expire` worker job marks unclicked requests expired every hour;
+`/admin/quotes` shows which requests are still awaiting confirmation.
+
+With `leadMarketplace` on as well (it requires `quoteBroadcast`), a
+**lead** (`leads` table) is created — open, at `siteConfig.leads.floor` — when:
+a verified quote request reached no listing on a paid tier (including one
+nobody in town could receive, which the form now keeps instead of refusing);
+a lead-capture box (home page, the top of the left sponsor rail) is confirmed
+by the same email link; or an enquiry sent to an unclaimed listing with no
+email on file is confirmed by the enquirer through the same link (the enquiry
+itself is recorded as always). No unverified lead ever exists. With the flag
+on, every "we don't sell your details" line is replaced by the one notice in
+`lib/leads/consent.ts`; with it off they are unchanged. Every lead passes the rules in `lib/leads/rules.ts` first: a
+phone that normalises for the site's country (`lib/geo/phone.ts`; premium,
+personal-numbering and fiction ranges refused), an email not at a throwaway
+inbox (`lib/spam/disposable-domains.ts`), neither on `lead_blocklist`, and
+neither on another lead in the last 30 days. The board only ever shows
+`first_name` and `brief`, which is generated with addresses, digit runs,
+postcodes and the surname stripped. Creating a lead emails nobody; selling it
+is `afterLeadCreated` in `lib/leads/hooks.ts` (Task 58).
+
+### Operating the site: leads (Task 58, flag `leadMarketplace`)
+
+**Who gets a lead.** The moment a lead is made (the requester's Confirm),
+`allocateLead` (`lib/leads/allocate.ts`) offers it to the **standing orders**
+that cover it: active orders whose places include the lead's town, that
+town's region, or everywhere, and whose categories are "all" or include the
+lead's, on a listing still live and owned by the order's account. The
+highest price wins; on a tie, the older order. The winner is debited its own
+price from credit, the lead is marked `sold`, and the buyer is emailed the
+full contact details (`notify.lead.won`). One buyer per lead. An order whose
+balance is below its price is **paused** (`no_credit`) and its owner emailed
+once (`notify.lead.topup`); they top up and press Resume on `/account/leads`.
+If nobody takes it the lead waits on the board. Allocation runs in a
+savepoint of the confirm request: if it fails the lead stays open, the error
+is logged and the requester still sees "confirmed".
+
+**The board** is `/leads` (header link "Leads"; signed-in only, never in the
+footer or sitemap). Each row shows first name, town, category, the brief, its
+age and today's price — `siteConfig.leads.floor`, halved after
+`halfPriceAfterDays`. "Buy" spends credit for one of the buyer's live
+listings; with too little credit the row offers a top-up instead and nothing
+is taken. Two people pressing at once: the lead row is locked, one wins, the
+other is told it has gone. The page prints the refund and no-refund policy
+(`lib/leads/market.ts`, one list for the board, the report form and the
+emails).
+
+**Contact details** of a sold lead appear in exactly two places: the buyer's
+`/leads/<id>` (a 404 for everybody else) and the won email, which is sent for
+a board purchase too. Every list — the board, `/account/leads`,
+`/admin/leads` — shows first name and brief only. `leads.sweep` purges a sold
+lead's name, email, phone, message and normalised keys
+`siteConfig.leads.retainSoldDays` (default 90, at least `refundWindowDays`)
+after the sale (`leads.sold_at`, so it happens even if the buyer deletes their
+account; a lead with a refund report still pending waits for the decision); the page then says the details have expired and the won
+email is the buyer's record. First name, brief, town, category, price, the
+purchase and any refund are kept.
+
+**Standing orders** live on `/account/leads`: towns, regions or everywhere,
+categories (none = all), a price of at least the floor, pause/resume, edit,
+delete; at most five per listing. Every change is audited.
+
+**Refunds (D10).** From `/leads/<id>`, within `refundWindowDays` of buying,
+the buyer reports a bad lead for one of: dead phone, wrong person, bounced
+email, spam, never asked, wrong area. `/admin/leads` lists the reports with
+each buyer's refund rate (reports ÷ leads bought; ⚠ above a third — a flag,
+never an automatic block). **Approve** credits the price back
+(`refundToCredit`), audits `lead.refund_approved` and emails the buyer; for
+dead phone, wrong person, spam and never asked — the requester's doing — it
+also blocklists the lead's phone and email for 12 months (the next request
+from either is refused). Wrong area (our data) and a bounced email (often a
+typo) are refunded without a blocklist; **Reject** needs a note, which the buyer is sent. A refund
+re-opens nothing: the lead stays `sold`, marked refunded in the admin list.
+`/admin/leads` can also delete an unsold lead (off the board; audited
+`lead.deleted`); a sold lead belongs to its buyer and is refused.
+Pending reports are counted on the dashboard and beside the nav link.
+
+**Housekeeping.** `leads.sweep` (hourly :13) marks open leads past
+`expires_at` expired and deletes unsold expired or deleted rows seven days
+after that; sold leads are kept, since their purchase and any refund point at
+them, but their contact details are purged `retainSoldDays` after the sale. `leads.retry_allocate` (hourly :43) offers open leads to orders created,
+edited or resumed in the last 70 minutes, each lead in its own committed
+transaction so a run cannot deadlock against a buyer on the board. `leads.board_digest` (Mondays 09:00,
+site time) queues one email per account with an active order or a purchase
+in 90 days and something open in its places — the count worked out once per
+run from one read of the open leads — with a one-click
+unsubscribe (`{ userId }` token) and a checkbox on `/account/leads`.
+
 ### Testing gotchas
 
 `corepack pnpm test:e2e -- e2e/admin.spec.ts` does **not** run one file — the
@@ -697,7 +894,14 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `badge-counters` | every minute | Moves badge impressions and clicks from Redis into `badges` | — |
 | `renewal-reminders` | hourly :17 | Queues the 30-, 7- and 0-day renewal emails, once per subscription and period | `PAYPAL_*` (no-op otherwise), the email vars for delivery |
 | `subscription-sync` | hourly :37 | Reconciles subscriptions whose paid period ended over three days ago against PayPal; lapses or extends; returns the pages to revalidate | `PAYPAL_*` (logs "not configured" otherwise), `INTERNAL_REVALIDATE_SECRET` (optional) |
+| `neighbourhoods.assign` | daily 02:41:30 | Assigns each listing in a town with neighbourhoods to the nearest centroid within its radius and recounts each neighbourhood; returns the town and neighbourhood pages that moved. No-op with `geo.neighbourhoods` off | — |
+| `neighbourhoods.assign-queue` | every minute | Runs the same assignment once for any queued "Assign listings now" presses. Shares the `neighbourhoods.assign` advisory lock with the nightly run, so the two never overlap | — |
+| `quotes.expire` | hourly :53 | Marks quote requests whose verification link lapsed (48 h, never clicked) `expired`. The click checks the window itself; this keeps the admin list honest | — |
 | `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
+| `leads.sweep` | hourly :13, only with `leadMarketplace` on | Open leads past `expires_at` become `expired` (off the board); unsold expired or admin-deleted leads are deleted 7 days after `expires_at`. Sold leads are kept, their contact details purged `leads.retainSoldDays` (90) after the sale | — |
+| `leads.retry_allocate` | hourly :43, only with `leadMarketplace` on | Offers open leads to standing orders created, edited or resumed in the last 70 minutes (`lib/leads/allocate.ts` `retryAllocation`) | — |
+| `leads.board_digest` | Mondays 09:00 site time, only with `leadMarketplace` on | Queues `notify.lead.board-digest` for each account with an active standing order or a purchase in 90 days that has not opted out; once per week (audit `leads.board_digest_sent`) | `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` |
+| `alerts.dispatch` | hourly :23, only with `savedSearches` on | Queues a `notify.saved_search` digest for each active saved search that is due (daily: last sent 24 h ago or more; weekly: 7 d; never sent: now) **and** has listings/jobs that went live (`coalesce(published_at, created_at)`) since its watermark; owner's email must be verified; half an hour's tolerance keeps the cadence from drifting. The notify drain re-reads, sends (with a one-click unsubscribe for that search), then stamps `last_sent_at` with the dispatch tick and moves `last_seen_published_at` | the email vars for delivery; `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` (no digest goes without its unsubscribe link) |
 
 Every job is a no-op on a site without the feature it serves; none of them
 fails the worker. What fails the worker is a missing required variable at

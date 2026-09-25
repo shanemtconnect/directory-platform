@@ -6,7 +6,7 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { cities, verticals } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import {
-  makeCity, makeScaffold, makeCategoryInCity, makeListing, type ListingCtx,
+  makeCity, makeScaffold, makeCategoryInCity, makeListing, makeNeighbourhood, type ListingCtx,
 } from "@/test/factories";
 
 const ADMIN = { role: "admin", userId: "a" } as const;
@@ -251,3 +251,26 @@ describe("listSwitcherCities", () => {
     });
   });
 });
+
+describe("pillarHeading — neighbourhoods (Task 52)", () => {
+  it("names the neighbourhood and its town, and carries the town for the breadcrumb", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const areaId = await makeNeighbourhood(tx, ctx.cityId, "Headingley");
+      await makeListing(tx, ctx, { name: "In Headingley", areaId });
+      const [city] = await tx.select().from(cities).where(eq(cities.id, ctx.cityId));
+
+      const heading = await pillarHeading(tx, PUBLIC_VIEWER, { type: "city-area", cityId: ctx.cityId, areaId }, PLURAL);
+      expect(heading).toMatchObject({
+        title: `${PLURAL.Plural} in Headingley, ${city!.name}`,
+        place: "Headingley",
+        parent: { name: city!.name, slug: city!.slug },
+        nounPlural: PLURAL.plural,
+        listingCount: 1,
+        isIndexable: false,
+        introHtml: null,
+      });
+    });
+  });
+});
+

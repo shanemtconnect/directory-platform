@@ -63,6 +63,13 @@ export const NOTIFY_AWARD_WON = "notify.award.won";
 export const NOTIFY_QUOTE = "notify.quote";
 
 /**
+ * The requester's verification link (Task 56). Queued on submit INSTEAD of
+ * NOTIFY_QUOTE: nobody else is written to until the link is clicked, and the
+ * click (app/get-quotes/verify/[token]/confirm/route.ts) is what queues NOTIFY_QUOTE.
+ */
+export const NOTIFY_QUOTE_VERIFY = "notify.quote-verify";
+
+/**
  * Every kind worker/jobs/notify.ts claims — the ONE answer to "what does the
  * notify worker drain". `BILLING_NOTIFY_KINDS` below is deliberately not in
  * it: renewal-reminders.ts drains those itself.
@@ -87,6 +94,7 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
   NOTIFY_QUOTE,
+  NOTIFY_QUOTE_VERIFY,
   NOTIFY_AWARD_WON,
 ];
 
@@ -398,14 +406,37 @@ import type { QuoteRequestResult } from "@/lib/db/queries/quotes";
 /** An id alone: the worker re-reads the request and re-resolves every address. */
 export type QuoteJobPayload = { quoteRequestId: string };
 
+/**
+ * The delivery: every recipient's copy and the requester's acknowledgement.
+ * Queued by the verification click, in the transaction that verified the
+ * request — never on submit.
+ */
 export async function notifyQuoteRequest(
+  tx: TestDb,
+  viewer: Viewer,
+  quoteRequestId: string,
+): Promise<void> {
+  const payload: QuoteJobPayload = { quoteRequestId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE, payload });
+}
+
+/**
+ * The verification job carries the raw token because it has to — the row
+ * holds only its digest — like the review and claim links. `completeJob`
+ * scrubs it once the email has gone, and the worker re-reads the request, so
+ * a request clicked (or expired) before the tick is never sent a link.
+ */
+export type QuoteVerifyJobPayload = { quoteRequestId: string; token: string };
+
+/** Queued on submit, inside the transaction that wrote the pending request. */
+export async function notifyQuoteVerify(
   tx: TestDb,
   viewer: Viewer,
   result: QuoteRequestResult,
 ): Promise<void> {
   if (result.outcome !== "created") return;
-  const payload: QuoteJobPayload = { quoteRequestId: result.quoteRequestId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE, payload });
+  const payload: QuoteVerifyJobPayload = { quoteRequestId: result.quoteRequestId, token: result.token };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE_VERIFY, payload });
 }
 
 /* ------------------------------------------------------- awards (Task 50) */
@@ -506,4 +537,96 @@ export async function notifySpotClosed(
   payload: SpotClosedJobPayload,
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_CLOSED, payload });
+}
+
+/* ------------------------------------------------ saved searches (Task 54) */
+
+/**
+ * One saved search's digest of new matches. Queued by the hourly
+ * `alerts.dispatch` cron (worker/jobs/alerts.ts) only when there is something
+ * new; the worker re-reads the search and recomputes the matches at send
+ * time, so a listing unpublished in between never reaches the email.
+ */
+export const NOTIFY_SAVED_SEARCH = "notify.saved_search";
+NOTIFY_KINDS.push(NOTIFY_SAVED_SEARCH);
+
+export type SavedSearchJobPayload = {
+  savedSearchId: string;
+  /**
+   * The dispatch tick that queued it, ISO. `last_sent_at` is stamped with this
+   * rather than the moment the drain got to it, so the daily/weekly cadence
+   * runs from the tick and does not slip by the queue's lag.
+   */
+  dispatchedAt: string;
+};
+
+export async function notifySavedSearch(
+  tx: TestDb,
+  viewer: Viewer,
+  savedSearchId: string,
+  dispatchedAt: Date,
+): Promise<void> {
+  const payload: SavedSearchJobPayload = { savedSearchId, dispatchedAt: dispatchedAt.toISOString() };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SAVED_SEARCH, payload });
+}
+
+/* ------------------------------------------------- lead credit (Task 57) */
+
+/**
+ * A credit top-up settled: the buyer gets a receipt with the new balance.
+ * The payload is the `credit_orders` id; the worker re-reads the order, the
+ * account's address and the balance when it runs. The handler sits at the
+ * foot of worker/jobs/notify.ts.
+ */
+export const NOTIFY_CREDIT_TOPUP = "notify.credit.topup";
+NOTIFY_KINDS.push(NOTIFY_CREDIT_TOPUP);
+
+export type CreditTopupJobPayload = { creditOrderId: string };
+
+export async function notifyCreditTopup(tx: TestDb, viewer: Viewer, creditOrderId: string): Promise<void> {
+  const payload: CreditTopupJobPayload = { creditOrderId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_CREDIT_TOPUP, payload });
+}
+
+/* ------------------------------------------------- lead market (Task 58) */
+
+/**
+ * A standing order won a lead: the buyer gets the full contact details —
+ * one of the only two places they exist after a sale (the other is the
+ * buyer's /leads/<id> page). The payload is the purchase id; the worker
+ * re-reads the lead, so a lead deleted in between sends nothing.
+ */
+export const NOTIFY_LEAD_WON = "notify.lead.won";
+/** A standing order was paused because its balance no longer covers its price. Once per pause. */
+export const NOTIFY_LEAD_TOPUP = "notify.lead.topup";
+/** An admin approved or rejected a bad-lead report. */
+export const NOTIFY_LEAD_REFUND_DECIDED = "notify.lead.refund-decided";
+/** The weekly board digest to one account: how many open leads sit in its territories. */
+export const NOTIFY_LEAD_BOARD_DIGEST = "notify.lead.board-digest";
+NOTIFY_KINDS.push(NOTIFY_LEAD_WON, NOTIFY_LEAD_TOPUP, NOTIFY_LEAD_REFUND_DECIDED, NOTIFY_LEAD_BOARD_DIGEST);
+
+export type LeadWonJobPayload = { purchaseId: string };
+export type LeadTopupJobPayload = { standingOrderId: string };
+export type LeadRefundDecidedJobPayload = { refundId: string };
+/** `openCount` is worked out at dispatch from one read of the open leads. */
+export type LeadBoardDigestJobPayload = { profileId: string; openCount: number };
+
+export async function notifyLeadWon(tx: TestDb, viewer: Viewer, purchaseId: string): Promise<void> {
+  const payload: LeadWonJobPayload = { purchaseId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_WON, payload });
+}
+
+export async function notifyLeadTopup(tx: TestDb, viewer: Viewer, standingOrderId: string): Promise<void> {
+  const payload: LeadTopupJobPayload = { standingOrderId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_TOPUP, payload });
+}
+
+export async function notifyLeadRefundDecided(tx: TestDb, viewer: Viewer, refundId: string): Promise<void> {
+  const payload: LeadRefundDecidedJobPayload = { refundId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_REFUND_DECIDED, payload });
+}
+
+export async function notifyLeadBoardDigest(tx: TestDb, viewer: Viewer, profileId: string, openCount: number): Promise<void> {
+  const payload: LeadBoardDigestJobPayload = { profileId, openCount };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_BOARD_DIGEST, payload });
 }

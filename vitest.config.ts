@@ -7,8 +7,20 @@ export default defineConfig({
     include: ["**/*.test.ts"],
     // Agent worktrees are full copies of this repo. Without this, vitest runs
     // every test several times over and the counts are meaningless.
-    exclude: ["**/node_modules/**", "**/.next/**", ".claude/worktrees/**", "e2e/**"],
+    // `*.race.test.ts` COMMIT rows so two connections can really contend; run
+    // beside the rolled-back files they skew global counts and collide on
+    // slugs. They run alone, afterwards, under vitest.race.config.ts.
+    exclude: ["**/node_modules/**", "**/.next/**", ".claude/worktrees/**", "e2e/**", "**/*.race.test.ts"],
+    // Clears anything a killed race run left in directory_test (test/race.ts).
+    globalSetup: ["test/race-global-setup.ts"],
     globals: false,
+    // Not slowness: queueing. Every rolled-back test builds the same default
+    // scaffold ("venues", "leeds", "barn-venues"), and Postgres makes an
+    // `INSERT … ON CONFLICT DO NOTHING` on a slug another worker's still-open
+    // transaction holds wait until that transaction rolls back. With a dozen
+    // files in flight, a trivial test can spend 5s in that queue — vitest's
+    // default timeout — and fail at random. 30s is ~6x the worst wait measured.
+    testTimeout: 30_000,
     // The demo posts under `content/blog/demo/` are the blog fixtures the suite
     // asserts against, and `lib/blog/demo.ts` only loads them when this flag is
     // exactly "true". Setting it here makes the blog tests deterministic

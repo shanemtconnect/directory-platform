@@ -99,6 +99,8 @@ export const FEATURE_FLAGS = [
   "events",
   "bookings",
   "multiLocale",
+  "savedSearches",
+  "leadMarketplace",
 ] as const;
 
 export type FeatureFlag = (typeof FEATURE_FLAGS)[number];
@@ -175,6 +177,12 @@ export interface SiteConfig {
   readonly listing: {
     /** Input cap, same for every tier. Display is governed by `descriptionDisplay`. */
     readonly maxDescriptionChars: number;
+    /**
+     * "Have a website? Paste the address" above /add-listing: fetches the page
+     * (SSRF-guarded, rate-limited) and prefills the form from its OpenGraph and
+     * JSON-LD. Never submits anything by itself.
+     */
+    readonly importFromUrl: boolean;
   };
 
   readonly customFields: readonly CustomField[];
@@ -279,5 +287,46 @@ export interface SiteConfig {
     readonly durationDays: number;
     /** How many days before expiry the poster is reminded. Less than durationDays. */
     readonly reminderDays: number;
+  };
+
+  /**
+   * Geography below the town (Task 52). niche-national only.
+   */
+  readonly geo: {
+    /**
+     * Neighbourhoods: `areas` rows with a `city_id`, routed at /<city>/<area>.
+     * Listings join one by nearest centroid within its radius (a nightly
+     * worker job and an admin "assign now"), never by hand-typed text.
+     *
+     * Off: no admin page, the resolver never produces a neighbourhood page,
+     * and the job does nothing. `NEIGHBOURHOODS_ENABLED=true|false` in the
+     * environment overrides this (staging review and the e2e suite).
+     */
+    readonly neighbourhoods: {
+      readonly enabled: boolean;
+      /** Published listings a neighbourhood page needs before it is indexable and in the sitemap. */
+      readonly minListings: number;
+      /** The radius an imported row gets when its `radius_km` cell is empty. */
+      readonly defaultRadiusKm: number;
+    };
+  };
+
+  /**
+   * Pay-per-lead (flag `leadMarketplace`, requires `quoteBroadcast`). A lead
+   * is a verified request no paying local listing received; it is sold at
+   * `floor` (major units of `currency`), halves after `halfPriceAfterDays`,
+   * and is deleted after `deleteAfterDays`. Buyers prepay credit in `packs`
+   * (ascending, major units) and may report a bad lead within
+   * `refundWindowDays`. A SOLD lead's contact details are purged
+   * `retainSoldDays` after the sale (at least `refundWindowDays`); the won
+   * email is the buyer's record.
+   */
+  readonly leads: {
+    readonly floor: number;
+    readonly packs: readonly number[];
+    readonly halfPriceAfterDays: number;
+    readonly deleteAfterDays: number;
+    readonly refundWindowDays: number;
+    readonly retainSoldDays: number;
   };
 }

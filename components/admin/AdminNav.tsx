@@ -1,4 +1,5 @@
 import { features } from "@/lib/features/flags";
+import { neighbourhoodsEnabled } from "@/lib/geo/neighbourhoods";
 import type { NavCounts } from "./nav-counts";
 
 /**
@@ -32,13 +33,28 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/admin/audit", label: "Audit log" },
   // Jobs board (Task 49): a flag-off site has no /admin/jobs page to link to.
   ...(features.jobBoard ? [{ href: "/admin/jobs", label: "Jobs" }] : []),
+  // Lead credit (Task 57): flag-off sites have no /admin/credit page.
+  ...(features.leadMarketplace ? [{ href: "/admin/credit", label: "Credit" }] : []),
+  // Lead market (Task 58): the refund queue and buyer rates.
+  ...(features.leadMarketplace ? [{ href: "/admin/leads", label: "Leads" }] : []),
 ];
+
+/**
+ * Neighbourhoods (Task 52) are a config switch with an env override, not a
+ * build-time flag, so the link is decided per render rather than frozen into
+ * LINKS: /admin/neighbourhoods 404s whenever `neighbourhoodsEnabled()` is false.
+ */
+function links(): { href: string; label: string }[] {
+  return neighbourhoodsEnabled()
+    ? [...LINKS, { href: "/admin/neighbourhoods", label: "Neighbourhoods" }]
+    : LINKS;
+}
 
 export function AdminNav({ current, counts }: { current: string; counts?: NavCounts }) {
   return (
     <nav aria-label="Admin" data-testid="admin-nav" className="admin-nav mb-6 border-b border-line">
       <ul className="m-0 flex list-none gap-1 p-0">
-        {LINKS.map((link) => {
+        {links().map((link) => {
           const active = link.href === current;
           const count = counts?.[link.href];
           return (

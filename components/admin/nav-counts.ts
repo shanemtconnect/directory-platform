@@ -23,13 +23,14 @@ export function navCountsFrom(counts: AdminQueueCounts): NavCounts {
     ["/admin/cities", counts.citiesAwaitingIntro],
     ["/admin/reports", counts.openReports],
     ["/admin/removals", counts.openRemovals],
+    ["/admin/leads", counts.pendingLeadRefunds],
   ];
   return Object.fromEntries(pairs.filter(([, n]) => n > 0));
 }
 
 /**
- * One statement, six sub-selects: every console page calls this beside its
- * own query, so the sequential version cost six extra round trips per page.
+ * One statement, seven sub-selects: every console page calls this beside its
+ * own query, so the sequential version cost seven extra round trips per page.
  */
 export async function adminNavCounts(tx: TestDb, viewer: Viewer): Promise<NavCounts> {
   return navCountsFrom(await adminQueueCountsInOneQuery(tx, viewer));

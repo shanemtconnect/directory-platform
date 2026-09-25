@@ -12,7 +12,7 @@ import { makeListing, makeScaffold } from "@/test/factories";
  *
  * Real Redis, database 7.
  */
-process.env.REDIS_URL = "redis://localhost:6380/7";
+process.env.REDIS_URL = "redis://localhost:6380/3";
 
 const { closeStatsRedis, statsRedis } = await import("./redis");
 const { dayKey, statsKey } = await import("./keys");
@@ -23,7 +23,7 @@ const {
 
 async function clear(): Promise<void> {
   const c = await statsRedis();
-  if (!c) throw new Error("redis db 7 is not reachable — start docker compose");
+  if (!c) throw new Error("redis db 3 is not reachable — start docker compose");
   await c.flushDb();
 }
 

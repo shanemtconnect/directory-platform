@@ -5,6 +5,8 @@ import {
   validateCountry,
   validateProductionConfig,
   validateStatsRetention,
+  validateNeighbourhoods,
+  validateLeads,
   MIN_STATS_RETENTION_DAYS,
   ConfigError,
   RUNTIME_ENV,
@@ -35,6 +37,11 @@ describe("validateFeatureDependencies", () => {
 
   it("passes when awards is on with reviews", () => {
     expect(() => validateFeatureDependencies(on("awards", "reviews"))).not.toThrow();
+  });
+
+  it("throws when leadMarketplace is on without quoteBroadcast, and passes with it", () => {
+    expect(() => validateFeatureDependencies(on("leadMarketplace"))).toThrow(/leadMarketplace requires quoteBroadcast/);
+    expect(() => validateFeatureDependencies(on("leadMarketplace", "quoteBroadcast", "shortlist"))).not.toThrow();
   });
 
   it("throws when quoteBroadcast is on without shortlist", () => {
@@ -373,6 +380,71 @@ describe("validateStatsRetention", () => {
   });
 });
 
+describe("validateNeighbourhoods (Task 52)", () => {
+  const geo = (patch: Partial<{ enabled: boolean; minListings: number; defaultRadiusKm: number }> = {}) => ({
+    neighbourhoods: { enabled: true, minListings: 5, defaultRadiusKm: 2, ...patch },
+  });
+
+  it("passes for the shipped config", () => {
+    expect(() => validateNeighbourhoods(siteConfig)).not.toThrow();
+  });
+
+  it("ships off, at five listings and a two-kilometre radius", () => {
+    expect(siteConfig.geo.neighbourhoods).toEqual({ enabled: false, minListings: 5, defaultRadiusKm: 2 });
+  });
+
+  it("refuses neighbourhoods on a local-multi-vertical site, whose areas are something else", () => {
+    expect(() => validateNeighbourhoods({ siteMode: "local-multi-vertical", geo: geo() }))
+      .toThrow(/niche-national/);
+    // Off, the mode does not matter: the section is inert.
+    expect(() => validateNeighbourhoods({ siteMode: "local-multi-vertical", geo: geo({ enabled: false }) }))
+      .not.toThrow();
+  });
+
+  it("refuses a listing threshold that is not a whole number of at least one", () => {
+    for (const minListings of [0, -1, 2.5, Number.NaN]) {
+      expect(() => validateNeighbourhoods({ siteMode: "niche-national", geo: geo({ minListings }) }))
+        .toThrow(/minListings/);
+    }
+  });
+
+  it("refuses a default radius that is not a positive, finite distance", () => {
+    for (const defaultRadiusKm of [0, -2, 26, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => validateNeighbourhoods({ siteMode: "niche-national", geo: geo({ defaultRadiusKm }) }))
+        .toThrow(ConfigError);
+    }
+  });
+});
+
+describe("validateLeads", () => {
+  const leads = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7, retainSoldDays: 90 };
+
+  it("passes for the shipped config", () => {
+    expect(() => validateLeads(siteConfig)).not.toThrow();
+    expect(siteConfig.leads).toEqual(leads);
+  });
+
+  it("refuses a floor below 1", () => {
+    expect(() => validateLeads({ leads: { ...leads, floor: 0 } })).toThrow(/leads\.floor/);
+    expect(() => validateLeads({ leads: { ...leads, floor: Number.NaN } })).toThrow(ConfigError);
+  });
+
+  it("refuses packs that are empty, not ascending, or not a whole positive amount", () => {
+    expect(() => validateLeads({ leads: { ...leads, packs: [] } })).toThrow(/leads\.packs/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [100, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [50, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [0, 50] } })).toThrow(/leads\.packs/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [49.5] } })).toThrow(/leads\.packs/);
+  });
+});
+
+describe("leadMarketplace", () => {
+  it("requires quoteBroadcast", () => {
+    expect(() => validateFeatureDependencies(on("leadMarketplace", "shortlist"))).toThrow(/leadMarketplace requires quoteBroadcast/);
+    expect(() => validateFeatureDependencies(on("leadMarketplace", "quoteBroadcast", "shortlist"))).not.toThrow();
+  });
+});
+
 describe("isPlaceholderLegalEntity", () => {
   it("treats TBC in any case or padding, and an empty name, as the placeholder", () => {
     for (const v of ["TBC", "tbc", " Tbc ", "", "   "]) expect(isPlaceholderLegalEntity(v)).toBe(true);
@@ -381,5 +453,38 @@ describe("isPlaceholderLegalEntity", () => {
   it("accepts a registered name", () => {
     expect(isPlaceholderLegalEntity("Find a Dog Groomer LLC")).toBe(false);
     expect(isPlaceholderLegalEntity("TBC Holdings Ltd")).toBe(false);
+  });
+});
+
+describe("validateLeads", () => {
+  const good = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7, retainSoldDays: 90 };
+
+  it("passes the shipped config and the documented defaults", () => {
+    expect(() => validateLeads(siteConfig)).not.toThrow();
+    expect(siteConfig.leads).toEqual(good);
+  });
+
+  it("refuses a floor below one", () => {
+    expect(() => validateLeads({ leads: { ...good, floor: 0 } })).toThrow(/leads.floor must be at least 1/);
+    expect(() => validateLeads({ leads: { ...good, floor: 0.5 } })).toThrow(ConfigError);
+  });
+
+  it("refuses packs that are empty, out of order, repeated or not positive", () => {
+    expect(() => validateLeads({ leads: { ...good, packs: [] } })).toThrow(/at least one pack/);
+    expect(() => validateLeads({ leads: { ...good, packs: [100, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...good, packs: [50, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...good, packs: [0, 50] } })).toThrow(/positive/);
+  });
+
+  it("refuses day counts that are not whole and positive", () => {
+    expect(() => validateLeads({ leads: { ...good, halfPriceAfterDays: 0 } })).toThrow(/halfPriceAfterDays/);
+    expect(() => validateLeads({ leads: { ...good, deleteAfterDays: 1.5 } })).toThrow(/deleteAfterDays/);
+    expect(() => validateLeads({ leads: { ...good, refundWindowDays: -1 } })).toThrow(/refundWindowDays/);
+    expect(() => validateLeads({ leads: { ...good, retainSoldDays: 0 } })).toThrow(/retainSoldDays/);
+  });
+
+  it("keeps a sold lead's contact details at least as long as it can be reported", () => {
+    expect(() => validateLeads({ leads: { ...good, refundWindowDays: 14, retainSoldDays: 13 } })).toThrow(/retainSoldDays must be at least refundWindowDays/);
+    expect(() => validateLeads({ leads: { ...good, refundWindowDays: 14, retainSoldDays: 14 } })).not.toThrow();
   });
 });

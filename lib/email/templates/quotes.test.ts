@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { siteConfig } from "@/config/site.config";
-import { quoteAcknowledgement, quoteToRecipient, type QuoteRecipientEmailData } from "./quotes";
+import { quoteAcknowledgement, quoteToRecipient, quoteVerifyEmail, type QuoteRecipientEmailData } from "./quotes";
+import { leadSharingNotice } from "@/lib/leads/consent";
 
 const base: QuoteRecipientEmailData = {
   listingName: "The Old Mill",
@@ -76,5 +77,43 @@ describe("quoteAcknowledgement", () => {
     expect(three.subject).toBe(`Your quote request went to 3 ${siteConfig.entity.plural}`);
     expect(three.text).toContain("Hello Sam");
     expect(three.text).toContain("Barn Halls in Bath to 3");
+  });
+});
+
+describe("quoteAcknowledgement — the sharing line", () => {
+  const data = { requesterName: "Sam", cityName: "Bath", categoryName: "Barn Halls", recipientCount: 2, message: "Hi" };
+
+  it("keeps the original line exactly with the lead marketplace off", () => {
+    for (const mail of [quoteAcknowledgement(data), quoteAcknowledgement({ ...data, leadMarketplace: false })]) {
+      expect(mail.text).toContain(`${siteConfig.name} never charges you for this, and we don't sell your details.`);
+      expect(mail.text).not.toContain(leadSharingNotice());
+    }
+  });
+
+  it("says who may pay for it instead, from the one shared notice, with the flag on", () => {
+    const mail = quoteAcknowledgement({ ...data, leadMarketplace: true });
+    expect(mail.text).toContain(leadSharingNotice());
+    expect(mail.text).not.toMatch(/don't sell/);
+  });
+});
+
+describe("quoteVerifyEmail", () => {
+  const base = {
+    requesterName: "Jo", cityName: "Bath", categoryName: "Barn Halls",
+    verifyUrl: "https://example.co.uk/get-quotes/verify/tok", expiresHours: 48,
+  };
+
+  it("carries the landing-page link and says nothing has been sent", () => {
+    const mail = quoteVerifyEmail({ ...base, source: "quote" });
+    expect(mail.text).toContain("https://example.co.uk/get-quotes/verify/tok");
+    expect(mail.text).toContain("Nothing has been sent to anyone yet");
+    expect(mail.text).toContain("48 hours");
+  });
+
+  it("calls an enquiry an enquiry, names the listing, and copes with no category", () => {
+    const mail = quoteVerifyEmail({ ...base, categoryName: null, listingName: "Quiet Hall", source: "enquiry" });
+    expect(mail.subject).toBe("Confirm your enquiry in Bath");
+    expect(mail.text).toContain("your enquiry about Quiet Hall");
+    expect(mail.text).not.toContain("null");
   });
 });

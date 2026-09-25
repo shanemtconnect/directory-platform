@@ -6,7 +6,7 @@ import { withTestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
 
 /** Real Redis, database 7 — this worktree's, per the wave plan. */
-process.env.REDIS_URL = "redis://localhost:6380/7";
+process.env.REDIS_URL = "redis://localhost:6380/8";
 
 const { closeStatsRedis, statsRedis } = await import("@/lib/stats/redis");
 const { recordStat } = await import("@/lib/stats/counters");
@@ -18,7 +18,7 @@ const DAY = dayKey(AT);
 
 async function clear(): Promise<void> {
   const c = await statsRedis();
-  if (!c) throw new Error("redis db 7 is not reachable — start docker compose");
+  if (!c) throw new Error("redis db 8 is not reachable — start docker compose");
   await c.flushDb();
 }
 

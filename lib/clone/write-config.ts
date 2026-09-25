@@ -264,6 +264,9 @@ ${a.reviewCriteria.map((c) => `    { key: ${str(c.key)}, label: ${str(c.label)} 
   listing: {
     // Input cap, the same for every tier. Display is governed by descriptionDisplay.
     maxDescriptionChars: ${a.maxDescriptionChars},
+    // Prefill /add-listing from the business's own web page. Read-only and
+    // rate-limited; set false to hide the "Paste the address" box.
+    importFromUrl: true,
   },
 
   // /pricing renders from here. Annual is exactly 10 x monthly, so "save two
@@ -352,6 +355,28 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     price: 29,
     durationDays: 30,
     reminderDays: 7,
+  },
+  // Neighbourhoods under towns (niche-national only): /<town>/<neighbourhood>,
+  // imported on /admin/neighbourhoods and filled by nearest centroid. A page is
+  // noindexed and kept out of the sitemap below minListings published listings.
+  geo: {
+    neighbourhoods: {
+      enabled: false,
+      minListings: 5,
+      defaultRadiusKm: 2,
+    },
+  },
+  // Pay-per-lead (flag leadMarketplace). The floor is what a lead sells for,
+  // in the site currency; it halves after halfPriceAfterDays on the board and
+  // is deleted after deleteAfterDays. Buyers top up in these packs. A sold
+  // lead's contact details are purged retainSoldDays after the sale.
+  leads: {
+    floor: 25,
+    packs: [50, 100, 300],
+    halfPriceAfterDays: 7,
+    deleteAfterDays: 30,
+    refundWindowDays: 7,
+    retainSoldDays: 90,
   },
 } as const satisfies SiteConfig;
 

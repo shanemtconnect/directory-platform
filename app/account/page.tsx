@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { siteConfig } from "@/config/site.config";
 import { db } from "@/lib/db/client";
 import { currentViewer } from "@/lib/auth/viewer";
+import { features } from "@/lib/features/flags";
 import { ensureProfile } from "@/lib/auth/profile";
 import { ownerListings, type OwnerListing } from "@/lib/db/queries/owner";
 import { ownerNextActions, ownerUnreadCount } from "@/lib/db/queries/owner";
@@ -83,6 +84,20 @@ export default async function AccountPage({ searchParams }: Props) {
           <a href="/account/settings">Account settings</a> — name, phone, password.
           {" · "}
           <a href="/account/billing">Billing</a> — your plan and payments.
+          {features.savedSearches && (
+            <>
+              {" · "}
+              <a href="/account/alerts" data-testid="alerts-link">Alerts</a> — your saved searches.
+            </>
+          )}
+          {features.leadMarketplace && (
+            <>
+              {" · "}
+              <a href="/account/credit">Lead credit</a> — top up and see your balance.
+              {" · "}
+              <a href="/account/leads" data-testid="account-leads-link">Leads</a> — what you bought and your standing orders.
+            </>
+          )}
         </p>
       </PageHeader>
 

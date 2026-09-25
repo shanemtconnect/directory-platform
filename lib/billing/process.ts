@@ -106,7 +106,8 @@ export async function processPayPalWebhook(
   });
   if (!fresh) return { status: 200, outcome: "duplicate" };
 
-  // One-off payments (Task 49, lib/billing/orders.ts). A capture names an
+  // One-off payments (Task 49 jobs, Task 57 credit top-ups; lib/billing/orders.ts
+  // dispatches on the custom_id prefix). A capture names an
   // order, not a subscription, so it is settled here before the subscription
   // machinery looks for a row it will not find. Nothing public changes when a
   // post is paid for — it is still pending approval — so there is nothing to
@@ -115,7 +116,7 @@ export async function processPayPalWebhook(
     const capture = await applyCaptureEvent(tx, WEBHOOK_VIEWER, event);
     return {
       status: 200,
-      outcome: capture.outcome === "paid" ? "applied" : "ignored",
+      outcome: capture.outcome === "paid" || capture.outcome === "credited" ? "applied" : "ignored",
       detail: `capture:${capture.outcome}`,
     };
   }

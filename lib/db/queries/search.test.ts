@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { withTestDb, type TestDb } from "@/test/db";
-import { search } from "./search";
+import { search, searchCount } from "./search";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeVertical, makeCity, makeCategoryInCity, makeListing } from "@/test/factories";
 
@@ -147,6 +147,114 @@ describe("search", () => {
       expect(row).not.toHaveProperty("verificationChecks");
       expect(row).not.toHaveProperty("rejectedReason");
       expect(row?.customFields).toEqual({ capacity_seated: 120 });
+    });
+  });
+
+  describe("verified filter", () => {
+    it("returns only verified listings when verified is true", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Verified one", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Claimed one", claimStatus: "claimed" });
+        await makeListing(tx, ctx, { name: "Unclaimed one", claimStatus: "unclaimed" });
+
+        const r = await search(tx, PUBLIC_VIEWER, { verified: true });
+        expect(r.rows.map((x) => x.name)).toEqual(["Verified one"]);
+        expect(r.total).toBe(1);
+      });
+    });
+
+    it("returns every claim status when verified is false or absent", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Verified one", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Unclaimed one", claimStatus: "unclaimed" });
+
+        expect((await search(tx, PUBLIC_VIEWER, {})).total).toBe(2);
+        expect((await search(tx, PUBLIC_VIEWER, { verified: false })).total).toBe(2);
+      });
+    });
+
+    it("combines the verified filter with q, city and fields", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Old Barn Verified", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Old Barn Unclaimed", claimStatus: "unclaimed" });
+        await makeListing(tx, { ...ctx, cityId: s.bristol }, { name: "Old Barn Elsewhere", claimStatus: "verified" });
+
+        const r = await search(tx, PUBLIC_VIEWER, { q: "old barn", city: "leeds", verified: true });
+        expect(r.rows.map((x) => x.name)).toEqual(["Old Barn Verified"]);
+      });
+    });
+  });
+
+  describe("searchCount", () => {
+    it("counts only, agreeing with search()'s own total — for the toggle, which has no use for a page of rows", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Verified one", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Unclaimed one", claimStatus: "unclaimed" });
+
+        expect(await searchCount(tx, PUBLIC_VIEWER, { verified: true })).toBe(1);
+        expect(await searchCount(tx, PUBLIC_VIEWER, {})).toBe(2);
+        expect(await searchCount(tx, PUBLIC_VIEWER, { verified: true })).toBe(
+          (await search(tx, PUBLIC_VIEWER, { verified: true })).total,
+        );
+      });
+    });
+
+    it("combines with q and city, same as search()", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Old Barn Verified", claimStatus: "verified" });
+        await makeListing(tx, { ...ctx, cityId: s.bristol }, { name: "Old Barn Elsewhere", claimStatus: "verified" });
+
+        expect(await searchCount(tx, PUBLIC_VIEWER, { q: "old barn", city: "leeds", verified: true })).toBe(1);
+      });
+    });
+  });
+});
+
+describe("search — publishedAfter (saved-search alerts)", () => {
+  it("keeps only listings that went live strictly after the instant — publish time, else creation", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      const since = new Date("2026-09-20T12:00:00Z");
+      const before = new Date("2026-09-19T12:00:00Z");
+      const after = new Date("2026-09-21T12:00:00Z");
+      await makeListing(tx, ctx, { name: "Before", createdAt: before });
+      await makeListing(tx, ctx, { name: "At the instant", createdAt: since });
+      await makeListing(tx, ctx, { name: "After", createdAt: after });
+      // Submitted before, approved after: new, because it went live after.
+      await makeListing(tx, ctx, { name: "Approved after", createdAt: before, publishedAt: after });
+      // Created after but published before cannot happen; published before wins either way.
+      await makeListing(tx, ctx, { name: "Published before", createdAt: before, publishedAt: before });
+      await makeListing(tx, ctx, { name: "After but pending", status: "pending", createdAt: after });
+
+      const result = await search(tx, PUBLIC_VIEWER, { city: "leeds", publishedAfter: since });
+      expect(result.rows.map((r) => r.name).sort()).toEqual(["After", "Approved after"]);
+      expect(result.total).toBe(2);
+      expect(result.rows.find((r) => r.name === "Approved after")?.liveAt).toEqual(after);
+      expect(result.rows.find((r) => r.name === "After")?.liveAt).toEqual(after);
+      // Absent, nothing changes.
+      expect((await search(tx, PUBLIC_VIEWER, { city: "leeds" })).total).toBe(5);
+    });
+  });
+
+  it("compares at the millisecond a JS Date holds, so a row read back as the watermark is not new again", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      // Default created_at: now(), which Postgres keeps to the microsecond.
+      await makeListing(tx, ctx, { name: "Microsecond Barn" });
+      const [row] = (await search(tx, PUBLIC_VIEWER, { q: "Microsecond Barn" })).rows;
+      expect((await search(tx, PUBLIC_VIEWER, { q: "Microsecond Barn", publishedAfter: row!.liveAt })).total).toBe(0);
     });
   });
 });

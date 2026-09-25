@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { claims, cities, listings, removalRequests, reports } from "@/lib/db/schema";
+import { claims, cities, leadRefunds, listings, removalRequests, reports } from "@/lib/db/schema";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import { awaitingModeration, countReviewsAwaitingModeration } from "@/lib/db/queries/reviews";
 import { reviews } from "@/lib/db/schema";
@@ -28,6 +28,8 @@ export interface AdminQueueCounts {
   pendingClaims: number;
   /** Verified by the reviewer, held by the heuristics, waiting for a human. */
   reviewsAwaitingModeration: number;
+  /** Bad-lead reports waiting for a decision (Task 58). Zero on a site without the lead market. */
+  pendingLeadRefunds: number;
 }
 
 const TOTAL = sql<number>`count(*)::int`;
@@ -70,6 +72,11 @@ export async function adminQueueCounts(tx: TestDb, viewer: Viewer): Promise<Admi
 
   const reviewsAwaitingModeration = await countReviewsAwaitingModeration(tx, viewer);
 
+  const [pendingLeadRefunds] = await tx
+    .select({ total: TOTAL })
+    .from(leadRefunds)
+    .where(eq(leadRefunds.status, "pending"));
+
   return {
     pendingSubmissions: submissions?.total ?? 0,
     openReports: openReports?.total ?? 0,
@@ -77,6 +84,7 @@ export async function adminQueueCounts(tx: TestDb, viewer: Viewer): Promise<Admi
     citiesAwaitingIntro: awaitingIntro?.total ?? 0,
     pendingClaims: pendingClaims?.total ?? 0,
     reviewsAwaitingModeration,
+    pendingLeadRefunds: pendingLeadRefunds?.total ?? 0,
   };
 }
 
@@ -110,7 +118,9 @@ export async function adminQueueCountsInOneQuery(
       (select count(*)::int from ${claims} where ${claims.status} = 'pending')
         as pending_claims,
       (select count(*)::int from ${reviews} where ${awaitingModeration()})
-        as reviews_awaiting_moderation
+        as reviews_awaiting_moderation,
+      (select count(*)::int from ${leadRefunds} where ${leadRefunds.status} = 'pending')
+        as pending_lead_refunds
   `);
   const row = rows[0] ?? {};
   const n = (key: string): number => {
@@ -124,5 +134,6 @@ export async function adminQueueCountsInOneQuery(
     citiesAwaitingIntro: n("cities_awaiting_intro"),
     pendingClaims: n("pending_claims"),
     reviewsAwaitingModeration: n("reviews_awaiting_moderation"),
+    pendingLeadRefunds: n("pending_lead_refunds"),
   };
 }

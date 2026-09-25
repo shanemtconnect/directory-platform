@@ -94,6 +94,11 @@ fail `next build` never reaches disk.
 | SEO        | listings a town needs before indexing, whether intro copy is also required, footer link cap       |
 | Seed data  | `csv` (your files), `template` (three example rows to edit) or `skip`                             |
 
+`savedSearches` (off by default, no dependency) lets a signed-in visitor save a
+search on `/search` — and on `/jobs` when `jobBoard` is also on — and get a
+daily or weekly email of new matches, managed at `/account/alerts`. It needs
+the worker running (the hourly `alerts.dispatch` job) and email configured.
+
 **The nouns are the whole game.** Every visible string comes from
 `siteConfig.entity`; no component contains a niche word, and
 `corepack pnpm check:strings` fails the build if one appears. Get the singular
@@ -114,6 +119,30 @@ Types are `number`, `boolean`, `text`, `select`, `currency`. A trailing tier
 name gates the field to that tier and above. Contact details — name, address,
 phone, opening hours, map pin, category, the enquiry form and the reviews — are
 never gated on any tier, so never put one behind one.
+
+**Pay-per-lead** (`leadMarketplace`, needs `quoteBroadcast`) is off by
+default. With it on, every get-quotes request is held until the requester
+confirms it from a verification link (48 hours, then it expires); a verified request
+that reached no paying local listing, a lead-capture box on the home page or a
+rail, or a confirmed enquiry to an unclaimed listing with no email becomes a
+lead. The privacy line on every form then reads from `lib/leads/consent.ts`. The
+wizard writes the defaults into `leads` in `config/site.config.ts` — `floor`
+(what a lead sells for, in the site currency; at least 1), `packs` (credit
+top-ups, ascending), `halfPriceAfterDays`, `deleteAfterDays`,
+`refundWindowDays`, `retainSoldDays` (how long a sold lead's contact details
+are kept after the sale; 90 by default) — and the build refuses a floor below
+1, packs out of order, or a `retainSoldDays` shorter than `refundWindowDays`. Price your market there, never in a page.
+
+Buyers see leads at `/leads` (signed-in only) and set up **standing orders**
+at `/account/leads` — towns, regions or everywhere, categories, and a price
+of at least the floor — which buy each new lead the moment it is confirmed,
+highest price first. A lead nobody's order takes stays on the board and
+halves in price after `halfPriceAfterDays`. Refunds are credit only, for the
+six reasons printed on the board, within `refundWindowDays`, approved at
+`/admin/leads`; an approval for a dead phone, wrong person, spam or "never
+asked" also blocklists the lead's phone and email for a year.
+The no-refund wording lives in `lib/leads/market.ts` — edit it there if your
+market's norms differ. Nothing else in the lead market needs configuring.
 
 ---
 
@@ -504,6 +533,13 @@ one-listing towns takes months to recover. Seed the towns, write the copy for
 the ones that matter, and let the rest earn it.
 
 Every slug change writes a `redirects` row and serves a 301. Never break a URL.
+
+Neighbourhood pages (`geo.neighbourhoods`, niche-national only, off by
+default) have their own gate: `noindex` and out of the sitemap until they hold
+`geo.neighbourhoods.minListings` published listings. Turn the module on only
+once listings carry coordinates — assignment is by distance, and a listing
+without `lat`/`lng` joins no neighbourhood. See README "Neighbourhoods under
+towns".
 
 ---
 

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
 import type { CustomField } from "@/config/types";
-import { search } from "@/lib/db/queries/search";
+import { search, searchCount } from "@/lib/db/queries/search";
 import { listCities, listCategories } from "@/lib/db/queries/indexes";
 import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
@@ -11,6 +11,8 @@ import { LocationSwitcher } from "@/components/location/LocationSwitcher";
 import { searchCityHref } from "@/components/location/switcher-links";
 import { StatsBeacon } from "@/components/stats/StatsBeacon";
 import { SponsorRails } from "@/components/ads/SponsorRails";
+import { SaveSearchButton } from "@/components/search/SaveSearchButton";
+import { features } from "@/lib/features/flags";
 
 // Search is a utility page, not an indexable asset. Faceted URLs are a classic
 // source of near-duplicate thin pages, so it is noindexed and excluded from the
@@ -43,23 +45,31 @@ export default async function SearchPage({ searchParams }: Props) {
     if (v) fields[f.key] = v;
   }
 
+  const verified = one(sp.verified) === "1";
+
   const params = {
     q: one(sp.q),
     city: one(sp.city),
     category: one(sp.category),
     fields,
     page: Number(one(sp.page) ?? "1") || 1,
+    verified,
   };
 
   // The switcher takes the facet as the slug it already is, so it resolves the
   // current city itself and this query runs alongside the other three rather
-  // than waiting on listCities to hand it an id.
-  const [results, cities, categories, switcherCities] = await Promise.all([
+  // than waiting on listCities to hand it an id. The verified count rides
+  // along too: the toggle needs to know, before it renders, whether the
+  // CURRENT filters (minus verified) match anything verified at all — a
+  // count, not a page of rows, since that's all the question needs.
+  const [results, cities, categories, switcherCities, verifiedCount] = await Promise.all([
     search(db as never, PUBLIC_VIEWER, params),
     listCities(db as never, PUBLIC_VIEWER),
     listCategories(db as never, PUBLIC_VIEWER),
     listSwitcherCities(db as never, PUBLIC_VIEWER, { currentCitySlug: params.city ?? null }),
+    verified ? Promise.resolve(null) : searchCount(db as never, PUBLIC_VIEWER, { ...params, verified: true }),
   ]);
+  const hasVerified = verified ? results.total > 0 : (verifiedCount ?? 0) > 0;
 
   // Preserve every active filter in pagination links.
   const qs = new URLSearchParams();
@@ -67,7 +77,28 @@ export default async function SearchPage({ searchParams }: Props) {
   if (params.city) qs.set("city", params.city);
   if (params.category) qs.set("category", params.category);
   for (const [k, v] of Object.entries(fields)) qs.set(k, v);
+  if (verified) qs.set("verified", "1");
   const basePath = `/search${qs.toString() ? `?${qs}` : ""}`;
+
+  // The toggle's own target: everything the pagination base path carries,
+  // minus/plus `verified`, back to page 1 — flipping the filter always lands
+  // on the first page of whichever set it now shows.
+  const toggleQs = new URLSearchParams(qs);
+  if (verified) toggleQs.delete("verified");
+  else toggleQs.set("verified", "1");
+  const toggleHref = `/search${toggleQs.toString() ? `?${toggleQs}` : ""}`;
+  const cityName = params.city ? cities.find((c) => c.slug === params.city)?.name : undefined;
+  // What a saved search stores: this page's own query input, minus the page
+  // number — an alert is about the search, not where in it you were.
+  // `verified` rides along as the same "1" the URL carries (lib/alerts/paths
+  // builds the link back from it); the action only stores string values, and a
+  // boolean here was refused as an invalid search — found on the merged tree.
+  const { page: _page, verified: _verified, ...saveRest } = params;
+  const saveParams = verified ? { ...saveRest, verified: "1" } : saveRest;
+  const categoryName = categories.find((c) => c.slug === params.category)?.name;
+  const saveLabel =
+    `${categoryName ?? `All ${e.plural}`}${cityName ? ` in ${cityName}` : ""}` +
+    `${params.q ? ` matching "${params.q}"` : ""}`;
 
   return (
     <>
@@ -118,6 +149,22 @@ export default async function SearchPage({ searchParams }: Props) {
           </p>
         ))}
 
+        {/* Only offered when it would find something — a checkbox that always
+            empties the grid teaches a visitor to stop trusting the filters. */}
+        {hasVerified && (
+          <p className="mb-0 flex items-center gap-2">
+            <input
+              id="verified"
+              name="verified"
+              type="checkbox"
+              value="1"
+              defaultChecked={verified}
+              className="h-auto w-auto"
+            />
+            <label htmlFor="verified" className="mb-0">Verified only</label>
+          </p>
+        )}
+
         <button type="submit" className="btn btn-primary sm:col-span-2 sm:w-fit lg:col-span-1">
           Search
         </button>
@@ -138,15 +185,27 @@ export default async function SearchPage({ searchParams }: Props) {
         testId="search-location-switcher"
       />
 
-      <p data-testid="result-count" className="mt-8 font-medium">
-        {results.total} {results.total === 1 ? e.singular : e.plural} found
-      </p>
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <p data-testid="result-count" className="mb-0 font-medium">
+          {results.total} {results.total === 1 ? e.singular : e.plural} found
+        </p>
+        {features.savedSearches && (
+          <SaveSearchButton kind="listings" params={saveParams} label={saveLabel} currentPath={basePath} />
+        )}
+      </div>
 
       {results.rows.length === 0 ? (
-        <p>
-          Nothing matched. Try removing a filter, or{" "}
-          <a href="/cities">browse by location</a>.
-        </p>
+        verified ? (
+          <p data-testid="empty-verified">
+            No verified {e.plural}{cityName ? ` in ${cityName}` : ""} yet —{" "}
+            <a href={toggleHref}>see all</a>.
+          </p>
+        ) : (
+          <p>
+            Nothing matched. Try removing a filter, or{" "}
+            <a href="/cities">browse by location</a>.
+          </p>
+        )
       ) : (
         <ul data-testid="search-results" className="card-grid">
           {results.rows.map((r) => (

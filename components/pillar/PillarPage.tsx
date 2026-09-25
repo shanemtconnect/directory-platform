@@ -7,8 +7,11 @@ import { Pagination } from "./Pagination";
 import { ListingCard } from "./ListingCard";
 import { FeaturedRow } from "./FeaturedRow";
 import { FeaturedUpsell } from "./FeaturedUpsell";
+import { VerifiedToggle } from "./VerifiedToggle";
 import type { FeaturedListing } from "@/lib/db/queries/spots";
 import { ListingMap } from "@/components/map/ListingMap";
+import { NeighbourhoodList } from "./NeighbourhoodList";
+import type { NeighbourhoodLink } from "@/lib/db/queries/neighbourhoods";
 
 
 export interface FaqEntry { question: string; answer: string }
@@ -36,6 +39,12 @@ interface Props {
   awardYears?: ReadonlyMap<string, readonly number[]>;
   /** The page's featured spot as `areaKind:areaId:categoryId|-` (Task 45): mounts the owner upsell strip. */
   spotKey?: string;
+  /** The town's neighbourhood links (Task 52) — the town pillar only; empty hides the block. */
+  neighbourhoods?: readonly NeighbourhoodLink[];
+  /** Whether THIS render is the `?verified=1` view (Task 53). Default false: every caller but the verified route omits it. */
+  verified?: boolean;
+  /** Whether the scope has at least one verified listing — gates the toggle. Default false: unaffected callers never show it. */
+  hasVerified?: boolean;
 }
 
 /**
@@ -50,7 +59,8 @@ interface Props {
  */
 export function PillarPage({
   heading, featured, featuredBids = [], listings, categories, nearby, faq,
-  total, page, totalPages, basePath, cityPath, awardYears, spotKey,
+  total, page, totalPages, basePath, cityPath, awardYears, spotKey, neighbourhoods = [],
+  verified = false, hasVerified = false,
 }: Props) {
   const e = siteConfig.entity;
   const isFirstPage = page === 1;
@@ -58,7 +68,14 @@ export function PillarPage({
   return (
     <main>
       <nav aria-label="Breadcrumb" className="mb-4 text-sm text-muted">
-        <a href="/">Home</a> › <span>{heading.place}</span>
+        <a href="/">Home</a> ›{" "}
+        {/* A neighbourhood sits under its town (Task 52): Home › Town › Neighbourhood. */}
+        {heading.parent && (
+          <>
+            <a href={`/${heading.parent.slug}`}>{heading.parent.name}</a> ›{" "}
+          </>
+        )}
+        <span>{heading.place}</span>
       </nav>
 
       <h1>{heading.title}</h1>
@@ -123,8 +140,25 @@ export function PillarPage({
         <h2 id="all">
           {total} {total === 1 ? heading.nounSingular : heading.nounPlural} in {heading.place}
         </h2>
+        {/* Task 53: query-param filter, not a path — the base (unfiltered)
+            page is what Pagination's `basePath` already is, and turning the
+            filter ON always starts back at page 1 of it. */}
+        <VerifiedToggle
+          active={verified}
+          hasVerified={hasVerified}
+          onHref={`${basePath}?verified=1`}
+          offHref={basePath}
+          nounPlural={heading.nounPlural}
+        />
         {listings.length === 0 ? (
-          <p>No {heading.nounPlural} listed in {heading.place} yet.</p>
+          verified ? (
+            <p data-testid="empty-verified">
+              No verified {heading.nounPlural} in {heading.place} yet —{" "}
+              <a href={basePath}>see all</a>.
+            </p>
+          ) : (
+            <p>No {heading.nounPlural} listed in {heading.place} yet.</p>
+          )
         ) : (
           <ul data-testid="listing-grid" className="card-grid">
             {listings.map((l) => (
@@ -143,9 +177,12 @@ export function PillarPage({
         }))}
       />
 
-      <Pagination basePath={basePath} page={page} totalPages={totalPages} />
+      <Pagination basePath={basePath} page={page} totalPages={totalPages} verified={verified} />
 
-      {categories.length > 0 && (
+      {/* The TOWN's category pages and counts: never under a neighbourhood
+          (Task 52), where they would read as the neighbourhood's own and
+          repeat the town page's link block on every neighbourhood. */}
+      {categories.length > 0 && !heading.parent && (
         <section aria-labelledby="by-type" data-testid="category-links">
           <h2 id="by-type">{e.Plural} in {heading.place} by type</h2>
           <ul className="link-grid">
@@ -158,6 +195,8 @@ export function PillarPage({
           </ul>
         </section>
       )}
+
+      <NeighbourhoodList neighbourhoods={neighbourhoods} cityPath={cityPath} place={heading.place} />
 
       {nearby.length > 0 && (
         <section aria-labelledby="nearby" data-testid="nearby-cities">

@@ -65,6 +65,7 @@ export const siteConfig = {
 
   listing: {
     maxDescriptionChars: 2500,
+    importFromUrl: true,
   },
 
   // /pricing renders from here. Monthly x 12 is exactly 12 months' worth, and
@@ -192,6 +193,8 @@ export const siteConfig = {
     events: false,
     bookings: false,
     multiLocale: false,
+    savedSearches: false,
+    leadMarketplace: false,
   },
 
   seo: {
@@ -254,6 +257,28 @@ export const siteConfig = {
     price: 29,
     durationDays: 30,
     reminderDays: 7,
+  },
+  // Neighbourhoods under towns (niche-national only): /<town>/<neighbourhood>,
+  // listings assigned by nearest centroid. A page is noindexed and kept out of
+  // the sitemap until it has minListings published listings.
+  geo: {
+    neighbourhoods: {
+      enabled: false,
+      minListings: 5,
+      defaultRadiusKm: 2,
+    },
+  },
+  // Pay-per-lead (flag leadMarketplace). A lead sells at the floor, halves
+  // after a week on the board and is deleted after a month. Credit is bought
+  // in these packs; a bad lead can be reported for a week after purchase.
+  // A sold lead's contact details are purged 90 days after the sale.
+  leads: {
+    floor: 25,
+    packs: [50, 100, 300],
+    halfPriceAfterDays: 7,
+    deleteAfterDays: 30,
+    refundWindowDays: 7,
+    retainSoldDays: 90,
   },
 } as const satisfies SiteConfig;
 

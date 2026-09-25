@@ -5,6 +5,8 @@ import { cities, claims, removalRequests, reports, reviews } from "@/lib/db/sche
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeViewer } from "@/test/admin-fixtures";
 import { makeScaffold, makeListing } from "@/test/factories";
+import { makeBuyer, makeLead } from "@/test/leads";
+import { buyLead, requestRefund } from "@/lib/db/queries/lead-market";
 import { adminQueueCounts, adminQueueCountsInOneQuery } from "./dashboard";
 
 describe("adminQueueCounts", () => {
@@ -85,7 +87,7 @@ describe("adminQueueCountsInOneQuery", () => {
     return { tx: proxy, calls: () => n };
   }
 
-  it("returns the same six numbers as the sequential version, in one statement", async () => {
+  it("returns the same seven numbers as the sequential version, in one statement", async () => {
     await withTestDb(async (tx) => {
       const admin = await makeViewer(tx);
       const ctx = await makeScaffold(tx);
@@ -100,6 +102,13 @@ describe("adminQueueCountsInOneQuery", () => {
         { listingId: live, authorEmail: "b@example.test", rating: 4 },
       ]);
 
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      for (let i = 0; i < 2; i++) {
+        const leadId = await makeLead(tx, ctx);
+        await buyLead(tx, buyer.viewer, leadId, buyer.listingId);
+        await requestRefund(tx, buyer.viewer, { leadId, reason: "spam", note: "" });
+      }
+
       const expected = await adminQueueCounts(tx, admin);
       const { tx: watched, calls } = counting(tx);
       const actual = await adminQueueCountsInOneQuery(watched, admin);
@@ -107,6 +116,7 @@ describe("adminQueueCountsInOneQuery", () => {
       expect(actual).toEqual(expected);
       expect(actual.pendingSubmissions).toBe(1);
       expect(actual.reviewsAwaitingModeration).toBe(1);
+      expect(actual.pendingLeadRefunds).toBe(2);
       expect(calls()).toBe(1);
     });
   });

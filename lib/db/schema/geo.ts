@@ -1,6 +1,6 @@
 import {
   pgTable, uuid, text, integer, boolean, jsonb,
-  doublePrecision, uniqueIndex, index,
+  doublePrecision, real, uniqueIndex, index,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { base } from "./_base";
@@ -73,13 +73,26 @@ export const cities = pgTable("cities", {
   index("cities_name_lower_idx").on(sql`lower(${t.name})`),
 ]);
 
-/** local-multi-vertical only. Unused table on niche-national sites. */
+/**
+ * Two uses, one per site mode, never both on one site.
+ *
+ * local-multi-vertical: the areas of the one place the site covers, routed
+ * under each vertical. `city_id` is null on every one of them.
+ *
+ * niche-national (Task 52, `geo.neighbourhoods`): the neighbourhoods of a
+ * town, routed at /<city>/<area>. `city_id` names the town, `lat`/`lng` are
+ * the centroid and `radius_km` how far from it a listing may be and still
+ * belong — `worker/jobs/neighbourhoods.ts` assigns `listings.area_id` by
+ * nearest centroid within that radius.
+ */
 export const areas = pgTable("areas", {
   ...base,
   name: text("name").notNull(),
   slug: text("slug").notNull(),
+  cityId: uuid("city_id").references(() => cities.id),
   lat: doublePrecision("lat"),
   lng: doublePrecision("lng"),
+  radiusKm: real("radius_km"),
   introHtml: text("intro_html"),
   faq: jsonb("faq"),
   metaTitle: text("meta_title"),
@@ -87,7 +100,17 @@ export const areas = pgTable("areas", {
   isPublished: boolean("is_published").notNull().default(true),
   isIndexable: boolean("is_indexable").notNull().default(false),
   listingCount: integer("listing_count").notNull().default(0),
-}, (t) => [uniqueIndex("areas_slug_key").on(t.slug)]);
+}, (t) => [
+  // Unique per town, so every town can have its own "city-centre". The nil
+  // uuid stands in for a null city_id, which keeps local-multi-vertical areas
+  // (city_id null) unique among themselves exactly as the old site-wide
+  // unique on slug did.
+  uniqueIndex("areas_city_slug_key").on(
+    sql`coalesce(${t.cityId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+    t.slug,
+  ),
+  index("areas_city_published_idx").on(t.cityId, t.isPublished),
+]);
 
 export const categories = pgTable("categories", {
   ...base,

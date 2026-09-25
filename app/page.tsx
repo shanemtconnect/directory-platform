@@ -11,6 +11,7 @@ import { HomeSearch } from "@/components/home/HomeSearch";
 import { BrowseByLocation } from "@/components/home/BrowseByLocation";
 import { BrowseByType } from "@/components/home/BrowseByType";
 import { FeaturedListings } from "@/components/home/FeaturedListings";
+import { LeadCaptureBox } from "@/components/leads/LeadCaptureBox";
 
 export const revalidate = 3600;
 
@@ -64,6 +65,9 @@ export default async function HomePage() {
         <BrowseByLocation cities={cities} />
 
         <BrowseByType categories={categories} />
+
+        {/* Below the fold, flag-gated inside the component (leadMarketplace). */}
+        <LeadCaptureBox variant="home" />
 
         <section aria-labelledby="add-listing-cta" className="card bg-raised">
           <h2 id="add-listing-cta" className="mt-0">Are you a {e.ownerNoun}?</h2>

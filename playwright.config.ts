@@ -74,6 +74,12 @@ const SERVER_ENV: Record<string, string> = {
    */
   BETTER_AUTH_RATE_LIMIT: "off",
   /**
+   * Every public write here comes from 127.0.0.1, and the quote specs alone
+   * submit more requests per run than the hourly budget allows one address.
+   * Scales the budgets in lib/spam/write-limit.ts for this server only.
+   */
+  PUBLIC_WRITE_LIMIT_MULTIPLIER: "20",
+  /**
    * Cloudflare's published testing keys: the widget always passes and
    * siteverify always accepts. They are needed because this suite runs a
    * production build, and in production a missing secret now fails closed
@@ -85,6 +91,13 @@ const SERVER_ENV: Record<string, string> = {
     process.env.TURNSTILE_SECRET_KEY ?? "1x0000000000000000000000000000000AA",
   // Keeps the blog fixtures loadable; production clones ship without them.
   NEXT_PUBLIC_DEMO_MODE: "true",
+  /**
+   * Lets the add-listing URL import reach its fixture on this server — and
+   * only that page, on this PORT (lib/import/e2e-fixture.ts). A dedicated
+   * switch, set here and nowhere else: the SSRF guard refuses loopback
+   * everywhere else, and a production server never has it.
+   */
+  E2E_IMPORT_FIXTURE: "1",
   /**
    * Required at boot now that auth is wired (RUNTIME_ENV in config/validate.ts),
    * so the standalone server exits 1 without them. Throwaway values: this suite
@@ -117,6 +130,11 @@ const SERVER_ENV: Record<string, string> = {
   // Sponsor rails (Task 43): the template config has them off; e2e/sponsors.spec.ts
   // runs with ADS_ENABLED=true to prove the production shape.
   ...(process.env.ADS_ENABLED ? { ADS_ENABLED: process.env.ADS_ENABLED } : {}),
+  // Neighbourhoods (Task 52): off in the template config; e2e/neighbourhoods.spec.ts
+  // runs with NEIGHBOURHOODS_ENABLED=true and skips otherwise.
+  ...(process.env.NEIGHBOURHOODS_ENABLED
+    ? { NEIGHBOURHOODS_ENABLED: process.env.NEIGHBOURHOODS_ENABLED }
+    : {}),
 };
 
 // Specs run in this process, not the server's, so the one server setting a

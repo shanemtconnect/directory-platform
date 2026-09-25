@@ -11,6 +11,9 @@ import { revalidatePaths } from "@/lib/revalidate/client";
 import { features } from "@/lib/features/flags";
 import { AWARDS_CRON, awardsCronOptions } from "./jobs/awards";
 import { SPOTS_DIGEST_CRON, spotsDigestCronOptions } from "./jobs/spots-digest";
+import { NEIGHBOURHOODS_CRON, NEIGHBOURHOODS_LOCK } from "./jobs/neighbourhoods";
+import { ALERTS_DISPATCH_CRON } from "./jobs/alerts";
+import { LEADS_DIGEST_CRON, LEADS_RETRY_CRON, LEADS_SWEEP_CRON, leadsDigestCronOptions } from "./jobs/leads";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -45,17 +48,22 @@ type JobOutcome = void | { readonly revalidate?: readonly string[] };
  * endpoints: that way they get logging, retries and no public attack surface.
  */
 /**
- * `options` goes straight to node-cron. The one that matters is `timezone`:
+ * `options.timezone` goes straight to node-cron, and it matters:
  * an expression is read in the server's clock unless told otherwise, and a
  * job whose meaning is "on 1 January" has to fire on the site's 1 January,
  * not the container's.
+ *
+ * `options.lock` defaults to `name`. Two schedules that run the same work pass the
+ * same lock so they can never overlap (the neighbourhood nightly run and its
+ * "assign now" queue drain); a run that finds it held reports "skipped".
  */
 function schedule(
   name: string,
   expr: string,
   fn: (tx: Db) => Promise<JobOutcome>,
-  options: { timezone?: string } = {},
+  options: { timezone?: string; lock?: string } = {},
 ): void {
+  const lock = options.lock ?? name;
   cron.schedule(expr, async () => {
     const startedAt = now();
     try {
@@ -63,14 +71,14 @@ function schedule(
       // assigned inside a closure to its initialiser, and `never` has no
       // `.revalidate`.
       let paths: readonly string[] = [];
-      const ran = await withAdvisoryLock(db, name, async (tx) => {
+      const ran = await withAdvisoryLock(db, lock, async (tx) => {
         paths = (await fn(tx))?.revalidate ?? [];
       });
       const ms = Date.now() - startedAt.getTime();
       console.log(`[worker] ${name} ${ran ? "ok" : "skipped (lock held elsewhere)"} in ${ms}ms`);
       if (ran) {
         await db.insert(jobRuns).values({
-          jobName: name, startedAt, finishedAt: now(), status: "ok", lockKey: name,
+          jobName: name, startedAt, finishedAt: now(), status: "ok", lockKey: lock,
         });
         // Committed now. Never throws: a failed cache nudge is a stale page,
         // not a failed job.
@@ -83,10 +91,10 @@ function schedule(
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[worker] ${name} FAILED:`, message);
       await db.insert(jobRuns).values({
-        jobName: name, startedAt, finishedAt: now(), status: "failed", error: message, lockKey: name,
+        jobName: name, startedAt, finishedAt: now(), status: "failed", error: message, lockKey: lock,
       }).catch(() => {});
     }
-  }, options);
+  }, { timezone: options.timezone });
   console.log(`[worker] scheduled ${name} (${expr}${options.timezone ? ` ${options.timezone}` : ""})`);
 }
 
@@ -255,9 +263,70 @@ schedule("spots-digest", SPOTS_DIGEST_CRON, async (tx) => {
   await runSpotsDigest(tx);
 }, spotsDigestCronOptions());
 
+// Quote verification (Task 56). Hourly, off the hour like the other sweeps:
+// a request nobody confirmed within 48 hours is marked expired. The click
+// checks the window itself, so this is housekeeping, not the gate. Runs on a
+// flag-off site too — it finds nothing there.
+schedule("quotes.expire", "53 * * * *", async (tx) => {
+  const { expirePendingQuotes } = await import("./jobs/quotes-expire");
+  await expirePendingQuotes(tx);
+});
+
 // Clicks on featured cards (Task 45) live in Redis between flushes like the
 // other counters; five minutes, beside flush-stats and flush-sponsor-stats.
 schedule("flush-featured-clicks", "*/5 * * * *", async (tx) => {
   const { flushFeaturedClicks } = await import("./jobs/flush-featured-clicks");
   await flushFeaturedClicks(tx);
 });
+
+// Neighbourhoods (Task 52). Nightly: every listing in a town with
+// neighbourhoods goes to the nearest centroid within its radius, and the
+// counts behind each page's noindex are refreshed. Every minute: the admin's
+// "assign now" presses, collapsed into one run. One advisory lock for both,
+// so they never run at the same time. Both are no-ops with
+// geo.neighbourhoods off (config or NEIGHBOURHOODS_ENABLED), and both hand
+// back the town and neighbourhood pages a move left stale.
+schedule("neighbourhoods.assign", NEIGHBOURHOODS_CRON, async (tx) => {
+  const { runNeighbourhoodAssign } = await import("./jobs/neighbourhoods");
+  return runNeighbourhoodAssign(tx);
+}, { lock: NEIGHBOURHOODS_LOCK });
+
+schedule("neighbourhoods.assign-queue", "*/1 * * * *", async (tx) => {
+  const { drainNeighbourhoodQueue } = await import("./jobs/neighbourhoods");
+  return drainNeighbourhoodQueue(tx);
+}, { lock: NEIGHBOURHOODS_LOCK });
+
+// Saved-search alerts (Task 54). Hourly, off the hour like the billing jobs:
+// queue a digest for each daily search last sent 24 h ago or more, each
+// weekly one 7 d ago or more, and each never sent — but only where there is
+// something new; the notify drain sends them. Only scheduled with the module
+// on, so a flag-off site runs nothing. See worker/jobs/alerts.ts.
+if (features.savedSearches) {
+  schedule("alerts.dispatch", ALERTS_DISPATCH_CRON, async (tx) => {
+    const { dispatchAlerts } = await import("./jobs/alerts");
+    const { checked, queued } = await dispatchAlerts(tx);
+    console.log(`[worker] alerts.dispatch checked ${checked}, queued ${queued}`);
+  });
+}
+
+// Lead market (Task 58). Hourly, off the hour: `leads.sweep` takes expired
+// leads off the board and deletes unsold ones a week after; and
+// `leads.retry_allocate` offers open leads to standing orders saved since
+// the last run. Mondays at 09:00 in the site's zone, one board digest job
+// per buyer (marked per week, so a restart cannot send it twice). Only with
+// the module on. See worker/jobs/leads.ts.
+if (features.leadMarketplace) {
+  schedule("leads.sweep", LEADS_SWEEP_CRON, async (tx) => {
+    const { runLeadsSweep } = await import("./jobs/leads");
+    await runLeadsSweep(tx);
+  });
+  schedule("leads.retry_allocate", LEADS_RETRY_CRON, async (tx) => {
+    const { runLeadsRetryAllocate } = await import("./jobs/leads");
+    await runLeadsRetryAllocate(tx);
+  });
+  schedule("leads.board_digest", LEADS_DIGEST_CRON, async (tx) => {
+    const { dispatchBoardDigest } = await import("./jobs/leads");
+    const { queued } = await dispatchBoardDigest(tx);
+    console.log(`[worker] leads.board_digest queued ${queued}`);
+  }, leadsDigestCronOptions());
+}
