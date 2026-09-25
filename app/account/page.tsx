@@ -14,6 +14,7 @@ import { SPARKLINE_BOX, sparkline } from "@/components/stats/sparkline";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { features } from "@/lib/features/flags";
 
 export const metadata: Metadata = {
   title: "Your account",
@@ -83,6 +84,12 @@ export default async function AccountPage({ searchParams }: Props) {
           <a href="/account/settings">Account settings</a> — name, phone, password.
           {" · "}
           <a href="/account/billing">Billing</a> — your plan and payments.
+          {features.savedSearches && (
+            <>
+              {" · "}
+              <a href="/account/alerts" data-testid="alerts-link">Alerts</a> — your saved searches.
+            </>
+          )}
         </p>
       </PageHeader>
 

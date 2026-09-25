@@ -98,6 +98,11 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
     routes.push({ href: "/post-a-job", label: "Post a job", inNav: false, inFooter: true, inSitemap: true });
   }
 
+  // Saved searches (Task 54) advertise nothing here on purpose: there is no
+  // public route. The save button sits on /search and /jobs, and
+  // /account/alerts is linked from /account — a signed-in page that no nav,
+  // footer or sitemap should carry.
+
   // costGuides, affiliates and utilityTool have no page yet. Until one
   // ships under app/, its flag advertises nothing: a nav, footer and
   // sitemap entry for /get-quotes was once a link to a 404 on every clone

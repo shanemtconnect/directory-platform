@@ -5,6 +5,8 @@ import { Pagination } from "@/components/pillar/Pagination";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { JobCard } from "./JobCard";
+import { SaveSearchButton } from "@/components/search/SaveSearchButton";
+import { features } from "@/lib/features/flags";
 
 export interface JobBoardProps {
   jobs: PublicJobCard[];
@@ -42,6 +44,18 @@ export function JobBoard({ jobs, filters, options, page, totalPages, total }: Jo
         <a href="/post-a-job" className="btn btn-primary" data-testid="post-a-job-cta">
           Post a job
         </a>
+        {/* Saved searches (Task 54): the board's own filters, as listOpenJobs takes them. */}
+        {features.savedSearches && (
+          <SaveSearchButton
+            kind="jobs"
+            params={{
+              ...(filters.city ? { citySlug: filters.city.slug } : {}),
+              ...(filters.category ? { categorySlug: filters.category.slug } : {}),
+            }}
+            label={title}
+            currentPath={basePath}
+          />
+        )}
       </PageHeader>
 
       {(options.cities.length > 0 || options.categories.length > 0) && (
