@@ -264,6 +264,9 @@ ${a.reviewCriteria.map((c) => `    { key: ${str(c.key)}, label: ${str(c.label)} 
   listing: {
     // Input cap, the same for every tier. Display is governed by descriptionDisplay.
     maxDescriptionChars: ${a.maxDescriptionChars},
+    // Prefill /add-listing from the business's own web page. Read-only and
+    // rate-limited; set false to hide the "Paste the address" box.
+    importFromUrl: true,
   },
 
   // /pricing renders from here. Annual is exactly 10 x monthly, so "save two

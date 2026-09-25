@@ -201,3 +201,9 @@ describe("renderSiteConfig — sponsor rails (Task 43)", () => {
     expect(renderSiteConfig(answers({ adsEnabled: "yes" }))).toContain("  ads: {\n    enabled: true,");
   });
 });
+
+describe("renderSiteConfig — URL import (Task 55)", () => {
+  it("ships the add-listing URL import switched on", () => {
+    expect(renderSiteConfig(answers())).toMatch(/listing: \{[^}]*importFromUrl: true,/);
+  });
+});

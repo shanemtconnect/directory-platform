@@ -65,6 +65,7 @@ export const siteConfig = {
 
   listing: {
     maxDescriptionChars: 2500,
+    importFromUrl: true,
   },
 
   // /pricing renders from here. Monthly x 12 is exactly 12 months' worth, and

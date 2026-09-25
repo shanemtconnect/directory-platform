@@ -175,6 +175,12 @@ export interface SiteConfig {
   readonly listing: {
     /** Input cap, same for every tier. Display is governed by `descriptionDisplay`. */
     readonly maxDescriptionChars: number;
+    /**
+     * "Have a website? Paste the address" above /add-listing: fetches the page
+     * (SSRF-guarded, rate-limited) and prefills the form from its OpenGraph and
+     * JSON-LD. Never submits anything by itself.
+     */
+    readonly importFromUrl: boolean;
   };
 
   readonly customFields: readonly CustomField[];
