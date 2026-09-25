@@ -77,6 +77,9 @@ export function fixtureHtml(params: URLSearchParams): string {
       "An end-to-end test page standing in for a business's own website. It exists " +
       "only so the add-listing import can be exercised against a real fetch.",
     telephone: get("phone", "01632 960000"),
+    // A real-looking public address: the submit form rejects a dotless host
+    // such as `localhost`, which is what the fetched origin would be here.
+    url: "https://harbourlight.example/",
     address: {
       "@type": "PostalAddress",
       streetAddress: "4 Quay Street",

@@ -86,6 +86,12 @@ const SERVER_ENV: Record<string, string> = {
   // Keeps the blog fixtures loadable; production clones ship without them.
   NEXT_PUBLIC_DEMO_MODE: "true",
   /**
+   * Lets the add-listing URL import reach its fixture on this server — and
+   * only that page, on this PORT (lib/import/e2e-fixture.ts). The SSRF guard
+   * refuses loopback everywhere else, and a production server never has it.
+   */
+  E2E_DEMO_MODE: "true",
+  /**
    * Required at boot now that auth is wired (RUNTIME_ENV in config/validate.ts),
    * so the standalone server exits 1 without them. Throwaway values: this suite
    * signs nobody in, and a secret that is obviously not a secret is safer in a
