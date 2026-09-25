@@ -104,22 +104,24 @@ function scopeFilter(scope: PillarScope): SQL {
   }
 }
 
-function where(viewer: Viewer, scope: PillarScope): SQL {
-  return and(publishedListings(viewer), scopeFilter(scope))!;
+function where(viewer: Viewer, scope: PillarScope, opts: { verified?: boolean } = {}): SQL {
+  const clauses = [publishedListings(viewer), scopeFilter(scope)];
+  if (opts.verified) clauses.push(eq(listings.claimStatus, "verified"));
+  return and(...clauses)!;
 }
 
 export async function listListings(
   tx: Db,
   viewer: Viewer,
   scope: PillarScope,
-  opts: { page?: number; perPage?: number } = {},
+  opts: { page?: number; perPage?: number; verified?: boolean } = {},
 ): Promise<PublicListing[]> {
   const page = Math.max(1, Math.trunc(opts.page ?? 1));
   const perPage = opts.perPage ?? PER_PAGE;
   return tx
     .select(publicListingColumns)
     .from(listings)
-    .where(where(viewer, scope))
+    .where(where(viewer, scope, opts))
     .orderBy(...listingRankOrder(siteConfig.timezone))
     .limit(perPage)
     .offset((page - 1) * perPage);
@@ -129,7 +131,8 @@ export async function countListings(
   tx: Db,
   viewer: Viewer,
   scope: PillarScope,
+  opts: { verified?: boolean } = {},
 ): Promise<number> {
-  const [row] = await tx.select({ n: count() }).from(listings).where(where(viewer, scope));
+  const [row] = await tx.select({ n: count() }).from(listings).where(where(viewer, scope, opts));
   return row?.n ?? 0;
 }
