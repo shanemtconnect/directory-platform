@@ -149,4 +149,45 @@ describe("search", () => {
       expect(row?.customFields).toEqual({ capacity_seated: 120 });
     });
   });
+
+  describe("verified filter", () => {
+    it("returns only verified listings when verified is true", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Verified one", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Claimed one", claimStatus: "claimed" });
+        await makeListing(tx, ctx, { name: "Unclaimed one", claimStatus: "unclaimed" });
+
+        const r = await search(tx, PUBLIC_VIEWER, { verified: true });
+        expect(r.rows.map((x) => x.name)).toEqual(["Verified one"]);
+        expect(r.total).toBe(1);
+      });
+    });
+
+    it("returns every claim status when verified is false or absent", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Verified one", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Unclaimed one", claimStatus: "unclaimed" });
+
+        expect((await search(tx, PUBLIC_VIEWER, {})).total).toBe(2);
+        expect((await search(tx, PUBLIC_VIEWER, { verified: false })).total).toBe(2);
+      });
+    });
+
+    it("combines the verified filter with q, city and fields", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Old Barn Verified", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Old Barn Unclaimed", claimStatus: "unclaimed" });
+        await makeListing(tx, { ...ctx, cityId: s.bristol }, { name: "Old Barn Elsewhere", claimStatus: "verified" });
+
+        const r = await search(tx, PUBLIC_VIEWER, { q: "old barn", city: "leeds", verified: true });
+        expect(r.rows.map((x) => x.name)).toEqual(["Old Barn Verified"]);
+      });
+    });
+  });
 });

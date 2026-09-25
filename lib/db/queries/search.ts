@@ -18,6 +18,8 @@ export interface SearchParams {
   /** Values for customFields marked searchable, keyed by field key. */
   fields?: Record<string, string>;
   page?: number;
+  /** `claim_status = 'verified'` only. Absent or false: every claim status. */
+  verified?: boolean;
 }
 
 export interface SearchResult {
@@ -51,6 +53,7 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
 
   if (params.city) clauses.push(eq(cities.slug, params.city));
   if (params.category) clauses.push(eq(categories.slug, params.category));
+  if (params.verified) clauses.push(eq(listings.claimStatus, "verified"));
 
   // Custom fields live in jsonb. Only keys declared searchable in site.config
   // are honoured — an arbitrary key from a query string must never reach SQL.
