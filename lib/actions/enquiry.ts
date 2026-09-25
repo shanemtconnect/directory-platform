@@ -3,6 +3,9 @@
 import { headers } from "next/headers";
 import { db } from "@/lib/db/client";
 import { createEnquiry } from "@/lib/db/queries/enquiries";
+import { createEnquiryLead } from "@/lib/db/queries/leads";
+import { isEnabled } from "@/lib/features/flags";
+import { runAfterLeadCreated } from "@/lib/leads/hooks";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { notifyEnquiry } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
@@ -68,6 +71,16 @@ export async function submitEnquiry(
     const handle = tx as unknown as TestDb;
     const created = await createEnquiry(handle, PUBLIC_VIEWER, { ...values, ip });
     await notifyEnquiry(handle, PUBLIC_VIEWER, created);
+    // Pay-per-lead (Task 56): an enquiry to an unclaimed listing we hold no
+    // address for reaches nobody, so it is also offered as a lead. The query
+    // decides whether the listing qualifies; the enquiry row, its counter and
+    // its (admin) notification are exactly what they were without the flag.
+    if (created.outcome === "created" && isEnabled("leadMarketplace")) {
+      const lead = await createEnquiryLead(handle, PUBLIC_VIEWER, values.listingId, {
+        name: values.name, email: values.email, phone: values.phone, message: values.message,
+      });
+      if (lead !== null) await runAfterLeadCreated(handle, PUBLIC_VIEWER, lead);
+    }
     return created;
   });
   if (result.outcome === "unknown-listing") {
