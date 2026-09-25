@@ -628,8 +628,12 @@ describe("buyLead concurrency", () => {
       // "Barn Venues" here would collide with every other file's scaffold.
       const tag = randomUUID().slice(0, 8);
       const verticalId = await makeVertical(tx, `Race Vertical ${tag}`);
-      const cityId = await makeCity(tx, `Race Town ${tag}`, `Race Region ${tag}`);
+      // And as invisible as a committed row can be to files that count
+      // globally: no region, an unpublished town, an inactive category.
+      const cityId = await makeCity(tx, `Race Town ${tag}`, null);
       const ctx = { cityId, verticalId, primaryCategoryId: await makeCategoryInCity(tx, verticalId, cityId, `Race Things ${tag}`) };
+      await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, cityId));
+      await tx.update(categories).set({ isActive: false }).where(eq(categories.id, ctx.primaryCategoryId));
       const a = await makeBuyer(tx, ctx, 5000);
       const b = await makeBuyer(tx, ctx, 5000);
       // A normalised phone no rule-checked test can draw, so this committed
