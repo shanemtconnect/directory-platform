@@ -61,14 +61,20 @@ test("a request nobody local can receive needs a phone, then becomes a lead on c
 
   await page.goto("/get-quotes");
   const form = page.locator('[data-testid="quote-form"]');
-  await form.locator("#quote-category").selectOption(scope!.category_id);
-  await form.locator("#quote-town").selectOption(scope!.city_id);
-  await form.locator("#quote-message").fill(JOB);
-  await form.locator("#quote-name").fill("Playwright Leadless");
-  await form.locator("#quote-email").fill(EMAIL);
-  await form.locator("#quote-consent").check();
-  await expect(form.locator('input[name="cf-turnstile-response"]')).not.toHaveValue("", { timeout: 15_000 });
-  await form.locator('button[type="submit"]').click();
+  // React resets an uncontrolled form after its action returns, so the
+  // second attempt fills every field again, as a person would.
+  async function fill(phone: string | null) {
+    await form.locator("#quote-category").selectOption(scope!.category_id);
+    await form.locator("#quote-town").selectOption(scope!.city_id);
+    await form.locator("#quote-message").fill(JOB);
+    await form.locator("#quote-name").fill("Playwright Leadless");
+    await form.locator("#quote-email").fill(EMAIL);
+    if (phone !== null) await form.locator("#quote-phone").fill(phone);
+    await form.locator("#quote-consent").check();
+    await expect(form.locator('input[name="cf-turnstile-response"]')).not.toHaveValue("", { timeout: 15_000 });
+    await form.locator('button[type="submit"]').click();
+  }
+  await fill(null);
 
   // Refused on the phone, and nothing written.
   await expect(page.locator('[data-testid="quote-error"]')).toBeVisible({ timeout: 15_000 });
@@ -76,9 +82,7 @@ test("a request nobody local can receive needs a phone, then becomes a lead on c
   expect(await sql`select 1 from quote_requests where email = ${EMAIL}`).toHaveLength(0);
 
   // With a phone: held for confirmation, no recipients.
-  await form.locator("#quote-phone").fill(leadPhone());
-  await expect(form.locator('input[name="cf-turnstile-response"]')).not.toHaveValue("", { timeout: 15_000 });
-  await form.locator('button[type="submit"]').click();
+  await fill(leadPhone());
   await expect(page.locator('[data-testid="quote-sent"]')).toContainText("pass it on", { timeout: 15_000 });
 
   const [request] = await sql<{ id: string; status: string }[]>`
