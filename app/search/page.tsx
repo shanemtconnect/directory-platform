@@ -43,23 +43,32 @@ export default async function SearchPage({ searchParams }: Props) {
     if (v) fields[f.key] = v;
   }
 
+  const verified = one(sp.verified) === "1";
+
   const params = {
     q: one(sp.q),
     city: one(sp.city),
     category: one(sp.category),
     fields,
     page: Number(one(sp.page) ?? "1") || 1,
+    verified,
   };
 
   // The switcher takes the facet as the slug it already is, so it resolves the
   // current city itself and this query runs alongside the other three rather
-  // than waiting on listCities to hand it an id.
-  const [results, cities, categories, switcherCities] = await Promise.all([
+  // than waiting on listCities to hand it an id. The verified count rides
+  // along too: the toggle needs to know, before it renders, whether the
+  // CURRENT filters (minus verified) match anything verified at all.
+  const [results, cities, categories, switcherCities, verifiedScope] = await Promise.all([
     search(db as never, PUBLIC_VIEWER, params),
     listCities(db as never, PUBLIC_VIEWER),
     listCategories(db as never, PUBLIC_VIEWER),
     listSwitcherCities(db as never, PUBLIC_VIEWER, { currentCitySlug: params.city ?? null }),
+    verified
+      ? Promise.resolve(null)
+      : search(db as never, PUBLIC_VIEWER, { ...params, verified: true, page: 1 }),
   ]);
+  const hasVerified = verified ? results.total > 0 : (verifiedScope?.total ?? 0) > 0;
 
   // Preserve every active filter in pagination links.
   const qs = new URLSearchParams();
@@ -67,7 +76,17 @@ export default async function SearchPage({ searchParams }: Props) {
   if (params.city) qs.set("city", params.city);
   if (params.category) qs.set("category", params.category);
   for (const [k, v] of Object.entries(fields)) qs.set(k, v);
+  if (verified) qs.set("verified", "1");
   const basePath = `/search${qs.toString() ? `?${qs}` : ""}`;
+
+  // The toggle's own target: everything the pagination base path carries,
+  // minus/plus `verified`, back to page 1 — flipping the filter always lands
+  // on the first page of whichever set it now shows.
+  const toggleQs = new URLSearchParams(qs);
+  if (verified) toggleQs.delete("verified");
+  else toggleQs.set("verified", "1");
+  const toggleHref = `/search${toggleQs.toString() ? `?${toggleQs}` : ""}`;
+  const cityName = params.city ? cities.find((c) => c.slug === params.city)?.name : undefined;
 
   return (
     <>
@@ -118,6 +137,22 @@ export default async function SearchPage({ searchParams }: Props) {
           </p>
         ))}
 
+        {/* Only offered when it would find something — a checkbox that always
+            empties the grid teaches a visitor to stop trusting the filters. */}
+        {hasVerified && (
+          <p className="mb-0 flex items-center gap-2">
+            <input
+              id="verified"
+              name="verified"
+              type="checkbox"
+              value="1"
+              defaultChecked={verified}
+              className="h-auto w-auto"
+            />
+            <label htmlFor="verified" className="mb-0">Verified only</label>
+          </p>
+        )}
+
         <button type="submit" className="btn btn-primary sm:col-span-2 sm:w-fit lg:col-span-1">
           Search
         </button>
@@ -143,10 +178,17 @@ export default async function SearchPage({ searchParams }: Props) {
       </p>
 
       {results.rows.length === 0 ? (
-        <p>
-          Nothing matched. Try removing a filter, or{" "}
-          <a href="/cities">browse by location</a>.
-        </p>
+        verified ? (
+          <p data-testid="empty-verified">
+            No verified {e.plural}{cityName ? ` in ${cityName}` : ""} yet —{" "}
+            <a href={toggleHref}>see all</a>.
+          </p>
+        ) : (
+          <p>
+            Nothing matched. Try removing a filter, or{" "}
+            <a href="/cities">browse by location</a>.
+          </p>
+        )
       ) : (
         <ul data-testid="search-results" className="card-grid">
           {results.rows.map((r) => (
