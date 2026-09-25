@@ -659,6 +659,32 @@ services, restart. The next `subscription-sync` tick reconciles whatever was
 missed; nothing needs replaying by hand. `scripts/paypal-setup.ts` prints this
 reminder because it deliberately does not create the webhook.
 
+### Quote verification and leads (Task 56)
+
+With `quoteBroadcast` on, a get-quotes request is written **pending** and the
+only email queued is `notify.quote-verify`, to the requester. Nobody else is
+written to, and nothing appears on an owner's leads page, until they click
+the link: `GET /get-quotes/verify?token=…` (32 random bytes, stored as a
+sha256 digest, single use, 48 hours) marks the request verified, queues the
+usual `notify.quote` delivery, and lands on `/get-quotes/confirmed`. The
+`quotes.expire` worker job marks unclicked requests expired every hour;
+`/admin/quotes` shows which requests are still awaiting confirmation.
+
+With `leadMarketplace` on as well (it requires `quoteBroadcast`), a
+**lead** (`leads` table) is created — open, at `siteConfig.leads.floor` — when:
+a verified quote request reached no listing on a paid tier (including one
+nobody in town could receive, which the form now keeps instead of refusing);
+a lead-capture box (home page, the top of the left sponsor rail) is confirmed
+by the same email link; or an enquiry is sent to an unclaimed listing with no
+email on file. Every lead passes the rules in `lib/leads/rules.ts` first: a
+phone that normalises for the site's country (`lib/geo/phone.ts`; premium,
+personal-numbering and fiction ranges refused), an email not at a throwaway
+inbox (`lib/spam/disposable-domains.ts`), neither on `lead_blocklist`, and
+neither on another lead in the last 30 days. The board only ever shows
+`first_name` and `brief`, which is generated with addresses, digit runs,
+postcodes and the surname stripped. Creating a lead emails nobody; selling it
+is `afterLeadCreated` in `lib/leads/hooks.ts` (Task 58).
+
 ### Testing gotchas
 
 `corepack pnpm test:e2e -- e2e/admin.spec.ts` does **not** run one file — the
@@ -697,6 +723,7 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `badge-counters` | every minute | Moves badge impressions and clicks from Redis into `badges` | — |
 | `renewal-reminders` | hourly :17 | Queues the 30-, 7- and 0-day renewal emails, once per subscription and period | `PAYPAL_*` (no-op otherwise), the email vars for delivery |
 | `subscription-sync` | hourly :37 | Reconciles subscriptions whose paid period ended over three days ago against PayPal; lapses or extends; returns the pages to revalidate | `PAYPAL_*` (logs "not configured" otherwise), `INTERNAL_REVALIDATE_SECRET` (optional) |
+| `quotes.expire` | hourly :53 | Marks quote requests whose verification link lapsed (48 h, never clicked) `expired`. The click checks the window itself; this keeps the admin list honest | — |
 | `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
 
 Every job is a no-op on a site without the feature it serves; none of them
