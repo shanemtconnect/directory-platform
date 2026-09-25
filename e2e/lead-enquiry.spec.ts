@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
+import crypto from "node:crypto";
 import { features } from "@/lib/features/flags";
-import { leadPhone } from "./fixtures";
+import { leadPhone, sideCity } from "./fixtures";
 import { leadSharingNotice } from "@/lib/leads/consent";
 import { E2E_DATABASE_URL } from "./database";
 
@@ -19,6 +20,7 @@ const stamp = Date.now();
 const EMAIL = `enquiry-lead-e2e+${stamp}@example.com`;
 
 let sql: ReturnType<typeof postgres>;
+let fixtureId: string | null = null;
 
 test.beforeAll(() => {
   sql = postgres(E2E_DATABASE_URL, { max: 2, onnotice: () => {} });
@@ -36,6 +38,11 @@ test.afterAll(async () => {
   await sql`delete from leads where email = ${EMAIL}`;
   await sql`delete from quote_requests where email = ${EMAIL}`;
   await sql`delete from enquiries where email = ${EMAIL}`;
+  if (fixtureId) {
+    await sql`delete from slugs where entity_id = ${fixtureId}`;
+    await sql`delete from listings where id = ${fixtureId}`;
+    fixtureId = null;
+  }
   await sql.end({ timeout: 5 });
 });
 
@@ -43,14 +50,26 @@ test("an enquiry to an unclaimed no-email listing becomes a lead only after the 
   test.skip(!features.leadMarketplace, "leadMarketplace is off in this build");
   test.slow();
 
-  const [target] = await sql<{ id: string; path: string }[]>`
-    select l.id, '/' || c.slug || '/' || l.slug as path
-    from listings l join cities c on c.id = l.city_id
-    where l.status = 'published' and l.claim_status = 'unclaimed'
-      and nullif(trim(l.email), '') is null and c.is_published
-    order by l.created_at limit 1
+  // Our own listing, in a side town: the seed's oldest unclaimed listing is
+  // what claim.spec claims, and once claimed its enquiry form promises an
+  // owner again — which is exactly what this spec asserts it must not do.
+  const city = await sideCity();
+  const [scope] = await sql<{ city_id: string; vertical_id: string; category_id: string }[]>`
+    select c.id as city_id, cat.vertical_id, cat.id as category_id
+    from cities c, categories cat
+    where c.slug = ${city.slug} and cat.is_active
+    order by cat.sort_order, cat.name limit 1
   `;
-  expect(target, "the e2e seed must have an unclaimed listing with no email").toBeTruthy();
+  expect(scope, "the side town and an active category must exist").toBeTruthy();
+  fixtureId = crypto.randomUUID();
+  const slug = `e2e-enquiry-lead-${fixtureId.slice(0, 8)}`;
+  await sql`insert into listings
+    (id, name, slug, city_id, vertical_id, primary_category_id, status, tier, claim_status, email, source)
+    values (${fixtureId}, ${"E2E Enquiry Lead Fixture"}, ${slug}, ${scope!.city_id}, ${scope!.vertical_id},
+      ${scope!.category_id}, 'published', 'free', 'unclaimed', null, 'seed')`;
+  await sql`insert into slugs (parent_scope, slug, kind, entity_id)
+    values (${scope!.city_id}, ${slug}, 'listing', ${fixtureId}) on conflict do nothing`;
+  const target = { id: fixtureId, path: `/${city.slug}/${slug}` };
 
   await page.goto(target!.path);
   const form = page.locator('[data-testid="enquiry-form"]');

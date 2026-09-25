@@ -258,8 +258,18 @@ export function uniquePhone(): string {
  * Other countries would need their own unallocated block here.
  */
 export function leadPhone(): string {
-  if (country.code !== "GB") {
-    throw new Error(`leadPhone() has no unallocated block for ${country.code}; add one in e2e/fixtures.ts`);
+  const n4 = () => String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
+  switch (country.code) {
+    case "GB":
+      return `01632 97${n4()}`;
+    case "US":
+      // 555-01XX is the fiction block the rules refuse; 555-0200 upward is
+      // reserved for information services and assigned to nobody.
+      return `(202) 555-${String(200 + Math.floor(Math.random() * 9_800)).padStart(4, "0")}`;
+    case "AU":
+      // 02 5550 xxxx is the ACMA drama block; 5551 is outside it.
+      return `02 5551 ${n4()}`;
+    default:
+      throw new Error(`leadPhone() has no unallocated block for ${country.code}; add one in e2e/fixtures.ts`);
   }
-  return `01632 97${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`;
 }

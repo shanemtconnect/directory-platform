@@ -37,10 +37,35 @@ const BUY_MESSAGES: Record<string, { variant: "error" | "status"; text: string; 
   "not-your-listing": { variant: "error", text: `Choose one of your own ${siteConfig.entity.plural} to buy the lead for. Nothing was taken.` },
 };
 
+/** The signed-out board: what leads are and where to sign in — no rows. */
+function LeadBoardTeaser({ path }: { path: string }) {
+  const e = siteConfig.entity;
+  const next = encodeURIComponent(path);
+  return (
+    <main data-testid="lead-board-teaser">
+      <div className="mx-auto max-w-4xl">
+        <PageHeader
+          title="Leads"
+          lede={`People looking for a ${e.singular} whose request no listed ${e.singular} could take. Sign in with the account that owns your listing to see them and buy the ones you want.`}
+        >
+          <p>
+            <a href={`/login?next=${next}`} className="btn btn-primary" data-testid="lead-board-login">Sign in</a>{" "}
+            <a href={`/signup?next=${next}`} className="btn btn-secondary">Create an account</a>
+          </p>
+        </PageHeader>
+      </div>
+    </main>
+  );
+}
+
 export async function renderLeadBoard(page: number, buy: string | undefined) {
   const path = page === 1 ? "/leads" : `/leads/page/${page}`;
   const viewer = await currentViewer();
-  if (viewer.role === "public") redirect(`/login?next=${path}`);
+  // Signed out, the board is a 200 teaser rather than a redirect: it is an
+  // advertised nav route (e2e/routes.spec.ts holds every one of those to 200),
+  // and a visitor deciding whether to list their business should be able to
+  // read what a lead is before they are asked to sign in.
+  if (viewer.role === "public") return <LeadBoardTeaser path={path} />;
 
   const at = now();
   const handle = db as unknown as TestDb;

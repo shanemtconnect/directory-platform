@@ -89,9 +89,12 @@ test("buy a lead off the board, report it, the admin refunds it, and its phone i
     return;
   }
 
-  // A signed-out visitor is sent to sign in.
-  await page.goto("/leads");
-  await page.waitForURL(/\/login\?next=%2Fleads|\/login\?next=\/leads/);
+  // A signed-out visitor gets the 200 teaser (an advertised nav route must
+  // never redirect — e2e/routes.spec.ts) with a sign-in link back to the board.
+  const teaserRes = await page.goto("/leads");
+  expect(teaserRes?.status()).toBe(200);
+  await expect(page.locator('[data-testid="lead-board-teaser"]')).toBeVisible();
+  await expect(page.locator('[data-testid="lead-board-login"]')).toHaveAttribute("href", "/login?next=%2Fleads");
 
   // The buyer: an account, a live listing of theirs in a side town, and credit for two leads.
   const buyerProfile = await signUp(page, BUYER, "Playwright Buyer");

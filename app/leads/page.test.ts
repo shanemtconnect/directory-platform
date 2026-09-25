@@ -68,9 +68,12 @@ describe("/leads", () => {
     expect(boardLeads).not.toHaveBeenCalled();
   });
 
-  it("sends a signed-out visitor to sign in and back", async () => {
+  it("shows a signed-out visitor the teaser with a sign-in link, and reads no leads", async () => {
     currentViewer.mockResolvedValue({ role: "public" });
-    await expect(board()).rejects.toThrow("NEXT_REDIRECT /login?next=/leads");
+    const tree = await board();
+    const teaser = [...elements(tree)].find((n) => (n.props as { "data-testid"?: string })["data-testid"] === "lead-board-teaser");
+    expect(teaser, "the signed-out board is a 200 teaser, not a redirect").toBeTruthy();
+    expect(links(tree).map((l) => l.href)).toContain("/login?next=%2Fleads");
     expect(boardLeads).not.toHaveBeenCalled();
   });
 
