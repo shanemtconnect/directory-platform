@@ -5,6 +5,7 @@ import {
   validateCountry,
   validateProductionConfig,
   validateStatsRetention,
+  validateLeads,
   MIN_STATS_RETENTION_DAYS,
   ConfigError,
   RUNTIME_ENV,
@@ -35,6 +36,11 @@ describe("validateFeatureDependencies", () => {
 
   it("passes when awards is on with reviews", () => {
     expect(() => validateFeatureDependencies(on("awards", "reviews"))).not.toThrow();
+  });
+
+  it("throws when leadMarketplace is on without quoteBroadcast, and passes with it", () => {
+    expect(() => validateFeatureDependencies(on("leadMarketplace"))).toThrow(/leadMarketplace requires quoteBroadcast/);
+    expect(() => validateFeatureDependencies(on("leadMarketplace", "quoteBroadcast", "shortlist"))).not.toThrow();
   });
 
   it("throws when quoteBroadcast is on without shortlist", () => {
@@ -381,5 +387,32 @@ describe("isPlaceholderLegalEntity", () => {
   it("accepts a registered name", () => {
     expect(isPlaceholderLegalEntity("Find a Dog Groomer LLC")).toBe(false);
     expect(isPlaceholderLegalEntity("TBC Holdings Ltd")).toBe(false);
+  });
+});
+
+describe("validateLeads", () => {
+  const good = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7 };
+
+  it("passes the shipped config and the documented defaults", () => {
+    expect(() => validateLeads(siteConfig)).not.toThrow();
+    expect(siteConfig.leads).toEqual(good);
+  });
+
+  it("refuses a floor below one", () => {
+    expect(() => validateLeads({ leads: { ...good, floor: 0 } })).toThrow(/leads.floor must be at least 1/);
+    expect(() => validateLeads({ leads: { ...good, floor: 0.5 } })).toThrow(ConfigError);
+  });
+
+  it("refuses packs that are empty, out of order, repeated or not positive", () => {
+    expect(() => validateLeads({ leads: { ...good, packs: [] } })).toThrow(/at least one pack/);
+    expect(() => validateLeads({ leads: { ...good, packs: [100, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...good, packs: [50, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...good, packs: [0, 50] } })).toThrow(/positive/);
+  });
+
+  it("refuses day counts that are not whole and positive", () => {
+    expect(() => validateLeads({ leads: { ...good, halfPriceAfterDays: 0 } })).toThrow(/halfPriceAfterDays/);
+    expect(() => validateLeads({ leads: { ...good, deleteAfterDays: 1.5 } })).toThrow(/deleteAfterDays/);
+    expect(() => validateLeads({ leads: { ...good, refundWindowDays: -1 } })).toThrow(/refundWindowDays/);
   });
 });

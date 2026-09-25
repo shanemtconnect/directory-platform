@@ -19,6 +19,7 @@ export class ConfigError extends Error {
 export const FEATURE_DEPENDENCIES: Partial<Record<FeatureFlag, readonly FeatureFlag[]>> = {
   awards: ["reviews"],
   quoteBroadcast: ["shortlist"],
+  leadMarketplace: ["quoteBroadcast"],
 };
 
 export function validateFeatureDependencies(features: FeatureMap): void {
@@ -316,6 +317,46 @@ export function validateStatsRetention(config: {
   if (problems.length > 0) {
     throw new ConfigError(
       `Stats retention configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
+/**
+ * The pay-per-lead numbers. A floor below one currency unit is a lead given
+ * away; packs out of order are a top-up page whose "smallest" button is not
+ * the smallest; a non-positive day count halves or deletes a lead the moment
+ * it is created. All refused at build.
+ */
+export function validateLeads(config: {
+  leads: {
+    floor: number;
+    packs: readonly number[];
+    halfPriceAfterDays: number;
+    deleteAfterDays: number;
+    refundWindowDays: number;
+  };
+}): void {
+  const l = config.leads;
+  const problems: string[] = [];
+  if (!Number.isFinite(l.floor) || l.floor < 1) {
+    problems.push(`leads.floor must be at least 1, got ${String(l.floor)}`);
+  }
+  if (l.packs.length === 0) problems.push("leads.packs must list at least one pack");
+  for (let i = 0; i < l.packs.length; i++) {
+    const p = l.packs[i]!;
+    if (!Number.isFinite(p) || p <= 0) problems.push(`leads.packs[${i}] must be positive, got ${String(p)}`);
+    if (i > 0 && p <= l.packs[i - 1]!) {
+      problems.push(`leads.packs must be ascending; ${p} follows ${l.packs[i - 1]}`);
+    }
+  }
+  for (const key of ["halfPriceAfterDays", "deleteAfterDays", "refundWindowDays"] as const) {
+    if (!Number.isInteger(l[key]) || l[key] < 1) {
+      problems.push(`leads.${key} must be a whole number of days, at least 1, got ${String(l[key])}`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Lead configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
     );
   }
 }

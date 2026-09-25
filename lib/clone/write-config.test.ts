@@ -36,6 +36,12 @@ afterEach(() => {
 });
 
 describe("renderSiteConfig", () => {
+  it("emits the pay-per-lead section with the documented defaults and the flag off", () => {
+    const source = renderSiteConfig(answers());
+    expect(source).toContain("    leadMarketplace: false,");
+    expect(source).toMatch(/leads: \{\n    floor: 25,\n    packs: \[50, 100, 300\],\n    halfPriceAfterDays: 7,\n    deleteAfterDays: 30,\n    refundWindowDays: 7,\n  \}/);
+  });
+
   it("renders a config that closes with the satisfies assertion the build relies on", () => {
     const source = renderSiteConfig(answers());
     expect(source).toContain('import type { CustomField, SiteConfig } from "./types";');

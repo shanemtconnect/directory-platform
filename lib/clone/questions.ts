@@ -96,6 +96,7 @@ export const FEATURE_FLAG_DESCRIPTIONS: Record<FeatureFlag, string> = {
   events: "Dated events attached to an entry, with event markup.",
   bookings: "Availability calendar and booking requests handled on site.",
   multiLocale: "Serve more than one locale from the same deployment.",
+  leadMarketplace: "Pay-per-lead: verified requests no paying listing received are sold to owners from prepaid credit. Needs quoteBroadcast.",
 };
 
 export type SeedSource = "csv" | "template" | "skip";

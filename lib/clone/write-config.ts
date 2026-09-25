@@ -353,6 +353,16 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     durationDays: 30,
     reminderDays: 7,
   },
+  // Pay-per-lead (flag leadMarketplace). The floor is what a lead sells for,
+  // in the site currency; it halves after halfPriceAfterDays on the board and
+  // is deleted after deleteAfterDays. Buyers top up in these packs.
+  leads: {
+    floor: 25,
+    packs: [50, 100, 300],
+    halfPriceAfterDays: 7,
+    deleteAfterDays: 30,
+    refundWindowDays: 7,
+  },
 } as const satisfies SiteConfig;
 
 ${ACCESSORS}`;

@@ -30,6 +30,8 @@ export const RESERVED_SLUGS = [
   "verify-email", "remove", "report", "review", "reviews", "billing",
   // Task 45: the public featured-spot leaderboard lives at /spots/<id>.
   "spots",
+  // Wave G: the pay-per-lead board lives at /leads.
+  "leads",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

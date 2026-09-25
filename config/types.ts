@@ -99,6 +99,7 @@ export const FEATURE_FLAGS = [
   "events",
   "bookings",
   "multiLocale",
+  "leadMarketplace",
 ] as const;
 
 export type FeatureFlag = (typeof FEATURE_FLAGS)[number];
@@ -279,5 +280,21 @@ export interface SiteConfig {
     readonly durationDays: number;
     /** How many days before expiry the poster is reminded. Less than durationDays. */
     readonly reminderDays: number;
+  };
+
+  /**
+   * Pay-per-lead (flag `leadMarketplace`, requires `quoteBroadcast`). A lead
+   * is a verified request no paying local listing received; it is sold at
+   * `floor` (major units of `currency`), halves after `halfPriceAfterDays`,
+   * and is deleted after `deleteAfterDays`. Buyers prepay credit in `packs`
+   * (ascending, major units) and may report a bad lead within
+   * `refundWindowDays`.
+   */
+  readonly leads: {
+    readonly floor: number;
+    readonly packs: readonly number[];
+    readonly halfPriceAfterDays: number;
+    readonly deleteAfterDays: number;
+    readonly refundWindowDays: number;
   };
 }

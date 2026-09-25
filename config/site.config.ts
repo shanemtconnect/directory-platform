@@ -192,6 +192,7 @@ export const siteConfig = {
     events: false,
     bookings: false,
     multiLocale: false,
+    leadMarketplace: false,
   },
 
   seo: {
@@ -254,6 +255,16 @@ export const siteConfig = {
     price: 29,
     durationDays: 30,
     reminderDays: 7,
+  },
+  // Pay-per-lead (flag leadMarketplace). A lead sells at the floor, halves
+  // after a week on the board and is deleted after a month. Credit is bought
+  // in these packs; a bad lead can be reported for a week after purchase.
+  leads: {
+    floor: 25,
+    packs: [50, 100, 300],
+    halfPriceAfterDays: 7,
+    deleteAfterDays: 30,
+    refundWindowDays: 7,
   },
 } as const satisfies SiteConfig;
 
