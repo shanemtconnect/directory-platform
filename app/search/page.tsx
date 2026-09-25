@@ -90,7 +90,11 @@ export default async function SearchPage({ searchParams }: Props) {
   const cityName = params.city ? cities.find((c) => c.slug === params.city)?.name : undefined;
   // What a saved search stores: this page's own query input, minus the page
   // number — an alert is about the search, not where in it you were.
-  const { page: _page, ...saveParams } = params;
+  // `verified` rides along as the same "1" the URL carries (lib/alerts/paths
+  // builds the link back from it); the action only stores string values, and a
+  // boolean here was refused as an invalid search — found on the merged tree.
+  const { page: _page, verified: _verified, ...saveRest } = params;
+  const saveParams = verified ? { ...saveRest, verified: "1" } : saveRest;
   const categoryName = categories.find((c) => c.slug === params.category)?.name;
   const saveLabel =
     `${categoryName ?? `All ${e.plural}`}${cityName ? ` in ${cityName}` : ""}` +
