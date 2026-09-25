@@ -91,7 +91,7 @@ test.describe("verified-only filter", () => {
     expect(res.status(), "revalidate must accept the secret").toBe(200);
   });
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ request }) => {
     if (seededIds.length === 0) return;
     const sql = postgres(DATABASE_URL, { max: 1, onnotice: () => {} });
     try {
@@ -99,6 +99,15 @@ test.describe("verified-only filter", () => {
     } finally {
       await sql.end({ timeout: 5 });
     }
+    // Same reason as beforeAll's revalidate, in reverse: without this the
+    // cached CITY page keeps linking up to PER_PAGE + 1 cards to listings
+    // that no longer exist, for up to `revalidate` seconds, for whichever
+    // spec (in the same run or a later one, fullyParallel) happens to hit it
+    // next — matches e2e/featured.spec.ts's own cleanup.
+    await request.post("/api/internal/revalidate", {
+      headers: { authorization: `Bearer ${REVALIDATE_SECRET}` },
+      data: { paths: [CITY] },
+    });
   });
 
   test("toggles to a filtered grid, keeps the param through pagination, and is noindexed with a canonical to the unfiltered page", async ({
@@ -173,5 +182,10 @@ test.describe("verified-only filter", () => {
     const res = await page.goto(offHref!);
     expect(res?.status()).toBe(200);
     expect(await page.locator('[data-testid="listing-grid"] > li').count()).toBeGreaterThan(0);
+    // Indexable: no robots meta at all — same assertion e2e/areas.spec.ts
+    // uses for a page that isn't noindexed. `verified` is what forces the
+    // `noindex` this same city carries at `?verified=1` (previous test); off
+    // it must be gone, not merely absent of the word "noindex".
+    await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
   });
 });
