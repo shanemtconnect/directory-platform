@@ -197,10 +197,8 @@ async function slugConflict(
     .limit(1);
   if (category) return { problem: `"${slug}" is a category's slug, and a category keeps it in every town.`, existingAreaId: null };
 
-  // areas.slug is unique across the table, both modes.
-  const [other] = await tx.select({ id: areas.id }).from(areas).where(eq(areas.slug, slug)).limit(1);
-  if (other) return { problem: `"${slug}" is already a neighbourhood in another town; give this one a different slug.`, existingAreaId: null };
-
+  // Another town's neighbourhood with the same slug is no clash: `areas` is
+  // unique on (town, slug), and every town may have its own "city-centre".
   return { problem: null, existingAreaId: null };
 }
 
@@ -220,6 +218,8 @@ export async function importNeighbourhoods(
   assertAdmin(viewer);
   const out: ImportOutcome = { created: 0, updated: 0, skipped: [] };
   const cityIds = new Map<string, string | null>();
+  /** `cityId:slug` already written by this upload. */
+  const seen = new Set<string>();
 
   for (const row of rows) {
     if (!cityIds.has(row.citySlug)) {
@@ -231,6 +231,15 @@ export async function importNeighbourhoods(
       out.skipped.push({ line: row.line, message: `There is no town with the slug "${row.citySlug}".` });
       continue;
     }
+
+    // The same town and slug twice in one file: the first row stands. Without
+    // this the second would silently "update" the row the first just wrote.
+    const key = `${cityId}:${row.slug}`;
+    if (seen.has(key)) {
+      out.skipped.push({ line: row.line, message: `"${row.slug}" appears twice for this town in the file; only the first row was used.` });
+      continue;
+    }
+    seen.add(key);
 
     const { problem, existingAreaId } = await slugConflict(tx, cityId, row.slug);
     if (problem !== null) {

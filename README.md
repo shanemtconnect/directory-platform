@@ -628,9 +628,10 @@ town's categories and listings.
    `defaultRadiusKm`. Rows are skipped and reported by line for an unknown
    town, a bad coordinate or radius, a reserved word, a slug a category or
    listing already holds in that town (or any category's national slug — the
-   category would route there later), or a slug another town's neighbourhood
-   uses (`areas.slug` is unique site-wide). A row for a neighbourhood the town
-   already has updates it. One audit row per upload.
+   category would route there later), or the same town and slug given twice
+   in one file (the first row stands). Slugs are unique per town, not site-wide
+   (`areas_city_slug_key`), so every town can have its own `city-centre`. A row
+   for a neighbourhood the town already has updates it. One audit row per upload.
 2. **Assign**: every listing in a town with neighbourhoods gets `area_id` =
    the nearest centroid whose own radius reaches it (ties to the lower slug),
    or null when none does or it has no coordinates. Nightly at 02:41

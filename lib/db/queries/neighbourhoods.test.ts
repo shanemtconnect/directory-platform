@@ -119,15 +119,47 @@ describe("importNeighbourhoods", () => {
     });
   });
 
-  it("refuses a slug another town's neighbourhood already uses (area slugs are unique site-wide)", async () => {
+  it("lets two towns each have a neighbourhood with the same slug", async () => {
     await withTestDb(async (tx) => {
       const admin = await makeViewer(tx);
       const leeds = await makeCity(tx, "Leeds");
       const york = await makeCity(tx, "York", "North Yorkshire");
-      await makeNeighbourhood(tx, leeds, "City Centre");
-      const { rows } = parseNeighbourhoodCsv(`${HEADER}\n${await citySlug(tx, york)},City Centre,city-centre,53.96,-1.08,2\n`, 2);
+      const { rows } = parseNeighbourhoodCsv(
+        `${HEADER}\n${await citySlug(tx, leeds)},City Centre,city-centre,53.80,-1.55,2\n` +
+          `${await citySlug(tx, york)},City Centre,city-centre,53.96,-1.08,2\n`,
+        2,
+      );
+      expect(await importNeighbourhoods(tx, admin, rows, {})).toEqual({ created: 2, updated: 0, skipped: [] });
+      const made = await tx.select({ cityId: areas.cityId }).from(areas).where(eq(areas.slug, "city-centre"));
+      expect(made.map((a) => a.cityId).sort()).toEqual([leeds, york].sort());
+    });
+  });
+
+  it("skips and reports the same town and slug given twice in one file", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeViewer(tx);
+      const leeds = await makeCity(tx, "Leeds");
+      const slug = await citySlug(tx, leeds);
+      const { rows } = parseNeighbourhoodCsv(
+        `${HEADER}\n${slug},City Centre,city-centre,53.80,-1.55,2\n${slug},Centre Again,city-centre,53.81,-1.56,3\n`,
+        2,
+      );
       const out = await importNeighbourhoods(tx, admin, rows, {});
-      expect(out.skipped).toEqual([{ line: 2, message: expect.stringMatching(/another town/i) }]);
+      expect(out).toEqual({
+        created: 1, updated: 0,
+        skipped: [{ line: 3, message: expect.stringMatching(/twice/i) }],
+      });
+      const [area] = await tx.select().from(areas).where(eq(areas.cityId, leeds));
+      // The first row stands; the duplicate changed nothing.
+      expect(area).toMatchObject({ name: "City Centre", radiusKm: 2 });
+    });
+  });
+
+  it("still keeps local-multi-vertical area slugs unique among themselves", async () => {
+    await withTestDb(async (tx) => {
+      const slug = `st-helier-${Date.now()}`;
+      await tx.insert(areas).values({ name: "St Helier", slug });
+      await expect(tx.insert(areas).values({ name: "St Helier again", slug })).rejects.toThrow();
     });
   });
 

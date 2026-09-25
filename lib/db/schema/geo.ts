@@ -101,7 +101,14 @@ export const areas = pgTable("areas", {
   isIndexable: boolean("is_indexable").notNull().default(false),
   listingCount: integer("listing_count").notNull().default(0),
 }, (t) => [
-  uniqueIndex("areas_slug_key").on(t.slug),
+  // Unique per town, so every town can have its own "city-centre". The nil
+  // uuid stands in for a null city_id, which keeps local-multi-vertical areas
+  // (city_id null) unique among themselves exactly as the old site-wide
+  // unique on slug did.
+  uniqueIndex("areas_city_slug_key").on(
+    sql`coalesce(${t.cityId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+    t.slug,
+  ),
   index("areas_city_published_idx").on(t.cityId, t.isPublished),
 ]);
 
