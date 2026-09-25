@@ -87,10 +87,11 @@ const SERVER_ENV: Record<string, string> = {
   NEXT_PUBLIC_DEMO_MODE: "true",
   /**
    * Lets the add-listing URL import reach its fixture on this server — and
-   * only that page, on this PORT (lib/import/e2e-fixture.ts). The SSRF guard
-   * refuses loopback everywhere else, and a production server never has it.
+   * only that page, on this PORT (lib/import/e2e-fixture.ts). A dedicated
+   * switch, set here and nowhere else: the SSRF guard refuses loopback
+   * everywhere else, and a production server never has it.
    */
-  E2E_DEMO_MODE: "true",
+  E2E_IMPORT_FIXTURE: "1",
   /**
    * Required at boot now that auth is wired (RUNTIME_ENV in config/validate.ts),
    * so the standalone server exits 1 without them. Throwaway values: this suite

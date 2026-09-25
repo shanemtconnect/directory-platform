@@ -112,3 +112,21 @@ describe("importFromUrl", () => {
     expect(fetchPublicHtml.mock.calls[0]![1]!.approve).toBeUndefined();
   });
 });
+
+describe("importFromUrl — logging", () => {
+  it("logs an unexpected failure but not an ordinary fetch refusal", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { SafeFetchError } = await import("@/lib/net/safe-fetch");
+      fetchPublicHtml.mockRejectedValueOnce(new SafeFetchError("HTTP 403", 403, "https://x.example/"));
+      expect(await run({ url: "https://x.example/" })).toEqual({ status: "error", message: REFUSAL });
+      expect(error).not.toHaveBeenCalled();
+
+      fetchPublicHtml.mockRejectedValueOnce(new TypeError("extractor bug"));
+      expect(await run({ url: "https://x.example/" })).toEqual({ status: "error", message: REFUSAL });
+      expect(error).toHaveBeenCalledWith("[import-url] import failed:", expect.any(TypeError));
+    } finally {
+      error.mockRestore();
+    }
+  });
+});

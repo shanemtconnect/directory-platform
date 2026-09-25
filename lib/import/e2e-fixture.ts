@@ -8,9 +8,11 @@ import { resolvePublicUrl, type ApprovedUrl, type Resolver } from "@/lib/net/saf
  * Rather than weaken the guard, this adds ONE allowance beside it, and only
  * while the e2e suite runs:
  *
- *   - `E2E_DEMO_MODE=true` (set only by playwright.config.ts) AND
- *     `NEXT_PUBLIC_DEMO_MODE=true` (which also gates the fixture route) AND
- *     `PORT` set — a production deploy has none of the first;
+ *   - `E2E_IMPORT_FIXTURE=1` — a switch that exists for this and nothing
+ *     else, set only in playwright.config.ts's server env, exact value only —
+ *     AND `NEXT_PUBLIC_DEMO_MODE=true` (which also gates the fixture route)
+ *     AND `PORT` set. A demo or staging box with demo mode on still does not
+ *     get the allowance unless someone sets the dedicated switch by hand;
  *   - plain http to `localhost` or `127.0.0.1`, on this server's own `PORT`,
  *     at exactly `IMPORT_FIXTURE_PATH` (after URL normalisation, so `..`
  *     does not walk out of it);
@@ -21,7 +23,7 @@ import { resolvePublicUrl, type ApprovedUrl, type Resolver } from "@/lib/net/saf
  */
 export const IMPORT_FIXTURE_PATH = "/e2e/import-fixture";
 
-type Env = Partial<Record<"E2E_DEMO_MODE" | "NEXT_PUBLIC_DEMO_MODE" | "PORT", string | undefined>>;
+type Env = Partial<Record<"E2E_IMPORT_FIXTURE" | "NEXT_PUBLIC_DEMO_MODE" | "PORT", string | undefined>>;
 
 export function fixtureRouteEnabled(): boolean {
   return process.env["NEXT_PUBLIC_DEMO_MODE"] === "true";
@@ -29,12 +31,12 @@ export function fixtureRouteEnabled(): boolean {
 
 export function e2eFixtureApproval(
   env: Env = {
-    E2E_DEMO_MODE: process.env["E2E_DEMO_MODE"],
+    E2E_IMPORT_FIXTURE: process.env["E2E_IMPORT_FIXTURE"],
     NEXT_PUBLIC_DEMO_MODE: process.env["NEXT_PUBLIC_DEMO_MODE"],
     PORT: process.env["PORT"],
   },
 ): ((raw: string, resolve: Resolver) => Promise<ApprovedUrl>) | undefined {
-  if (env.E2E_DEMO_MODE !== "true" || env.NEXT_PUBLIC_DEMO_MODE !== "true") return undefined;
+  if (env.E2E_IMPORT_FIXTURE !== "1" || env.NEXT_PUBLIC_DEMO_MODE !== "true") return undefined;
   const port = env.PORT?.trim();
   if (!port) return undefined;
 

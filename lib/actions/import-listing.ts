@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { siteConfig } from "@/config/site.config";
 import { e2eFixtureApproval } from "@/lib/import/e2e-fixture";
 import { extractBusiness, type ImportedBusiness } from "@/lib/import/extract";
-import { fetchPublicHtml } from "@/lib/net/safe-fetch";
+import { fetchPublicHtml, SafeFetchError } from "@/lib/net/safe-fetch";
 import { slugify } from "@/lib/routing/slugify";
 import { siteUrl } from "@/lib/schema/builders";
 import { isHoneypotTripped } from "@/lib/spam/turnstile";
@@ -77,7 +77,11 @@ export async function importFromUrl(
       approve: e2eFixtureApproval(),
     });
     values = extractBusiness(page.html, page.finalUrl);
-  } catch {
+  } catch (e) {
+    // A SafeFetchError is the page's problem (refused, blocked, down, too big)
+    // and ordinary. Anything else is ours — an extractor bug, say — and the
+    // person still gets the refusal, but an operator needs to see it.
+    if (!(e instanceof SafeFetchError)) console.error("[import-url] import failed:", e);
     return { status: "error", message: REFUSAL };
   }
 

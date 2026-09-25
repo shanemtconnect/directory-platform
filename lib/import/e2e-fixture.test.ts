@@ -4,13 +4,19 @@ import { extractBusiness } from "./extract";
 import { SsrfRefusal } from "@/lib/net/safe-fetch";
 
 const PUBLIC = async () => ["93.184.216.34"];
-const E2E = { E2E_DEMO_MODE: "true", NEXT_PUBLIC_DEMO_MODE: "true", PORT: "3255" };
+const E2E = { E2E_IMPORT_FIXTURE: "1", NEXT_PUBLIC_DEMO_MODE: "true", PORT: "3255" };
 
 describe("e2eFixtureApproval", () => {
-  it("is off unless the e2e suite AND demo mode are both on", () => {
+  it("is off unless its own switch AND demo mode are both on", () => {
     expect(e2eFixtureApproval({})).toBeUndefined();
     expect(e2eFixtureApproval({ NEXT_PUBLIC_DEMO_MODE: "true", PORT: "3255" })).toBeUndefined();
-    expect(e2eFixtureApproval({ E2E_DEMO_MODE: "true", PORT: "3255" })).toBeUndefined();
+    expect(e2eFixtureApproval({ E2E_IMPORT_FIXTURE: "1", PORT: "3255" })).toBeUndefined();
+    // Only the exact value: "true", "yes" or a stray space do not unlock it.
+    expect(e2eFixtureApproval({ ...E2E, E2E_IMPORT_FIXTURE: "true" })).toBeUndefined();
+    // The general e2e demo mirror is not the switch.
+    expect(
+      e2eFixtureApproval({ E2E_DEMO_MODE: "true", NEXT_PUBLIC_DEMO_MODE: "true", PORT: "3255" } as never),
+    ).toBeUndefined();
     expect(e2eFixtureApproval({ ...E2E, PORT: undefined })).toBeUndefined();
   });
 

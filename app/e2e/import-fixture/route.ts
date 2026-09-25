@@ -2,9 +2,11 @@ import { fixtureHtml, fixtureRouteEnabled } from "@/lib/import/e2e-fixture";
 
 /**
  * A stand-in "business website" for e2e/import-url.spec.ts to import from.
- * Exists only under NEXT_PUBLIC_DEMO_MODE (a build-time constant, so a
- * production clone serves a 404 here) and is noindexed either way. The import
- * can only reach it while the e2e suite runs — see lib/import/e2e-fixture.ts.
+ * Serves only while NEXT_PUBLIC_DEMO_MODE is the literal "true" — read from
+ * the server's environment on each request (bracket access, as
+ * lib/blog/demo.ts does), so a server without it answers 404 — and is
+ * noindexed either way. The import can reach it only while the e2e suite's
+ * dedicated switch is on — see lib/import/e2e-fixture.ts.
  */
 export const dynamic = "force-dynamic";
 
