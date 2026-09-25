@@ -105,6 +105,7 @@ describe("renderSiteConfig", () => {
     const source = renderSiteConfig(answers({ feature_costGuides: true }));
     expect(source).toContain("costGuides: true");
     expect(source).toContain("jobBoard: false");
+    expect(source).toContain("savedSearches: false");
   });
 });
 

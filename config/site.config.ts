@@ -192,6 +192,7 @@ export const siteConfig = {
     events: false,
     bookings: false,
     multiLocale: false,
+    savedSearches: false,
   },
 
   seo: {

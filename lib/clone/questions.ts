@@ -96,6 +96,7 @@ export const FEATURE_FLAG_DESCRIPTIONS: Record<FeatureFlag, string> = {
   events: "Dated events attached to an entry, with event markup.",
   bookings: "Availability calendar and booking requests handled on site.",
   multiLocale: "Serve more than one locale from the same deployment.",
+  savedSearches: "Signed-in visitors save a search and get a daily or weekly email of new matches. Jobs searches only when jobBoard is on.",
 };
 
 export type SeedSource = "csv" | "template" | "skip";

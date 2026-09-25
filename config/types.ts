@@ -99,6 +99,7 @@ export const FEATURE_FLAGS = [
   "events",
   "bookings",
   "multiLocale",
+  "savedSearches",
 ] as const;
 
 export type FeatureFlag = (typeof FEATURE_FLAGS)[number];
