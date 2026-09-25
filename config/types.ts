@@ -317,7 +317,9 @@ export interface SiteConfig {
    * `floor` (major units of `currency`), halves after `halfPriceAfterDays`,
    * and is deleted after `deleteAfterDays`. Buyers prepay credit in `packs`
    * (ascending, major units) and may report a bad lead within
-   * `refundWindowDays`.
+   * `refundWindowDays`. A SOLD lead's contact details are purged
+   * `retainSoldDays` after the sale (at least `refundWindowDays`); the won
+   * email is the buyer's record.
    */
   readonly leads: {
     readonly floor: number;
@@ -325,5 +327,6 @@ export interface SiteConfig {
     readonly halfPriceAfterDays: number;
     readonly deleteAfterDays: number;
     readonly refundWindowDays: number;
+    readonly retainSoldDays: number;
   };
 }

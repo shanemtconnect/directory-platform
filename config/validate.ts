@@ -375,6 +375,7 @@ export function validateLeads(config: {
     halfPriceAfterDays: number;
     deleteAfterDays: number;
     refundWindowDays: number;
+    retainSoldDays: number;
   };
 }): void {
   const l = config.leads;
@@ -390,10 +391,17 @@ export function validateLeads(config: {
       problems.push(`leads.packs must be ascending; ${p} follows ${l.packs[i - 1]}`);
     }
   }
-  for (const key of ["halfPriceAfterDays", "deleteAfterDays", "refundWindowDays"] as const) {
+  for (const key of ["halfPriceAfterDays", "deleteAfterDays", "refundWindowDays", "retainSoldDays"] as const) {
     if (!Number.isInteger(l[key]) || l[key] < 1) {
       problems.push(`leads.${key} must be a whole number of days, at least 1, got ${String(l[key])}`);
     }
+  }
+  // The buyer's page is where a bad lead is reported; purging the details
+  // before the window closes would leave them nothing to report on.
+  if (l.retainSoldDays < l.refundWindowDays) {
+    problems.push(
+      `leads.retainSoldDays must be at least refundWindowDays (${String(l.refundWindowDays)}), got ${String(l.retainSoldDays)}`,
+    );
   }
   if (problems.length > 0) {
     throw new ConfigError(
