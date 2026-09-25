@@ -94,6 +94,11 @@ function scopeFilter(scope: PillarScope): SQL {
         eq(listings.cityId, scope.cityId),
         eq(listings.primaryCategoryId, scope.categoryId),
       )!;
+    case "city-area":
+      return and(
+        eq(listings.cityId, scope.cityId),
+        eq(listings.areaId, scope.areaId),
+      )!;
     case "vertical":
       return eq(listings.verticalId, scope.verticalId);
     case "vertical-area":

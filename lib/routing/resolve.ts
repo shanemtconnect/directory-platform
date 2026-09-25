@@ -4,6 +4,7 @@ import type { SiteMode } from "@/config/types";
 import type { TestDb } from "@/lib/db/types";
 import { resolveSlug, ROOT_SCOPE } from "./slugs";
 import type { PillarScope } from "./scope";
+import { neighbourhoodsEnabled } from "@/lib/geo/neighbourhoods";
 
 export type RouteResolution =
   | { kind: "pillar"; scope: PillarScope; page: number }
@@ -187,10 +188,20 @@ export function normalisePathSegments(
  */
 export const REVIEWS_SEGMENT = "reviews";
 
+export interface ResolveOptions {
+  /**
+   * Whether an `area` slug under a city is a neighbourhood page (Task 52).
+   * Defaults to the resolved switch — config plus `NEIGHBOURHOODS_ENABLED` —
+   * so the route files need not know; tests pass it explicitly.
+   */
+  neighbourhoods?: boolean;
+}
+
 export async function resolveRoute(
   tx: TestDb,
   rawSegments: string[],
   mode: SiteMode,
+  opts: ResolveOptions = {},
 ): Promise<RouteResolution> {
   // Lowercase form and /page/1 both 301 before a single query runs. Shared
   // with app/categories/[...category] — see normalisePathSegments.
@@ -263,6 +274,19 @@ export async function resolveRoute(
       };
     case "area":
       if (reviews) return (await redirectFor(tx, path)) ?? { kind: "not-found" };
+      if (mode === "niche-national") {
+        // A neighbourhood under a town. With the module off the registry row
+        // may still be there (it was imported while it was on), and the URL
+        // is simply not a page — the same 404 an unknown slug gets.
+        if (!(opts.neighbourhoods ?? neighbourhoodsEnabled())) {
+          return (await redirectFor(tx, path)) ?? { kind: "not-found" };
+        }
+        return {
+          kind: "pillar",
+          page,
+          scope: { type: "city-area", cityId: parentId, areaId: child.entityId },
+        };
+      }
       return {
         kind: "pillar",
         page,

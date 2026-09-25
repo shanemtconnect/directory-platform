@@ -9,6 +9,8 @@
 export type PillarScope =
   | { type: "city"; cityId: string }
   | { type: "city-category"; cityId: string; categoryId: string }
+  /** A neighbourhood under a town (Task 52): /<city>/<area>, niche-national only. */
+  | { type: "city-area"; cityId: string; areaId: string }
   | { type: "vertical"; verticalId: string }
   | { type: "vertical-area"; verticalId: string; areaId: string };
 
@@ -17,6 +19,7 @@ export function scopeParentId(scope: PillarScope): string {
   switch (scope.type) {
     case "city":
     case "city-category":
+    case "city-area":
       return scope.cityId;
     case "vertical":
     case "vertical-area":
