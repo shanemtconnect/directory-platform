@@ -2,7 +2,8 @@ import { and, asc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import { areas, categories, cities, listings, slugs } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
-import { publishedListings } from "@/lib/db/queries/listings";
+import { countListings, publishedListings } from "@/lib/db/queries/listings";
+import { paginatedPaths } from "@/lib/db/queries/paths";
 import { writeAudit } from "@/lib/db/queries/audit";
 import { enqueueJob } from "@/lib/db/queries/jobs";
 import { now } from "@/lib/clock";
@@ -163,6 +164,34 @@ export interface ImportOutcome {
   created: number;
   updated: number;
   skipped: CsvProblem[];
+  /** Town and neighbourhood pages (paginated ones included) of every town the upload touched. */
+  revalidate: string[];
+}
+
+/**
+ * The ISR pages of one town that neighbourhood changes leave stale: the town
+ * pillar and its paginated pages (the "Neighbourhoods" block is on every one
+ * of them), and each neighbourhood's page and paginated pages. Counts are
+ * live and published-only, plus one, the same over-inclusive-by-one rule as
+ * `resolveListingPaths`: a page that is about to appear or disappear is busted
+ * too. Call it before AND after a change that moves listings, and bust both.
+ */
+export async function townNeighbourhoodPaths(tx: TestDb, cityId: string): Promise<string[]> {
+  const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, cityId)).limit(1);
+  if (!city) return [];
+  const townCount = await countListings(tx as never, PUBLIC_VIEWER, { type: "city", cityId });
+  const hoods = await tx
+    .select({ slug: areas.slug, listingCount: publishedCount })
+    .from(areas)
+    .leftJoin(listings, countedListings)
+    .where(eq(areas.cityId, cityId))
+    .groupBy(areas.id);
+  const town = `/${city.slug}`;
+  return [
+    town,
+    ...paginatedPaths(town, townCount + 1),
+    ...hoods.flatMap((h) => [`${town}/${h.slug}`, ...paginatedPaths(`${town}/${h.slug}`, h.listingCount + 1)]),
+  ];
 }
 
 /**
@@ -216,10 +245,11 @@ export async function importNeighbourhoods(
   opts: { ip?: string | null },
 ): Promise<ImportOutcome> {
   assertAdmin(viewer);
-  const out: ImportOutcome = { created: 0, updated: 0, skipped: [] };
+  const out: ImportOutcome = { created: 0, updated: 0, skipped: [], revalidate: [] };
   const cityIds = new Map<string, string | null>();
-  /** `cityId:slug` already written by this upload. */
+  /** `cityId:slug` this upload has already WRITTEN — a refused row is not recorded. */
   const seen = new Set<string>();
+  const touched = new Set<string>();
 
   for (const row of rows) {
     if (!cityIds.has(row.citySlug)) {
@@ -232,14 +262,14 @@ export async function importNeighbourhoods(
       continue;
     }
 
-    // The same town and slug twice in one file: the first row stands. Without
-    // this the second would silently "update" the row the first just wrote.
+    // The same town and slug twice in one file: the first row that was written
+    // stands. Without this the second would silently "update" it. A first copy
+    // that was refused is not "written", so a second copy gets the real reason.
     const key = `${cityId}:${row.slug}`;
     if (seen.has(key)) {
       out.skipped.push({ line: row.line, message: `"${row.slug}" appears twice for this town in the file; only the first row was used.` });
       continue;
     }
-    seen.add(key);
 
     const { problem, existingAreaId } = await slugConflict(tx, cityId, row.slug);
     if (problem !== null) {
@@ -251,6 +281,8 @@ export async function importNeighbourhoods(
     if (existingAreaId !== null) {
       await tx.update(areas).set({ ...values, updatedAt: now() }).where(eq(areas.id, existingAreaId));
       out.updated++;
+      seen.add(key);
+      touched.add(cityId);
       continue;
     }
 
@@ -271,7 +303,10 @@ export async function importNeighbourhoods(
       continue;
     }
     out.created++;
+    seen.add(key);
+    touched.add(cityId);
   }
+  for (const cityId of touched) out.revalidate.push(...(await townNeighbourhoodPaths(tx, cityId)));
 
   await writeAudit(tx, viewer, {
     action: "neighbourhoods.imported",
@@ -337,9 +372,14 @@ export interface AssignOutcome {
   cities: number;
   /** Listings whose `area_id` changed. */
   changed: number;
-  /** The town and neighbourhood pages of every town where something moved. */
+  /** The town and neighbourhood pages (paginated too) of every town where something moved. */
   revalidate: string[];
+  /** Slugs of towns whose run failed and was rolled back; the others still committed. */
+  failed: string[];
 }
+
+/** Ids per UPDATE: well under Postgres's 65,535 bind parameters, and a sane statement size. */
+export const ASSIGN_CHUNK_SIZE = 5000;
 
 /**
  * Sets every listing's `area_id` in each town with neighbourhoods to the
@@ -351,69 +391,97 @@ export interface AssignOutcome {
  * approved tomorrow is already in the right neighbourhood; the counts are
  * published-only, because that is what the page shows. Idempotent: a second
  * run changes nothing and asks for nothing to be revalidated.
+ *
+ * Each town runs in its own savepoint: one town that fails is rolled back and
+ * named in `failed`, and every other town's moves still commit. Moves are
+ * written `ASSIGN_CHUNK_SIZE` ids at a time.
  */
 export async function assignNeighbourhoods(
   tx: TestDb,
   viewer: Viewer,
-  opts: { cityId?: string } = {},
+  opts: { cityId?: string; chunkSize?: number } = {},
 ): Promise<AssignOutcome> {
   assertAdmin(viewer);
+  const chunkSize = Math.max(1, Math.min(opts.chunkSize ?? ASSIGN_CHUNK_SIZE, ASSIGN_CHUNK_SIZE));
   const towns = await tx
     .selectDistinct({ cityId: cities.id, citySlug: cities.slug })
     .from(areas)
     .innerJoin(cities, eq(cities.id, areas.cityId))
     .where(opts.cityId === undefined ? isNotNull(areas.cityId) : eq(areas.cityId, opts.cityId));
 
-  const out: AssignOutcome = { cities: towns.length, changed: 0, revalidate: [] };
-  const minListings = siteConfig.geo.neighbourhoods.minListings;
+  const out: AssignOutcome = { cities: towns.length, changed: 0, revalidate: [], failed: [] };
 
   for (const town of towns) {
-    const centroids = await tx
-      .select({ id: areas.id, slug: areas.slug, lat: areas.lat, lng: areas.lng, radiusKm: areas.radiusKm })
-      .from(areas)
-      .where(eq(areas.cityId, town.cityId));
-    const rows = await tx
-      .select({ id: listings.id, lat: listings.lat, lng: listings.lng, areaId: listings.areaId })
-      .from(listings)
-      .where(eq(listings.cityId, town.cityId));
-
-    const moves = new Map<string | null, string[]>();
-    for (const l of rows) {
-      const target = l.lat === null || l.lng === null
-        ? null
-        : nearestNeighbourhood({ lat: l.lat, lng: l.lng }, centroids);
-      if (target === l.areaId) continue;
-      const ids = moves.get(target) ?? [];
-      ids.push(l.id);
-      moves.set(target, ids);
-    }
-
-    let changedHere = 0;
-    for (const [target, ids] of moves) {
-      await tx.update(listings).set({ areaId: target }).where(inArray(listings.id, ids));
-      changedHere += ids.length;
-    }
-    out.changed += changedHere;
-
-    for (const c of centroids) {
-      const [{ n } = { n: 0 }] = await tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(listings)
-        .where(and(eq(listings.cityId, town.cityId), eq(listings.areaId, c.id), PUBLISHED));
-      const decided = decideNeighbourhoodIndexability(n, minListings);
-      await tx
-        .update(areas)
-        .set({ listingCount: decided.listingCount, isIndexable: decided.isIndexable })
-        .where(and(
-          eq(areas.id, c.id),
-          or(ne(areas.listingCount, decided.listingCount), ne(areas.isIndexable, decided.isIndexable)),
-        ));
-    }
-
-    if (changedHere > 0) {
-      out.revalidate.push(`/${town.citySlug}`, ...centroids.map((c) => `/${town.citySlug}/${c.slug}`));
+    try {
+      const result = await tx.transaction(async (sp) =>
+        assignTown(sp as unknown as TestDb, town.cityId, chunkSize),
+      );
+      out.changed += result.changed;
+      out.revalidate.push(...result.revalidate);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[neighbourhoods] assignment for ${town.citySlug} failed and was rolled back: ${message.slice(0, 200)}`);
+      out.failed.push(town.citySlug);
     }
   }
+  out.revalidate = [...new Set(out.revalidate)];
   return out;
 }
 
+/** One town, on the savepoint `assignNeighbourhoods` opened for it. */
+async function assignTown(
+  tx: TestDb,
+  cityId: string,
+  chunkSize: number,
+): Promise<{ changed: number; revalidate: string[] }> {
+  const minListings = siteConfig.geo.neighbourhoods.minListings;
+  // Before the moves: a neighbourhood page that shrinks loses its last page,
+  // and that cached page is exactly the one that has to go.
+  const before = await townNeighbourhoodPaths(tx, cityId);
+
+  const centroids = await tx
+    .select({ id: areas.id, slug: areas.slug, lat: areas.lat, lng: areas.lng, radiusKm: areas.radiusKm })
+    .from(areas)
+    .where(eq(areas.cityId, cityId));
+  const rows = await tx
+    .select({ id: listings.id, lat: listings.lat, lng: listings.lng, areaId: listings.areaId })
+    .from(listings)
+    .where(eq(listings.cityId, cityId));
+
+  const moves = new Map<string | null, string[]>();
+  for (const l of rows) {
+    const target = l.lat === null || l.lng === null
+      ? null
+      : nearestNeighbourhood({ lat: l.lat, lng: l.lng }, centroids);
+    if (target === l.areaId) continue;
+    const ids = moves.get(target) ?? [];
+    ids.push(l.id);
+    moves.set(target, ids);
+  }
+
+  let changed = 0;
+  for (const [target, ids] of moves) {
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      await tx.update(listings).set({ areaId: target }).where(inArray(listings.id, ids.slice(i, i + chunkSize)));
+    }
+    changed += ids.length;
+  }
+
+  for (const c of centroids) {
+    const [{ n } = { n: 0 }] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(listings)
+      .where(and(eq(listings.cityId, cityId), eq(listings.areaId, c.id), PUBLISHED));
+    const decided = decideNeighbourhoodIndexability(n, minListings);
+    await tx
+      .update(areas)
+      .set({ listingCount: decided.listingCount, isIndexable: decided.isIndexable })
+      .where(and(
+        eq(areas.id, c.id),
+        or(ne(areas.listingCount, decided.listingCount), ne(areas.isIndexable, decided.isIndexable)),
+      ));
+  }
+
+  if (changed === 0) return { changed, revalidate: [] };
+  return { changed, revalidate: [...before, ...(await townNeighbourhoodPaths(tx, cityId))] };
+}

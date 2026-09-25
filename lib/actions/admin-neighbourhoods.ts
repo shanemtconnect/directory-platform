@@ -11,6 +11,7 @@ import {
   importNeighbourhoods,
   setNeighbourhoodPublished,
 } from "@/lib/db/queries/neighbourhoods";
+import { revalidateListingPaths } from "@/lib/revalidate/listing";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -69,6 +70,9 @@ export async function importNeighbourhoodsAction(
     importNeighbourhoods(tx as unknown as TestDb, viewer, parsed.rows, { ip }),
   );
   revalidatePath(ADMIN_PATH);
+  // Committed now: the town pages and neighbourhood pages the upload touched
+  // (a renamed neighbourhood's H1, breadcrumb and town-list entry).
+  revalidateListingPaths(outcome.revalidate);
 
   const problems = [...parsed.errors, ...outcome.skipped].sort((a, b) => a.line - b.line);
   return {

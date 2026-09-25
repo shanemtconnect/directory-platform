@@ -321,6 +321,15 @@ export function validateStatsRetention(config: {
 }
 
 /**
+ * The largest radius a neighbourhood may have (Task 52). A neighbourhood is
+ * part of a town; 25 km is already most of a large one, and a mistyped 200
+ * would otherwise swallow every listing in it. Here rather than in
+ * lib/geo/neighbourhoods.ts because next.config.ts loads this file, and it
+ * only takes relative imports; the CSV reader re-exports it.
+ */
+export const MAX_NEIGHBOURHOOD_RADIUS_KM = 25;
+
+/**
  * `geo.neighbourhoods` (Task 52). Neighbourhoods hang off towns, which only a
  * niche-national site has — a local-multi-vertical site's `areas` rows are its
  * own top-level places and must keep `city_id` null. A threshold of zero would
@@ -338,8 +347,10 @@ export function validateNeighbourhoods(config: {
   if (!Number.isInteger(n.minListings) || n.minListings < 1) {
     problems.push(`geo.neighbourhoods.minListings must be a whole number of at least 1, got ${String(n.minListings)}`);
   }
-  if (!Number.isFinite(n.defaultRadiusKm) || n.defaultRadiusKm <= 0) {
-    problems.push(`geo.neighbourhoods.defaultRadiusKm must be a positive distance in km, got ${String(n.defaultRadiusKm)}`);
+  if (!Number.isFinite(n.defaultRadiusKm) || n.defaultRadiusKm <= 0 || n.defaultRadiusKm > MAX_NEIGHBOURHOOD_RADIUS_KM) {
+    problems.push(
+      `geo.neighbourhoods.defaultRadiusKm must be a positive distance of at most ${MAX_NEIGHBOURHOOD_RADIUS_KM} km, got ${String(n.defaultRadiusKm)}`,
+    );
   }
   if (problems.length > 0) {
     throw new ConfigError(

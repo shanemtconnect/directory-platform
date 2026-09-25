@@ -403,7 +403,7 @@ describe("validateNeighbourhoods (Task 52)", () => {
   });
 
   it("refuses a default radius that is not a positive, finite distance", () => {
-    for (const defaultRadiusKm of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const defaultRadiusKm of [0, -2, 26, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => validateNeighbourhoods({ siteMode: "niche-national", geo: geo({ defaultRadiusKm }) }))
         .toThrow(ConfigError);
     }

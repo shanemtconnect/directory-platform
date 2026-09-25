@@ -1,6 +1,7 @@
 import { siteConfig } from "@/config/site.config";
 import type { SiteMode } from "@/config/types";
 import { isReserved, slugify } from "@/lib/routing/slugify";
+import { MAX_NEIGHBOURHOOD_RADIUS_KM } from "@/config/validate";
 
 /**
  * Neighbourhoods under towns (Task 52) — the pure half: the switch, the
@@ -115,6 +116,9 @@ export interface NeighbourhoodCsvRow {
 
 export interface CsvProblem { line: number; message: string }
 
+/** The largest radius a neighbourhood may have; see config/validate.ts. */
+export const MAX_RADIUS_KM = MAX_NEIGHBOURHOOD_RADIUS_KM;
+
 /** Most rows one upload may carry — a town has tens of neighbourhoods, not thousands. */
 export const MAX_NEIGHBOURHOOD_ROWS = 2000;
 
@@ -176,7 +180,7 @@ export function parseNeighbourhoodCsv(
   text: string,
   defaultRadiusKm: number = siteConfig.geo.neighbourhoods.defaultRadiusKm,
 ): { rows: NeighbourhoodCsvRow[]; errors: CsvProblem[] } {
-  const records = csvRecords(text.replace(/^﻿/, ""));
+  const records = csvRecords(text.replace(/^\uFEFF/, ""));
   const [head, ...body] = records;
   const expected = NEIGHBOURHOOD_CSV_COLUMNS.join(",");
   const got = head?.cells.map((c) => c.trim().toLowerCase()).join(",");
@@ -208,6 +212,7 @@ export function parseNeighbourhoodCsv(
     if (lngN === null || lngN < -180 || lngN > 180) { fail(`Longitude "${lng}" is not a number between -180 and 180.`); continue; }
     const radiusN = radius === "" ? defaultRadiusKm : number(radius);
     if (radiusN === null || radiusN <= 0) { fail(`Radius "${radius}" is not a positive number of kilometres.`); continue; }
+    if (radiusN > MAX_RADIUS_KM) { fail(`Radius ${radiusN} km is more than the ${MAX_RADIUS_KM} km a neighbourhood may cover.`); continue; }
 
     rows.push({ line, citySlug: citySlug.toLowerCase(), name, slug: finalSlug, lat: latN, lng: lngN, radiusKm: radiusN });
   }

@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.resetModules();
   process.env.NEIGHBOURHOODS_ENABLED = "true";
   requireAdmin.mockReset().mockResolvedValue({ role: "admin", userId: "user_admin" });
-  importNeighbourhoods.mockReset().mockResolvedValue({ created: 1, updated: 0, skipped: [] });
+  importNeighbourhoods.mockReset().mockResolvedValue({ created: 1, updated: 0, skipped: [], revalidate: [] });
   setNeighbourhoodPublished.mockReset().mockResolvedValue({ ok: true, citySlug: "leeds", slug: "headingley" });
   enqueueNeighbourhoodAssign.mockReset().mockResolvedValue("job-1");
   revalidatePath.mockReset();
@@ -86,7 +86,10 @@ describe("importNeighbourhoodsAction", () => {
   });
 
   it("imports the good rows from an uploaded file and reports the bad ones by line", async () => {
-    importNeighbourhoods.mockResolvedValue({ created: 1, updated: 0, skipped: [{ line: 4, message: "taken" }] });
+    importNeighbourhoods.mockResolvedValue({
+      created: 1, updated: 0, skipped: [{ line: 4, message: "taken" }],
+      revalidate: ["/leeds", "/leeds/headingley", "/leeds/headingley/page/2"],
+    });
     const { importNeighbourhoodsAction } = await import("./admin-neighbourhoods");
     const file = new File([CSV], "n.csv", { type: "text/csv" });
     const out = await importNeighbourhoodsAction(IDLE, form({ file }));
@@ -99,6 +102,10 @@ describe("importNeighbourhoodsAction", () => {
     expect(out.message).toMatch(/1 created/);
     expect(out.problems?.map((p) => p.line)).toEqual([3, 4]);
     expect(revalidatePath).toHaveBeenCalledWith("/admin/neighbourhoods");
+    // The public pages the upload changed: the town list, the H1 and breadcrumb.
+    for (const p of ["/leeds", "/leeds/headingley", "/leeds/headingley/page/2"]) {
+      expect(revalidatePath).toHaveBeenCalledWith(p);
+    }
   });
 });
 

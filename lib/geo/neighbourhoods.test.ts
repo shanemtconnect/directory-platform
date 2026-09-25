@@ -6,6 +6,7 @@ import {
   decideNeighbourhoodIndexability,
   parseNeighbourhoodCsv,
   NEIGHBOURHOOD_CSV_COLUMNS,
+  MAX_RADIUS_KM,
 } from "./neighbourhoods";
 
 /** Headingley-ish and Leeds city centre: about 3 km apart. */
@@ -150,6 +151,19 @@ describe("parseNeighbourhoodCsv", () => {
     const out = parseNeighbourhoodCsv("city,name\nleeds,Headingley\n", 2);
     expect(out.rows).toEqual([]);
     expect(out.errors).toEqual([{ line: 1, message: expect.stringContaining(header) }]);
+  });
+
+  it("caps the radius at 25 km — a typo must not swallow the whole town", () => {
+    expect(MAX_RADIUS_KM).toBe(25);
+    const out = parseNeighbourhoodCsv(`${header}\nleeds,Edge,edge,53.8,-1.5,25\nleeds,Huge,huge,53.8,-1.5,200\n`, 2);
+    expect(out.rows.map((r) => r.slug)).toEqual(["edge"]);
+    expect(out.errors).toEqual([{ line: 3, message: expect.stringMatching(/25/) }]);
+  });
+
+  it("reads a file saved with a UTF-8 byte-order mark", () => {
+    const out = parseNeighbourhoodCsv(`\uFEFF${header}\nleeds,A,a,53.8,-1.5,2\n`, 2);
+    expect(out.errors).toEqual([]);
+    expect(out.rows).toHaveLength(1);
   });
 
   it("ignores blank lines", () => {

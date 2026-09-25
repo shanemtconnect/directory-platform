@@ -18,8 +18,19 @@ import type { TestDb } from "@/lib/db/types";
  * if the module is turned back on.
  */
 
-/** 02:41 nightly, off the hour and clear of the 03:00–04:00 purges. */
-export const NEIGHBOURHOODS_CRON = "41 2 * * *";
+/**
+ * The advisory lock both schedules take (worker/index.ts), so the nightly run
+ * and the queue drain can never assign at the same moment.
+ */
+export const NEIGHBOURHOODS_LOCK = "neighbourhoods.assign";
+
+/**
+ * 02:41:30 nightly, off the hour and clear of the 03:00–04:00 purges. The
+ * seconds field keeps it off the every-minute queue drain, which fires at :00
+ * and holds the shared lock for milliseconds when the queue is empty: a
+ * nightly run that found the lock held would skip the whole day.
+ */
+export const NEIGHBOURHOODS_CRON = "30 41 2 * * *";
 
 /** Queued "assign now" presses settled per tick. They collapse into one run. */
 const BATCH = 20;
@@ -31,7 +42,10 @@ export async function runNeighbourhoodAssign(
   if (!enabled) return { revalidate: [] };
   const out = await assignNeighbourhoods(db as unknown as TestDb, ADMIN_VIEWER);
   if (out.cities > 0) {
-    console.log(`[worker] neighbourhoods.assign: ${out.cities} town(s), ${out.changed} listing(s) moved`);
+    console.log(
+      `[worker] neighbourhoods.assign: ${out.cities} town(s), ${out.changed} listing(s) moved` +
+        (out.failed.length > 0 ? `, FAILED and rolled back: ${out.failed.join(", ")}` : ""),
+    );
   }
   return { revalidate: out.revalidate };
 }

@@ -9,7 +9,9 @@ import { areas, auditLog, cities, jobQueue, listings, slugs } from "@/lib/db/sch
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { siteConfig } from "@/config/site.config";
 import { parseNeighbourhoodCsv, NEIGHBOURHOOD_CSV_COLUMNS } from "@/lib/geo/neighbourhoods";
+import { PER_PAGE } from "./listings";
 import {
+  ASSIGN_CHUNK_SIZE,
   adminNeighbourhoods,
   assignNeighbourhoods,
   cityNeighbourhoods,
@@ -49,7 +51,7 @@ describe("importNeighbourhoods", () => {
       const { rows } = parseNeighbourhoodCsv(`${HEADER}\n${slug},Headingley,headingley,53.819,-1.58,1.5\n`, 2);
 
       const out = await importNeighbourhoods(tx, admin, rows, { ip: "203.0.113.9" });
-      expect(out).toEqual({ created: 1, updated: 0, skipped: [] });
+      expect(out).toMatchObject({ created: 1, updated: 0, skipped: [] });
 
       const [area] = await tx.select().from(areas).where(eq(areas.cityId, cityId));
       expect(area).toMatchObject({ name: "Headingley", slug: "headingley", lat: 53.819, lng: -1.58, radiusKm: 1.5, isPublished: true });
@@ -58,6 +60,17 @@ describe("importNeighbourhoods", () => {
 
       const [audit] = await tx.select().from(auditLog).where(eq(auditLog.action, "neighbourhoods.imported"));
       expect(audit).toMatchObject({ ip: "203.0.113.9", meta: { created: 1, updated: 0, skipped: 0 } });
+    });
+  });
+
+  it("hands back the town page and the neighbourhood's page to revalidate", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeViewer(tx);
+      const cityId = await makeCity(tx);
+      const slug = await citySlug(tx, cityId);
+      const { rows } = parseNeighbourhoodCsv(`${HEADER}\n${slug},Headingley,headingley,53.8,-1.5,2\n`, 2);
+      const out = await importNeighbourhoods(tx, admin, rows, {});
+      expect(out.revalidate).toEqual(expect.arrayContaining([`/${slug}`, `/${slug}/headingley`]));
     });
   });
 
@@ -113,7 +126,7 @@ describe("importNeighbourhoods", () => {
       const areaId = await makeNeighbourhood(tx, cityId, "Headingley");
       const { rows } = parseNeighbourhoodCsv(`${HEADER}\n${await citySlug(tx, cityId)},Headingley Village,headingley,53.9,-1.6,3\n`, 2);
       const out = await importNeighbourhoods(tx, admin, rows, {});
-      expect(out).toEqual({ created: 0, updated: 1, skipped: [] });
+      expect(out).toMatchObject({ created: 0, updated: 1, skipped: [] });
       const [area] = await tx.select().from(areas).where(eq(areas.id, areaId));
       expect(area).toMatchObject({ name: "Headingley Village", lat: 53.9, lng: -1.6, radiusKm: 3 });
     });
@@ -129,7 +142,7 @@ describe("importNeighbourhoods", () => {
           `${await citySlug(tx, york)},City Centre,city-centre,53.96,-1.08,2\n`,
         2,
       );
-      expect(await importNeighbourhoods(tx, admin, rows, {})).toEqual({ created: 2, updated: 0, skipped: [] });
+      expect(await importNeighbourhoods(tx, admin, rows, {})).toMatchObject({ created: 2, updated: 0, skipped: [] });
       const made = await tx.select({ cityId: areas.cityId }).from(areas).where(eq(areas.slug, "city-centre"));
       expect(made.map((a) => a.cityId).sort()).toEqual([leeds, york].sort());
     });
@@ -145,13 +158,27 @@ describe("importNeighbourhoods", () => {
         2,
       );
       const out = await importNeighbourhoods(tx, admin, rows, {});
-      expect(out).toEqual({
+      expect(out).toMatchObject({
         created: 1, updated: 0,
         skipped: [{ line: 3, message: expect.stringMatching(/twice/i) }],
       });
       const [area] = await tx.select().from(areas).where(eq(areas.cityId, leeds));
       // The first row stands; the duplicate changed nothing.
       expect(area).toMatchObject({ name: "City Centre", radiusKm: 2 });
+    });
+  });
+
+  it("gives each copy of a refused row the real reason, not \"twice\"", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeViewer(tx);
+      const ctx = await makeScaffold(tx); // routes "Barn Venues" in the town
+      const slug = await citySlug(tx, ctx.cityId);
+      const { rows } = parseNeighbourhoodCsv(
+        `${HEADER}\n${slug},Barn Venues,barn-venues,53.8,-1.5,2\n${slug},Barn Venues,barn-venues,53.8,-1.5,2\n`, 2,
+      );
+      const out = await importNeighbourhoods(tx, admin, rows, {});
+      expect(out.skipped.map((s) => s.line)).toEqual([2, 3]);
+      for (const s of out.skipped) expect(s.message).toMatch(/category/);
     });
   });
 
@@ -194,22 +221,28 @@ describe("assignNeighbourhoods", () => {
     });
   });
 
-  it("gives a listing in two overlapping radii to the nearer centroid, and a tie to the lower slug", async () => {
+  it("gives a listing in two overlapping radii to the nearer centroid", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const south = await makeNeighbourhood(tx, ctx.cityId, "Beta", { ...CENTRE, radiusKm: 3 });
-      const north = await makeNeighbourhood(tx, ctx.cityId, "Alpha", { lat: kmNorth(CENTRE.lat, 2), lng: CENTRE.lng, radiusKm: 3 });
+      await makeNeighbourhood(tx, ctx.cityId, "Alpha", { lat: kmNorth(CENTRE.lat, 2), lng: CENTRE.lng, radiusKm: 3 });
       const nearSouth = await makeListing(tx, ctx, { name: "Near south", lat: kmNorth(CENTRE.lat, 0.5), lng: CENTRE.lng });
-      const midway = await makeListing(tx, ctx, { name: "Midway", lat: kmNorth(CENTRE.lat, 1), lng: CENTRE.lng });
-
       await assignNeighbourhoods(tx, WORKER);
       expect(await areaOf(tx, nearSouth)).toBe(south);
-      // 1 km from each by construction; floating point may make it a hair
-      // either way, but whichever it is, it is the same on every run.
-      const first = await areaOf(tx, midway);
-      expect([north, south]).toContain(first);
+    });
+  });
+
+  it("gives an exact tie to the lower slug, on every run", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      // Mirror images east and west of the listing: the same distance exactly.
+      await makeNeighbourhood(tx, ctx.cityId, "Zeta", { lat: CENTRE.lat, lng: CENTRE.lng + 0.01, radiusKm: 5 });
+      const alpha = await makeNeighbourhood(tx, ctx.cityId, "Alpha", { lat: CENTRE.lat, lng: CENTRE.lng - 0.01, radiusKm: 5 });
+      const midway = await makeListing(tx, ctx, { name: "Midway", ...CENTRE });
       await assignNeighbourhoods(tx, WORKER);
-      expect(await areaOf(tx, midway)).toBe(first);
+      expect(await areaOf(tx, midway)).toBe(alpha);
+      await assignNeighbourhoods(tx, WORKER);
+      expect(await areaOf(tx, midway)).toBe(alpha);
     });
   });
 
@@ -228,6 +261,32 @@ describe("assignNeighbourhoods", () => {
       expect(area!.listingCount).toBe(1);
       expect(await areaOf(tx, other)).toBeNull();
       expect(out.cities).toBe(1);
+    });
+  });
+
+  it("updates in chunks of at most 5,000 ids, and the answer does not depend on the chunk size", async () => {
+    expect(ASSIGN_CHUNK_SIZE).toBeLessThanOrEqual(5000);
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const areaId = await makeNeighbourhood(tx, ctx.cityId, "Headingley", { ...CENTRE, radiusKm: 2 });
+      const ids: string[] = [];
+      for (let i = 0; i < 3; i++) ids.push(await makeListing(tx, ctx, { name: `L ${i}`, ...CENTRE }));
+      const out = await assignNeighbourhoods(tx, WORKER, { chunkSize: 1 });
+      expect(out.changed).toBe(3);
+      for (const id of ids) expect(await areaOf(tx, id)).toBe(areaId);
+    });
+  });
+
+  it("revalidates a neighbourhood's paginated pages too", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeNeighbourhood(tx, ctx.cityId, "Headingley", { ...CENTRE, radiusKm: 2 });
+      for (let i = 0; i < PER_PAGE + 1; i++) await makeListing(tx, ctx, { name: `L ${i}`, ...CENTRE });
+      const out = await assignNeighbourhoods(tx, WORKER);
+      const slug = await citySlug(tx, ctx.cityId);
+      expect(out.revalidate).toEqual(expect.arrayContaining([
+        `/${slug}`, `/${slug}/page/2`, `/${slug}/headingley`, `/${slug}/headingley/page/2`,
+      ]));
     });
   });
 

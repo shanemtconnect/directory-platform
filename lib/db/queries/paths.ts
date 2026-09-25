@@ -37,12 +37,17 @@ import { regionPaths } from "./areas";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `/city/page/2` … `/city/page/N` for a city with `published` listings. Never page 1: that is `/city`. */
-export function paginatedCityPaths(citySlug: string, published: number): string[] {
+/** `<base>/page/2` … `<base>/page/N` for a pillar with `published` listings. Never page 1: that is `<base>`. */
+export function paginatedPaths(basePath: string, published: number): string[] {
   const pages = Math.ceil(published / PER_PAGE);
   const out: string[] = [];
-  for (let n = 2; n <= pages; n++) out.push(`/${citySlug}/page/${n}`);
+  for (let n = 2; n <= pages; n++) out.push(`${basePath}/page/${n}`);
   return out;
+}
+
+/** `/city/page/2` … `/city/page/N` for a city with `published` listings. Never page 1: that is `/city`. */
+export function paginatedCityPaths(citySlug: string, published: number): string[] {
+  return paginatedPaths(`/${citySlug}`, published);
 }
 
 export async function listingPaths(

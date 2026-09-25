@@ -6,7 +6,9 @@ import { makeViewer } from "@/test/admin-fixtures";
 import { makeListing, makeNeighbourhood, makeScaffold } from "@/test/factories";
 import { enqueueNeighbourhoodAssign } from "@/lib/db/queries/neighbourhoods";
 import type { Db } from "@/lib/db/client";
-import { drainNeighbourhoodQueue, runNeighbourhoodAssign, NEIGHBOURHOODS_CRON } from "./neighbourhoods";
+import {
+  drainNeighbourhoodQueue, runNeighbourhoodAssign, NEIGHBOURHOODS_CRON, NEIGHBOURHOODS_LOCK,
+} from "./neighbourhoods";
 
 const CENTRE = { lat: 53.8, lng: -1.55 };
 
@@ -23,9 +25,15 @@ async function areaOf(tx: TestDb, id: string) {
 }
 
 describe("neighbourhoods.assign (worker)", () => {
-  it("runs nightly", () => {
-    expect(NEIGHBOURHOODS_CRON.split(" ")).toHaveLength(5);
-    expect(NEIGHBOURHOODS_CRON.split(" ").slice(2)).toEqual(["*", "*", "*"]);
+  it("runs nightly, half a minute off the queue drain it shares a lock with", () => {
+    // Six fields, seconds first. The drain fires at :00 every minute and an
+    // empty drain is over in milliseconds; at :30 the nightly run never finds
+    // the shared lock held by it and skips a whole day.
+    const [sec, , , ...rest] = NEIGHBOURHOODS_CRON.split(" ");
+    expect(NEIGHBOURHOODS_CRON.split(" ")).toHaveLength(6);
+    expect(sec).toBe("30");
+    expect(rest).toEqual(["*", "*", "*"]);
+    expect(NEIGHBOURHOODS_LOCK).toBe("neighbourhoods.assign");
   });
 
   it("is a no-op with the module off", async () => {
