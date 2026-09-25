@@ -43,6 +43,8 @@ export async function makeLead(
 ): Promise<string> {
   const id = randomUUID();
   const email = `lead-${id}@example.co.uk`;
+  // 01632 97NNNN: outside Ofcom's drama block, so the rules accept it (see e2e leadPhone()).
+  const local = `97${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`;
   await tx.insert(leads).values({
     id,
     source: "capture",
@@ -52,10 +54,10 @@ export async function makeLead(
     brief: "About eighty guests in June.",
     name: "Sam Requester",
     email,
-    phone: "01632 970001",
-    phoneNormalised: `+441632${String(Math.floor(Math.random() * 1e6)).padStart(6, "0")}`,
+    phone: `01632 ${local}`,
+    phoneNormalised: `+441632${local}`,
     emailNormalised: email,
-    message: "About eighty guests in June. Call me on 01632 970001.",
+    message: `About eighty guests in June. Call me on 01632 ${local}.`,
     status: "open",
     priceCents: 2500,
     halfPriceAt: new Date(at.getTime() + 7 * DAY),

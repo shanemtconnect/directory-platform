@@ -1,11 +1,12 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { cities, leadStandingOrders, listings } from "@/lib/db/schema";
 import { now } from "@/lib/clock";
 import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 import { regionSlug } from "@/lib/routing/slugs";
 import { InsufficientCredit, creditBalance, debitForPurchase } from "@/lib/db/queries/credits";
-import { lockOpenLead, recordSale } from "@/lib/db/queries/lead-market";
+import { lockOpenLead, openLeadPlaces, recordSale } from "@/lib/db/queries/lead-market";
+import { orderCovers } from "./market";
 import { writeAudit } from "@/lib/db/queries/audit";
 import { notifyLeadTopup, notifyLeadWon } from "@/lib/email/notify";
 
@@ -115,4 +116,40 @@ async function pauseForCredit(tx: TestDb, viewer: Viewer, standingOrderId: strin
     action: "lead.standing_order_paused", entityType: "lead_standing_order", entityId: standingOrderId, meta: { reason: "no_credit" },
   });
   await notifyLeadTopup(tx, viewer, standingOrderId);
+}
+
+/**
+ * `leads.retry_allocate` (hourly): a lead that found no buyer when it was
+ * made is offered again once a standing order that covers it appears — one
+ * created, edited or resumed since `since` (its `updated_at`). Each lead is
+ * allocated in its own savepoint, so one failure costs that lead a retry,
+ * not the run. The allocation itself still ranks every candidate, so the
+ * new order is not favoured over an older, better-paying one.
+ */
+export async function retryAllocation(
+  tx: TestDb,
+  viewer: Viewer,
+  opts: { since: Date; at?: Date },
+): Promise<{ checked: number; sold: number }> {
+  const at = opts.at ?? now();
+  const fresh = await tx
+    .select({ territories: leadStandingOrders.territories, categoryIds: leadStandingOrders.categoryIds })
+    .from(leadStandingOrders)
+    .where(and(eq(leadStandingOrders.status, "active"), gte(leadStandingOrders.updatedAt, opts.since)));
+  if (fresh.length === 0) return { checked: 0, sold: 0 };
+  const orders = fresh.map((o) => ({ territories: o.territories, categoryIds: o.categoryIds ?? null }));
+
+  let checked = 0;
+  let sold = 0;
+  for (const lead of await openLeadPlaces(tx, at)) {
+    if (!orders.some((o) => orderCovers(o, lead))) continue;
+    checked++;
+    try {
+      const out = await tx.transaction(async (sp) => allocateLead(sp as unknown as TestDb, viewer, lead.id, at));
+      if (out.outcome === "sold") sold++;
+    } catch (e) {
+      console.error(`[leads] retry allocation failed for ${lead.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { checked, sold };
 }

@@ -7,7 +7,7 @@ import { makeCategory, makeCity, makeScaffold, type ListingCtx } from "@/test/fa
 import { makeBuyer, makeLead, makeStandingOrder } from "@/test/leads";
 import { creditBalance } from "@/lib/db/queries/credits";
 import { NOTIFY_LEAD_TOPUP, NOTIFY_LEAD_WON } from "@/lib/email/notify";
-import { allocateLead } from "./allocate";
+import { allocateLead, retryAllocation } from "./allocate";
 
 const T = (s: string) => new Date(`2026-09-${s}T12:00:00Z`);
 
@@ -171,6 +171,29 @@ describe("allocateLead", () => {
         expect(await allocateLead(tx, PUBLIC_VIEWER, leadId)).toEqual({ outcome: "not-open" });
       }
       expect(await creditBalance(tx, buyer.profileId)).toBe(10_000);
+    });
+  });
+});
+
+describe("retryAllocation", () => {
+  it("offers open leads again to standing orders created or changed since the last run", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await scaffold(tx);
+      const before = new Date("2026-09-25T09:00:00Z");
+      const since = new Date("2026-09-25T10:50:00Z");
+      const tick = new Date("2026-09-25T12:00:00Z");
+      const waiting = await makeLead(tx, ctx, {}, before);
+      const stale = await makeBuyer(tx, ctx, 10_000);
+      await makeStandingOrder(tx, stale, { territories: [{ kind: "city", id: "00000000-0000-4000-8000-000000000000" }], updatedAt: new Date("2026-09-25T11:30:00Z") });
+
+      // Nothing new that covers it: left alone.
+      expect(await retryAllocation(tx, PUBLIC_VIEWER, { since, at: tick })).toEqual({ checked: 0, sold: 0 });
+
+      const fresh = await makeBuyer(tx, ctx, 10_000);
+      const orderId = await makeStandingOrder(tx, fresh, { territories: [{ kind: "region", id: "west-yorkshire" }], updatedAt: new Date("2026-09-25T11:30:00Z") });
+      expect(await retryAllocation(tx, PUBLIC_VIEWER, { since, at: tick })).toEqual({ checked: 1, sold: 1 });
+      const [purchase] = await tx.select().from(leadPurchases).where(eq(leadPurchases.leadId, waiting));
+      expect(purchase?.standingOrderId).toBe(orderId);
     });
   });
 });
