@@ -169,4 +169,15 @@ describe("search — createdAfter (saved-search alerts)", () => {
       expect((await search(tx, PUBLIC_VIEWER, { city: "leeds" })).total).toBe(3);
     });
   });
+
+  it("compares at the millisecond a JS Date holds, so a row read back as the watermark is not new again", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      // Default created_at: now(), which Postgres keeps to the microsecond.
+      await makeListing(tx, ctx, { name: "Microsecond Barn" });
+      const [row] = (await search(tx, PUBLIC_VIEWER, { q: "Microsecond Barn" })).rows;
+      expect((await search(tx, PUBLIC_VIEWER, { q: "Microsecond Barn", createdAfter: row!.createdAt })).total).toBe(0);
+    });
+  });
 });

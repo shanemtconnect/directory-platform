@@ -1,4 +1,4 @@
-import { and, eq, gt, or, ilike, sql, type SQL } from "drizzle-orm";
+import { and, eq, or, ilike, sql, type SQL } from "drizzle-orm";
 import { listings, cities, categories } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
@@ -56,7 +56,12 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
 
   if (params.city) clauses.push(eq(cities.slug, params.city));
   if (params.category) clauses.push(eq(categories.slug, params.category));
-  if (params.createdAfter) clauses.push(gt(listings.createdAt, params.createdAfter));
+  if (params.createdAfter) {
+    // At the millisecond: Postgres keeps microseconds and a JS Date does not,
+    // so a watermark read back from a row would otherwise find that row "new"
+    // again, for ever.
+    clauses.push(sql`date_trunc('milliseconds', ${listings.createdAt}) > ${params.createdAfter.toISOString()}::timestamptz`);
+  }
 
   // Custom fields live in jsonb. Only keys declared searchable in site.config
   // are honoured — an arbitrary key from a query string must never reach SQL.

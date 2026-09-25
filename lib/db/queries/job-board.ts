@@ -96,7 +96,11 @@ function filterClause(filters: JobFilters) {
   const clauses = [openJobs()];
   if (filters.citySlug) clauses.push(eq(cities.slug, filters.citySlug));
   if (filters.categorySlug) clauses.push(eq(categories.slug, filters.categorySlug));
-  if (filters.createdAfter) clauses.push(gt(jobs.createdAt, filters.createdAfter));
+  // At the millisecond, as in lib/db/queries/search.ts: a watermark read back
+  // from a row must not find that row new again.
+  if (filters.createdAfter) {
+    clauses.push(sql`date_trunc('milliseconds', ${jobs.createdAt}) > ${filters.createdAfter.toISOString()}::timestamptz`);
+  }
   return and(...clauses);
 }
 

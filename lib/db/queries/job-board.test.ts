@@ -175,6 +175,16 @@ describe("listOpenJobs / countOpenJobs — createdAfter (saved-search alerts)", 
       expect(await countOpenJobs(tx, PUBLIC_VIEWER, {})).toBe(2);
     });
   });
+
+  it("compares at the millisecond a JS Date holds, so a row read back as the watermark is not new again", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      // Default created_at: now(), which Postgres keeps to the microsecond.
+      const id = await makeJob(tx, ctx, { title: "Microsecond job" });
+      const [row] = (await listOpenJobs(tx, PUBLIC_VIEWER, { page: 1 })).filter((j) => j.id === id);
+      expect(await countOpenJobs(tx, PUBLIC_VIEWER, { createdAfter: row!.createdAt })).toBe(0);
+    });
+  });
 });
 
 describe("filters", () => {
