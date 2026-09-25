@@ -238,7 +238,7 @@ that holds all of them.
 corepack pnpm test                     # units, TEST_DATABASE_URL
 corepack pnpm test:e2e:db              # create/migrate/seed directory_e2e
 corepack pnpm test:e2e                 # Playwright, against directory_e2e
-corepack pnpm test:e2e:db -- --reset   # start that database again from the seeds
+bash scripts/e2e-db.sh --reset          # start that database again from the seeds (pnpm 12 passes "--" through, so call the script)
 ```
 
 The e2e suite **writes**. `e2e/location.spec.ts` submits a listing through the
