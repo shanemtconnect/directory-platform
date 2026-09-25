@@ -162,6 +162,16 @@ describe("POST /get-quotes/verify/[token]/confirm", () => {
     expect(runAfterLeadCreated).not.toHaveBeenCalled();
   });
 
+  it("answers a malformed escape with the unknown-link page, not a 500", async () => {
+    verifyQuoteToken.mockResolvedValue({ outcome: "unknown" });
+    const request = new Request("http://localhost:3215/get-quotes/verify/x/confirm", { method: "POST" });
+    const route = await import("./route");
+    const res = await route.POST(request, { params: Promise.resolve({ token: "%E0%A4%A" }) });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toMatch(/state=unknown$/);
+    expect(verifyQuoteToken).toHaveBeenCalledWith(HANDLE, { role: "public" }, "");
+  });
+
   it("decodes the token from the path before looking it up", async () => {
     await POST(click("a/b+c"));
     expect(verifyQuoteToken).toHaveBeenCalledWith(HANDLE, { role: "public" }, "a/b+c");

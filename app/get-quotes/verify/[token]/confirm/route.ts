@@ -9,6 +9,7 @@ import {
 import { runAfterLeadCreated } from "@/lib/leads/hooks";
 import { notifyQuoteRequest } from "@/lib/email/notify";
 import { siteOrigin } from "@/lib/site-env";
+import { decodeTokenParam } from "@/lib/quotes/token-param";
 import { QUOTE_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/lib/db/types";
 
@@ -58,7 +59,8 @@ export async function POST(
     });
   }
 
-  const token = decodeURIComponent((await params).token);
+  // Malformed escapes decode to "", which verifies as unknown — not a 500.
+  const token = decodeTokenParam((await params).token);
   const leadsOn = isEnabled("leadMarketplace");
 
   const landing = await db.transaction(async (tx): Promise<Landing> => {

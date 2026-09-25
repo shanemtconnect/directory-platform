@@ -106,6 +106,24 @@ describe("SponsorRails — the lead-capture house slot", () => {
     expect(await captureIn(await SponsorRails({ placement: "cityPillar" }))).toHaveLength(1);
   });
 
+  it("counts the capture box against MAX_PER_RAIL", async () => {
+    leadMarketplace = true;
+    process.env.ADS_ENABLED = "true";
+    process.env.SITE_ENV = "production";
+    activeSponsorCampaigns.mockResolvedValue(Array.from({ length: 20 }, (_, i) => campaign(i + 1)));
+    const { MAX_PER_RAIL } = await import("@/lib/ads/inventory");
+    const { SponsorRails } = await import("./SponsorRails");
+
+    const el = await SponsorRails({ placement: "cityPillar" });
+    const left = [...elements(el as never)].find(
+      (e) => (e.props as Record<string, unknown>)["data-testid"] === "sponsor-rail-left",
+    );
+    const cards = [...elements(left as never)].filter((e) =>
+      String((e.props as Record<string, unknown>)["data-testid"] ?? "").startsWith("sponsor-card-left"));
+    expect(await captureIn(left)).toHaveLength(1);
+    expect(cards.length + 1).toBe(MAX_PER_RAIL);
+  });
+
   it("carries no capture box with the flag off", async () => {
     process.env.ADS_ENABLED = "true";
     process.env.SITE_ENV = "production";

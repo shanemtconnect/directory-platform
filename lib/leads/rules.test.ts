@@ -110,3 +110,33 @@ describe("checkLeadRules", () => {
     });
   });
 });
+
+describe("normaliseEmail", () => {
+  it("trims and lower-cases every address", () => {
+    expect(normaliseEmail("  Sam.Jones+x@Example.CO.UK ")).toBe("sam.jones+x@example.co.uk");
+  });
+
+  it("folds Gmail's dots, +tags and googlemail.com into one key", () => {
+    for (const email of ["j.smith+quotes@gmail.com", "JSmith@googlemail.com", "j.s.m.i.t.h@gmail.com"]) {
+      expect(normaliseEmail(email)).toBe("jsmith@gmail.com");
+    }
+  });
+
+  it("makes a Gmail variant a duplicate and a blocklist hit", async () => {
+    await withTestDb(async (tx) => {
+      setClock(NOW);
+      const { cityId } = await makeScaffold(tx);
+      const user = `dup${randomUUID().slice(0, 8)}`;
+      await existingLead(tx, cityId, {
+        email: `${user}@gmail.com`, phoneNormalised: freshPhone().e164, createdAt: new Date(NOW.getTime() - DAY),
+      });
+      expect(await checkLeadRules(tx, { email: `${user.slice(0, 3)}.${user.slice(3)}+x@googlemail.com`, phone: freshPhone().raw, country: "GB" }))
+        .toEqual({ reason: "duplicate" });
+
+      const blocked = `blk${randomUUID().slice(0, 8)}`;
+      await tx.insert(leadBlocklist).values({ kind: "email", value: `${blocked}@gmail.com`, reason: "refund: spam" });
+      expect(await checkLeadRules(tx, { email: `${blocked}+again@gmail.com`, phone: freshPhone().raw, country: "GB" }))
+        .toEqual({ reason: "blocklisted" });
+    });
+  });
+});

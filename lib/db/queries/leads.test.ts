@@ -67,6 +67,19 @@ describe("briefFor", () => {
     expect(brief).toContain("party of 40");
   });
 
+  it("strips a lone GB outward code, and leaves ordinary words and numbers", () => {
+    const brief = briefFor("We're in LS1, about 40 guests on a B-road, budget 900", { country: "GB" });
+    expect(brief).not.toMatch(/LS1/);
+    expect(brief).toContain("40 guests");
+    expect(brief).toContain("budget 900");
+  });
+
+  it("leaves AU four-digit numbers (years, counts, postcodes) and still strips digit runs of five", () => {
+    const brief = briefFor("1500 guests in March 2027 near 2000, call 0412 345 678", { country: "AU" });
+    expect(brief).toContain("1500 guests in March 2027 near 2000");
+    expect(brief).not.toMatch(/0412|345 678/);
+  });
+
   it("never exceeds 160 characters and ends on a word", () => {
     const brief = briefFor("word ".repeat(100), { country: "GB" });
     expect(brief.length).toBeLessThanOrEqual(160);
@@ -142,6 +155,22 @@ describe("createLeadFromQuote", () => {
       expect(await createLeadFromQuote(tx, PUBLIC_VIEWER, "not-a-uuid")).toBeNull();
       expect(await createLeadFromQuote(tx, PUBLIC_VIEWER, once)).not.toBeNull();
       expect(await createLeadFromQuote(tx, PUBLIC_VIEWER, once)).toBeNull();
+    });
+  });
+});
+
+describe("a request with no name", () => {
+  it("is 'Someone' on the board, never the email address", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const email = freshEmail();
+      const id = await verifiedRequest(tx, ctx, [], { name: null, email });
+
+      const lead = await createLeadFromQuote(tx, PUBLIC_VIEWER, id);
+
+      expect(lead!.firstName).toBe("Someone");
+      expect(lead!.firstName).not.toContain("@");
+      expect(lead!.brief).not.toContain(email);
     });
   });
 });

@@ -28,9 +28,25 @@ export interface LeadRuleInput {
   country: string;
 }
 
-/** The duplicate and blocklist key for an address. */
+const GMAIL_DOMAINS = new Set(["gmail.com", "googlemail.com"]);
+
+/**
+ * The duplicate and blocklist key for an address — never the address a lead
+ * is sold with (`leads.email` keeps what was typed). Trimmed and lower-cased;
+ * for Gmail, whose inbox ignores dots in the local part and everything after
+ * a `+`, those are removed and googlemail.com is folded into gmail.com, so
+ * `J.Smith+quotes@googlemail.com` cannot dodge the 30-day rule or a block
+ * placed on `jsmith@gmail.com`. Other providers' rules differ, so their
+ * addresses are left as typed.
+ */
 export function normaliseEmail(email: string): string {
-  return email.trim().toLowerCase();
+  const lower = email.trim().toLowerCase();
+  const at = lower.lastIndexOf("@");
+  if (at < 0) return lower;
+  const domain = lower.slice(at + 1);
+  if (!GMAIL_DOMAINS.has(domain)) return lower;
+  const local = lower.slice(0, at).split("+")[0]!.replace(/\./g, "");
+  return `${local}@gmail.com`;
 }
 
 export async function checkLeadRules(tx: TestDb, input: LeadRuleInput): Promise<RuleVerdict> {

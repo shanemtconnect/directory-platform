@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { features } from "@/lib/features/flags";
 import { leadPhone } from "./fixtures";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { E2E_DATABASE_URL } from "./database";
 
 /**
@@ -54,6 +55,9 @@ test("an enquiry to an unclaimed no-email listing becomes a lead only after the 
   await page.goto(target!.path);
   const form = page.locator('[data-testid="enquiry-form"]');
   await expect(form).toBeVisible();
+  // Nobody reads this listing's mail, so the form must not promise an owner.
+  await expect(form).toContainText(leadSharingNotice());
+  await expect(form).not.toContainText("goes straight to");
   await form.locator("#enq-name").fill("Playwright Enquirer");
   await form.locator("#enq-email").fill(EMAIL);
   await form.locator("#enq-phone").fill(leadPhone());

@@ -4,7 +4,7 @@ import { db } from "@/lib/db/client";
 import { now } from "@/lib/clock";
 import { activeSponsorCampaigns } from "@/lib/db/queries/ads";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { buildInventory, type RailInventory, type RailItem } from "@/lib/ads/inventory";
+import { MAX_PER_RAIL, buildInventory, type RailInventory, type RailItem } from "@/lib/ads/inventory";
 import { decideSponsorRails, type PageListing } from "@/lib/ads/policy";
 import { rotationSeed } from "@/lib/ads/rotation";
 import { currentBuildId } from "@/lib/observability/build-id";
@@ -31,10 +31,13 @@ export interface SponsorRailsProps {
 
 function Rail({ side, items, house = null }: { side: "left" | "right"; items: readonly RailItem[]; house?: ReactNode }) {
   if (items.length === 0 && house === null) return null;
+  // The house slot is a card like any other: it counts against the rail's
+  // cap, so the rail never grows past MAX_PER_RAIL.
+  const shown = house === null ? items : items.slice(0, MAX_PER_RAIL - 1);
   return (
     <div className={`sponsor-rail sponsor-rail-${side}`} data-testid={`sponsor-rail-${side}`}>
       {house}
-      {items.map((item) => (
+      {shown.map((item) => (
         <SponsorCard
           key={item.kind === "house" ? `house-${item.ad.id}` : item.campaign.id}
           item={item}

@@ -6,6 +6,7 @@ import { guardFeature } from "@/lib/features/guard";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { previewQuoteToken } from "@/lib/db/queries/quotes";
 import { QUOTE_VERIFY_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
+import { decodeTokenParam } from "@/lib/quotes/token-param";
 import { QUOTE_STEPS } from "@/components/quotes/steps";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Steps } from "@/components/ui/Steps";
@@ -54,7 +55,8 @@ export default async function VerifyQuotePage({ params }: Props) {
   }
 
   const { token } = await params;
-  const raw = decodeURIComponent(token);
+  // Malformed escapes decode to "", which previews as unknown — not a 500.
+  const raw = decodeTokenParam(token);
   const preview = await previewQuoteToken(db as never, PUBLIC_VIEWER, raw);
 
   switch (preview.outcome) {

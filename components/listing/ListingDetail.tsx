@@ -4,6 +4,7 @@ import type { ListingDetail as Detail } from "@/lib/db/queries/listing-detail";
 import type { PublicListing as Listing } from "@/lib/db/queries/listings";
 import { displayedDescription } from "@/lib/listing/display";
 import { EnquiryForm } from "./EnquiryForm";
+import { isLeadTarget } from "./lead-target";
 import { Gallery } from "./Gallery";
 import { features } from "@/lib/features/flags";
 import { SaveButton } from "@/components/shortlist/SaveButton";
@@ -177,6 +178,7 @@ export function ListingDetail({
             listingName={listing.name}
             turnstileSiteKey={process.env.TURNSTILE_SITE_KEY?.trim() || null}
             leadMarketplace={features.leadMarketplace}
+            leadTarget={isLeadTarget(features.leadMarketplace, listing)}
           />
         </aside>
       </div>

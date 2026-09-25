@@ -86,6 +86,12 @@ describe("/get-quotes/verify/[token]", () => {
     expect(previewQuoteToken).not.toHaveBeenCalled();
   });
 
+  it("sends a malformed link to the unknown-link page instead of failing", async () => {
+    previewQuoteToken.mockResolvedValue({ outcome: "unknown" });
+    await expect(render("%E0%A4%A")).rejects.toThrow("/get-quotes/confirmed?state=unknown");
+    expect(previewQuoteToken).toHaveBeenCalledWith(expect.anything(), { role: "public" }, "");
+  });
+
   it("404s with quotes off", async () => {
     quoteBroadcast = false;
     await expect(render()).rejects.toThrow(NotFound);

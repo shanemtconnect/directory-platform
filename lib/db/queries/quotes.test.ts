@@ -600,6 +600,26 @@ describe("expireQuoteRequests", () => {
       expect(await expireQuoteRequests(tx, ADMIN)).toBe(0);
     });
   });
+
+  it("expires a pending row with no link (old code, mid-deploy) 48 hours after it was created", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const T0 = Date.parse("2026-09-25T12:00:00Z");
+      const [legacy] = await tx.insert(quoteRequests).values({
+        name: "Legacy", email: "legacy@example.co.uk", message: "Written by the old code", cityId: ctx.cityId,
+        categoryId: ctx.primaryCategoryId, createdAt: new Date(T0), updatedAt: new Date(T0),
+      }).returning({ id: quoteRequests.id, status: quoteRequests.status, expires: quoteRequests.verifyExpiresAt });
+      expect(legacy).toMatchObject({ status: "pending", expires: null });
+      const ADMIN = await makeAdmin(tx);
+
+      setClock(new Date(T0 + (QUOTE_VERIFY_TTL_HOURS - 1) * 3_600_000));
+      expect(await expireQuoteRequests(tx, ADMIN)).toBe(0);
+      setClock(new Date(T0 + QUOTE_VERIFY_TTL_HOURS * 3_600_000 + 1000));
+      expect(await expireQuoteRequests(tx, ADMIN)).toBe(1);
+      const [row] = await tx.select({ s: quoteRequests.status }).from(quoteRequests).where(eq(quoteRequests.id, legacy!.id));
+      expect(row!.s).toBe("expired");
+    });
+  });
 });
 
 describe("free at submit, upgraded before the click", () => {

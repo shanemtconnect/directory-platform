@@ -47,18 +47,37 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** The country's postcode shape, unanchored, for finding one inside text. */
-function postcodeFinder(country: string): RegExp {
-  const source = countryProfile(country).postcodePattern.source.replace(/^\^/, "").replace(/\$$/, "");
-  return new RegExp(`\\b${source}\\b`, "gi");
+/**
+ * The postcode shapes stripped from a brief, per country — only shapes that
+ * cannot be mistaken for an ordinary number:
+ *  - GB: a full postcode (any case) and a lone outward code ("we're in LS1";
+ *    upper case only, so ordinary words survive — "M25" goes too, which is
+ *    as much a location as the postcode);
+ *  - CA: a full postal code (the profile's shape);
+ *  - US: none here — a ZIP is five digits, which the digit-run rule strips;
+ *  - AU: none. An AU postcode is four bare digits, indistinguishable from a
+ *    year, a guest count or a budget, and it names a suburb no finer than
+ *    the town the board already shows, so it is left in.
+ */
+function postcodeFinders(country: string): RegExp[] {
+  switch (countryProfile(country).code) {
+    case "GB":
+      return [/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi, /\b[A-Z]{1,2}\d[A-Z\d]?\b/g];
+    case "CA": {
+      const source = countryProfile(country).postcodePattern.source.replace(/^\^/, "").replace(/\$$/, "");
+      return [new RegExp(`\\b${source}\\b`, "gi")];
+    }
+    default:
+      return [];
+  }
 }
 
 /**
  * The one line a buyer reads before paying: the job, and nothing that lets
  * them skip paying. Strips anything with an `@` (addresses), links, any run
  * of five or more digits even with spaces or dashes between them (phone
- * numbers, ZIPs), the site country's postcode shape, and every part of the
- * requester's name after the first. Whitespace collapsed, capped at
+ * numbers, ZIPs), the postcode shapes in `postcodeFinders`, and every part of
+ * the requester's name after the first. Whitespace collapsed, capped at
  * `BRIEF_MAX` on a word boundary.
  */
 export function briefFor(
@@ -69,7 +88,7 @@ export function briefFor(
   text = text.replace(/\S*@\S*/g, " ");
   text = text.replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ");
   text = text.replace(/\+?\d[\d\s().\-]*\d/g, (run) => (run.replace(/\D/g, "").length >= 5 ? " " : run));
-  text = text.replace(postcodeFinder(opts.country ?? siteConfig.country), " ");
+  for (const finder of postcodeFinders(opts.country ?? siteConfig.country)) text = text.replace(finder, " ");
   const [, ...rest] = (opts.name ?? "").trim().split(/\s+/).filter((w) => w.length > 1);
   for (const part of rest) {
     text = text.replace(new RegExp(`\\b${escapeRegExp(part)}\\b`, "gi"), " ");
@@ -83,8 +102,16 @@ export function briefFor(
   return `${(space > 40 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, "")}…`;
 }
 
+/**
+ * What the board calls the requester. A row with no name (legacy or
+ * hand-made — every form requires one) is "Someone", never a fallback to the
+ * email address, which the board must not show.
+ */
+export const NAMELESS_FIRST_NAME = "Someone";
+
 function firstNameOf(name: string): string {
-  return (name.trim().split(/\s+/)[0] ?? "").slice(0, 40);
+  const first = (name.trim().split(/\s+/)[0] ?? "").slice(0, 40);
+  return first === "" ? NAMELESS_FIRST_NAME : first;
 }
 
 /* ----------------------------------------------------------------- insert */
@@ -191,7 +218,7 @@ export async function createLeadFromQuote(
     listingId: null,
     cityId: request.cityId,
     categoryId: request.categoryId,
-    name: request.name ?? request.email,
+    name: request.name ?? "",
     email: request.email,
     phone: request.phone,
     message: request.message,
@@ -273,7 +300,7 @@ export async function createLeadFromCaptureRequest(
   return createCaptureLead(tx, viewer, {
     cityId: request.cityId,
     categoryId: request.categoryId,
-    name: request.name ?? request.email,
+    name: request.name ?? "",
     email: request.email,
     phone: request.phone,
     message: request.message,
@@ -379,7 +406,7 @@ export async function createLeadFromEnquiryRequest(
   if (!request || request.status !== "verified" || request.isSpam || request.source !== "enquiry") return null;
   if (request.email === null || request.message === null || request.listingId === null) return null;
   return createEnquiryLead(tx, viewer, request.listingId, {
-    name: request.name ?? request.email,
+    name: request.name ?? "",
     email: request.email,
     phone: request.phone,
     message: request.message,

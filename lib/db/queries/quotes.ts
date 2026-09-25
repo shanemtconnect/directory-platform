@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, desc, eq, lte, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { siteConfig } from "@/config/site.config";
 import type { TierName } from "@/config/types";
 import {
@@ -506,14 +506,26 @@ export async function quoteVerification(
  * The worker's hourly sweep: every pending request whose link has lapsed is
  * marked expired, so it drops out of the admin's "unconfirmed" count and a
  * late click is told the link has expired. Returns how many it expired.
+ *
+ * A pending row with NO expiry — written by the old code during a rolling
+ * deploy, after the migration added the column with its `pending` default —
+ * has no link at all; it is expired 48 hours after it was created, the same
+ * lifetime a link would have had.
  */
 export async function expireQuoteRequests(tx: TestDb, viewer: Viewer): Promise<number> {
   assertAdmin(viewer);
   const at = now();
+  const createdBefore = new Date(at.getTime() - QUOTE_VERIFY_TTL_HOURS * 3_600_000);
   const rows = await tx
     .update(quoteRequests)
     .set({ status: "expired", updatedAt: at })
-    .where(and(eq(quoteRequests.status, "pending"), lte(quoteRequests.verifyExpiresAt, at)))
+    .where(and(
+      eq(quoteRequests.status, "pending"),
+      or(
+        lte(quoteRequests.verifyExpiresAt, at),
+        and(isNull(quoteRequests.verifyExpiresAt), lte(quoteRequests.createdAt, createdBefore)),
+      ),
+    ))
     .returning({ id: quoteRequests.id });
   return rows.length;
 }

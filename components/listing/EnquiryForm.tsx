@@ -18,9 +18,17 @@ export interface EnquiryFormProps {
    * your details" is no longer true, so the shared notice replaces it.
    */
   leadMarketplace?: boolean;
+  /**
+   * True when, with the flag on, this listing is one nobody reads (unclaimed,
+   * no email): an enquiry here does NOT go straight to an owner — once
+   * confirmed it becomes a lead — so the footer says only the shared notice.
+   */
+  leadTarget?: boolean;
 }
 
-export function EnquiryForm({ listingId, listingName, turnstileSiteKey, leadMarketplace = false }: EnquiryFormProps) {
+export function EnquiryForm({
+  listingId, listingName, turnstileSiteKey, leadMarketplace = false, leadTarget = false,
+}: EnquiryFormProps) {
   const [state, action, pending] = useActionState(submitEnquiry, initial);
 
   if (state.status === "sent") {
@@ -93,8 +101,14 @@ export function EnquiryForm({ listingId, listingName, turnstileSiteKey, leadMark
 
       <p className="mt-3 mb-0">
         <small>
-          Your message goes straight to the {siteConfig.entity.ownerNoun}.{" "}
-          {leadMarketplace ? leadSharingNotice() : <>We don&rsquo;t sell your details.</>}
+          {leadTarget ? (
+            leadSharingNotice()
+          ) : (
+            <>
+              Your message goes straight to the {siteConfig.entity.ownerNoun}.{" "}
+              {leadMarketplace ? leadSharingNotice() : <>We don&rsquo;t sell your details.</>}
+            </>
+          )}
         </small>
       </p>
     </form>
