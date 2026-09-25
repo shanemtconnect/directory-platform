@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { siteConfig } from "@/config/site.config";
 import type { Viewer } from "@/lib/db/viewer";
 import type { QuoteRequestResult } from "@/lib/db/queries/quotes";
 import type { RateLimitResult } from "@/lib/spam/rate-limit";
@@ -143,19 +144,31 @@ describe("submitQuoteRequest", () => {
     expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: true });
   });
 
-  it("with the lead marketplace on, tells the requester when a no-recipient request could not become a lead", async () => {
+  it("with the lead marketplace on, tells the requester WHY when a no-recipient request could not become a lead for want of a phone", async () => {
     isEnabled.mockImplementation((flag) => flag === "quoteBroadcast" || flag === "leadMarketplace");
-    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "phone_invalid" });
+    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "phone_invalid", cityName: "Leeds" });
 
     const state = await submit({ ...good, phone: "" });
 
     expect(state.status).toBe("error");
-    expect(state.fieldErrors?.phone).toMatch(/phone number we can call/);
+    // Names the town and the entity, not a plain "give us a phone number" —
+    // the person is never told a phone is needed until this refusal, so a
+    // validation-slip wording would leave them guessing why.
+    expect(state.message).toBe(
+      `No listed ${siteConfig.entity.singular} in Leeds can take this request directly yet, so we need a phone number to pass it on.`,
+    );
+    expect(state.fieldErrors?.phone).toBe(state.message);
+    // What was typed survives the refusal, so retrying costs one field, not the whole form.
+    expect(state.values).toEqual({
+      cityId: CITY, categoryId: CATEGORY, name: "Sam Requester", email: "sam@example.co.uk",
+      phone: "", message: "Eighty people in June, with parking.", consent: true,
+    });
     expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: true });
     // Handed the refusal, which queues nothing (notifyQuoteVerify ignores anything but "created").
-    expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, { outcome: "lead-refused", reason: "phone_invalid" });
+    expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, { outcome: "lead-refused", reason: "phone_invalid", cityName: "Leeds" });
 
-    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "duplicate" });
+    // A different lead-rule reason keeps the shared, generic wording (leadRefusal).
+    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "duplicate", cityName: "Leeds" });
     expect((await submit(good)).message).toMatch(/last 30 days/);
   });
 
@@ -168,6 +181,10 @@ describe("submitQuoteRequest", () => {
     expect(state).toEqual({
       status: "error",
       message: "Nobody in that town and category can take a request right now. Try a nearby town.",
+      values: {
+        cityId: CITY, categoryId: CATEGORY, name: "Sam Requester", email: "sam@example.co.uk",
+        phone: "", message: "Eighty people in June, with parking.", consent: true,
+      },
     });
   });
 
@@ -189,11 +206,18 @@ describe("submitQuoteRequest", () => {
     expect(limitPublicWrite).not.toHaveBeenCalled();
   });
 
-  it("validates before spending the budget or the Turnstile token", async () => {
+  it("validates before spending the budget or the Turnstile token, and hands back what was typed", async () => {
     const state = await submit({ ...good, consent: "", message: "short" });
 
     expect(state.status).toBe("error");
     expect(state.fieldErrors).toMatchObject({ consent: expect.any(String), message: expect.any(String) });
+    // A refused submit keeps every typed value, including the one that failed
+    // validation — the visitor should not have to retype the whole form to
+    // fix one field.
+    expect(state.values).toEqual({
+      cityId: CITY, categoryId: CATEGORY, name: "Sam Requester", email: "sam@example.co.uk",
+      phone: "01632 960000", message: "short", consent: false,
+    });
     expect(limitPublicWrite).not.toHaveBeenCalled();
     expect(verifyTurnstile).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
@@ -236,6 +260,7 @@ describe("submitQuoteRequest", () => {
 
       expect(state.status).toBe("error");
       expect(state.fieldErrors?.[result.outcome === "unknown-city" ? "cityId" : "categoryId"]).toBeTruthy();
+      expect(state.values).toMatchObject({ name: "Sam Requester", email: "sam@example.co.uk" });
     },
   );
 });

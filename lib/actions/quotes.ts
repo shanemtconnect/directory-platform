@@ -19,7 +19,7 @@ import { QUOTE_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/lib/db/types";
 import { isUuid } from "./validation";
 import { leadRefusal } from "@/lib/leads/refusal";
-import { validateQuoteRequest } from "./quotes-validation";
+import { rawQuoteFormValues, validateQuoteRequest, type QuoteFormRawValues } from "./quotes-validation";
 
 /**
  * The get-quotes form, protected exactly like the enquiry form and in exactly
@@ -43,6 +43,13 @@ export interface QuoteFormState {
   recipientCount?: number;
   message?: string;
   fieldErrors?: Record<string, string>;
+  /**
+   * What the visitor typed, unvalidated — fed back into the fields'
+   * `defaultValue`s on a refusal so retyping everything is never the price
+   * of one mistake. Absent on "sent" and on the flag-off / honeypot paths,
+   * where there is nothing to redisplay.
+   */
+  values?: QuoteFormRawValues;
 }
 
 export async function submitQuoteRequest(
@@ -60,12 +67,15 @@ export async function submitQuoteRequest(
     return { status: "sent", recipientCount: siteConfig.quotes.maxRecipients };
   }
 
+  const raw = rawQuoteFormValues(form);
+
   const { values, errors } = validateQuoteRequest(form);
   if (errors) {
     return {
       status: "error",
       fieldErrors: errors,
       message: "Please check the fields marked below.",
+      values: raw,
     };
   }
 
@@ -75,6 +85,7 @@ export async function submitQuoteRequest(
     return {
       status: "error",
       message: `Too many quote requests from this connection. Please try again in ${Math.ceil(limit.retryAfterSeconds / 60)} minutes.`,
+      values: raw,
     };
   }
 
@@ -84,7 +95,7 @@ export async function submitQuoteRequest(
     ip ?? undefined,
   );
   if (!turnstile.ok) {
-    return { status: "error", message: "We couldn't verify that you're human. Please try again." };
+    return { status: "error", message: "We couldn't verify that you're human. Please try again.", values: raw };
   }
 
   // Recipients, request, audit row and the queued verification email land
@@ -107,15 +118,28 @@ export async function submitQuoteRequest(
       return {
         status: "error",
         message: "Nobody in that town and category can take a request right now. Try a nearby town.",
+        values: raw,
       };
-    case "lead-refused":
+    case "lead-refused": {
       // Lead marketplace on and nobody local can take it, so it would only
-      // ever be a lead — and the lead rules say no (most often: no phone).
-      return { status: "error", ...leadRefusal(result.reason) };
+      // ever be a lead — and the lead rules say no. A missing/invalid phone
+      // is the common case here, and a plain "please give a phone number"
+      // reads like a validation slip when the form never said a phone would
+      // be needed — so this one reason gets a message that says why, naming
+      // the town and what we do here, instead of the generic wording
+      // `leadRefusal` gives the capture box for the same rejection.
+      if (result.reason === "phone_invalid") {
+        const notice =
+          `No listed ${siteConfig.entity.singular} in ${result.cityName} can take this request ` +
+          "directly yet, so we need a phone number to pass it on.";
+        return { status: "error", message: notice, fieldErrors: { phone: notice }, values: raw };
+      }
+      return { status: "error", ...leadRefusal(result.reason), values: raw };
+    }
     case "unknown-city":
-      return { status: "error", fieldErrors: { cityId: "Please choose a town." }, message: "Please check the fields marked below." };
+      return { status: "error", fieldErrors: { cityId: "Please choose a town." }, message: "Please check the fields marked below.", values: raw };
     case "unknown-category":
-      return { status: "error", fieldErrors: { categoryId: "Please choose a category." }, message: "Please check the fields marked below." };
+      return { status: "error", fieldErrors: { categoryId: "Please choose a category." }, message: "Please check the fields marked below.", values: raw };
   }
 }
 

@@ -69,6 +69,36 @@ export function validateQuoteRequest(form: FormData): Result<QuoteFormValues> {
   return { values: { cityId, categoryId, name, email, phone: phone || null, message } };
 }
 
+export interface QuoteFormRawValues {
+  cityId: string;
+  categoryId: string;
+  name: string;
+  email: string;
+  phone: string;
+  message: string;
+  consent: boolean;
+}
+
+/**
+ * The submitted values, unvalidated, for feeding straight back into the
+ * form's `defaultValue`s after a refusal (Task 60). React resets an
+ * uncontrolled form's fields to their `defaultValue` once the action
+ * returns — so a refusal that answered with nothing but field errors left
+ * the form empty for the person to fill in a second time.
+ */
+export function rawQuoteFormValues(form: FormData): QuoteFormRawValues {
+  const consent = form.get("consent");
+  return {
+    cityId: field(form, "cityId"),
+    categoryId: field(form, "categoryId"),
+    name: field(form, "name"),
+    email: field(form, "email"),
+    phone: field(form, "phone"),
+    message: bodyField(form, "message"),
+    consent: consent === "on" || consent === "true",
+  };
+}
+
 /**
  * The lead-capture box (Task 56): the get-quotes fields, with the phone
  * REQUIRED — a capture request becomes a lead a business pays for, and a

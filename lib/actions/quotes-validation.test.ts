@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { QUOTE_MESSAGE_MAX, validateCaptureLead, validateQuoteRequest } from "./quotes-validation";
+import { QUOTE_MESSAGE_MAX, rawQuoteFormValues, validateCaptureLead, validateQuoteRequest } from "./quotes-validation";
 
 const CITY = "11111111-1111-4111-8111-111111111111";
 const CATEGORY = "22222222-2222-4222-8222-222222222222";
@@ -72,5 +72,24 @@ describe("validateCaptureLead", () => {
     const { values, errors } = validateCaptureLead(form({ ...good, phone: " 01632 960123 " }));
     expect(errors).toBeUndefined();
     expect(values?.phone).toBe("01632 960123");
+  });
+});
+
+describe("rawQuoteFormValues", () => {
+  it("returns what was typed, unvalidated, for feeding back into the form on a refusal", () => {
+    expect(rawQuoteFormValues(form(good))).toEqual({
+      cityId: CITY,
+      categoryId: CATEGORY,
+      name: "Sam Requester",
+      email: "sam@example.co.uk",
+      phone: "",
+      message: "Eighty people in June,\nwith parking.",
+      consent: true,
+    });
+  });
+
+  it("reports an unticked or absent consent box as false, and a malformed value as typed", () => {
+    expect(rawQuoteFormValues(form({ ...good, cityId: "leeds", consent: "" })).consent).toBe(false);
+    expect(rawQuoteFormValues(form({ ...good, cityId: "leeds", consent: "" }))).toMatchObject({ cityId: "leeds" });
   });
 });
