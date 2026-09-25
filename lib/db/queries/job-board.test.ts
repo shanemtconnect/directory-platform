@@ -158,6 +158,25 @@ describe("listOpenJobs / countOpenJobs", () => {
   });
 });
 
+describe("listOpenJobs / countOpenJobs — createdAfter (saved-search alerts)", () => {
+  it("keeps only open jobs created strictly after the instant, and carries createdAt on the card", async () => {
+    await withTestDb(async (tx) => {
+      setClock(new Date("2026-09-22T10:00:00Z"));
+      const ctx = await makeScaffold(tx);
+      const since = new Date("2026-09-20T12:00:00Z");
+      await makeJob(tx, ctx, { title: "Before", createdAt: new Date("2026-09-19T12:00:00Z") });
+      const after = await makeJob(tx, ctx, { title: "After", createdAt: new Date("2026-09-21T12:00:00Z") });
+      await makeJob(tx, ctx, { title: "After but pending", status: "pending", createdAt: new Date("2026-09-21T12:00:00Z") });
+
+      const rows = await listOpenJobs(tx, PUBLIC_VIEWER, { page: 1, createdAfter: since });
+      expect(rows.map((r) => r.id)).toEqual([after]);
+      expect(rows[0]?.createdAt).toEqual(new Date("2026-09-21T12:00:00Z"));
+      expect(await countOpenJobs(tx, PUBLIC_VIEWER, { createdAfter: since })).toBe(1);
+      expect(await countOpenJobs(tx, PUBLIC_VIEWER, {})).toBe(2);
+    });
+  });
+});
+
 describe("filters", () => {
   it("offers only towns and categories that have an open job, with counts", async () => {
     await withTestDb(async (tx) => {

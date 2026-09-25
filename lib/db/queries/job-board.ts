@@ -53,6 +53,11 @@ export const jobPath = (id: string): string => `/jobs/${id}`;
 export interface JobFilters {
   readonly citySlug?: string | null;
   readonly categorySlug?: string | null;
+  /**
+   * Only jobs created strictly after this instant. Not a URL facet: it is how
+   * a saved search's alert asks for what is NEW (lib/db/queries/saved-searches.ts).
+   */
+  readonly createdAfter?: Date | null;
 }
 
 export interface PublicJobCard {
@@ -67,6 +72,8 @@ export interface PublicJobCard {
   readonly budgetMax: string | null;
   readonly publishedAt: Date | null;
   readonly expiresAt: Date | null;
+  /** When the post was written — the saved-search alert's watermark reads it. */
+  readonly createdAt: Date;
   readonly path: string;
 }
 
@@ -82,12 +89,14 @@ const cardColumns = {
   budgetMax: jobs.budgetMax,
   publishedAt: jobs.publishedAt,
   expiresAt: jobs.expiresAt,
+  createdAt: jobs.createdAt,
 };
 
 function filterClause(filters: JobFilters) {
   const clauses = [openJobs()];
   if (filters.citySlug) clauses.push(eq(cities.slug, filters.citySlug));
   if (filters.categorySlug) clauses.push(eq(categories.slug, filters.categorySlug));
+  if (filters.createdAfter) clauses.push(gt(jobs.createdAt, filters.createdAfter));
   return and(...clauses);
 }
 

@@ -1,4 +1,4 @@
-import { and, eq, or, ilike, sql, type SQL } from "drizzle-orm";
+import { and, eq, gt, or, ilike, sql, type SQL } from "drizzle-orm";
 import { listings, cities, categories } from "@/lib/db/schema";
 import { listingRankOrder } from "@/lib/db/sort";
 import { siteConfig } from "@/config/site.config";
@@ -18,6 +18,11 @@ export interface SearchParams {
   /** Values for customFields marked searchable, keyed by field key. */
   fields?: Record<string, string>;
   page?: number;
+  /**
+   * Only listings created strictly after this instant. Not a URL facet: it is
+   * how a saved search's alert asks for what is NEW (lib/db/queries/saved-searches.ts).
+   */
+  createdAfter?: Date;
 }
 
 export interface SearchResult {
@@ -51,6 +56,7 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
 
   if (params.city) clauses.push(eq(cities.slug, params.city));
   if (params.category) clauses.push(eq(categories.slug, params.category));
+  if (params.createdAfter) clauses.push(gt(listings.createdAt, params.createdAfter));
 
   // Custom fields live in jsonb. Only keys declared searchable in site.config
   // are honoured — an arbitrary key from a query string must never reach SQL.

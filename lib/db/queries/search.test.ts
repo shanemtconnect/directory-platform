@@ -150,3 +150,23 @@ describe("search", () => {
     });
   });
 });
+
+describe("search — createdAfter (saved-search alerts)", () => {
+  it("keeps only listings created strictly after the instant, and still only published ones", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      const since = new Date("2026-09-20T12:00:00Z");
+      await makeListing(tx, ctx, { name: "Before", createdAt: new Date("2026-09-19T12:00:00Z") });
+      await makeListing(tx, ctx, { name: "At the instant", createdAt: since });
+      await makeListing(tx, ctx, { name: "After", createdAt: new Date("2026-09-21T12:00:00Z") });
+      await makeListing(tx, ctx, { name: "After but pending", status: "pending", createdAt: new Date("2026-09-21T12:00:00Z") });
+
+      const result = await search(tx, PUBLIC_VIEWER, { city: "leeds", createdAfter: since });
+      expect(result.rows.map((r) => r.name)).toEqual(["After"]);
+      expect(result.total).toBe(1);
+      // Absent, nothing changes.
+      expect((await search(tx, PUBLIC_VIEWER, { city: "leeds" })).total).toBe(3);
+    });
+  });
+});
