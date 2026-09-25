@@ -11,6 +11,7 @@ import { revalidatePaths } from "@/lib/revalidate/client";
 import { features } from "@/lib/features/flags";
 import { AWARDS_CRON, awardsCronOptions } from "./jobs/awards";
 import { SPOTS_DIGEST_CRON, spotsDigestCronOptions } from "./jobs/spots-digest";
+import { NEIGHBOURHOODS_CRON } from "./jobs/neighbourhoods";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -260,4 +261,20 @@ schedule("spots-digest", SPOTS_DIGEST_CRON, async (tx) => {
 schedule("flush-featured-clicks", "*/5 * * * *", async (tx) => {
   const { flushFeaturedClicks } = await import("./jobs/flush-featured-clicks");
   await flushFeaturedClicks(tx);
+});
+
+// Neighbourhoods (Task 52). Nightly: every listing in a town with
+// neighbourhoods goes to the nearest centroid within its radius, and the
+// counts behind each page's noindex are refreshed. Every minute: the admin's
+// "assign now" presses, collapsed into one run. Both are no-ops with
+// geo.neighbourhoods off (config or NEIGHBOURHOODS_ENABLED), and both hand
+// back the town and neighbourhood pages a move left stale.
+schedule("neighbourhoods.assign", NEIGHBOURHOODS_CRON, async (tx) => {
+  const { runNeighbourhoodAssign } = await import("./jobs/neighbourhoods");
+  return runNeighbourhoodAssign(tx);
+});
+
+schedule("neighbourhoods.assign-queue", "*/1 * * * *", async (tx) => {
+  const { drainNeighbourhoodQueue } = await import("./jobs/neighbourhoods");
+  return drainNeighbourhoodQueue(tx);
 });
