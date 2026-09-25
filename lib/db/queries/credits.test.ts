@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import * as schema from "@/lib/db/schema";
 import { auditLog, creditLedger, profiles, user } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import type { Viewer } from "@/lib/db/viewer";
@@ -203,46 +200,5 @@ describe("profileIdByEmail", () => {
       expect(await profileIdByEmail(tx, admin.viewer, "nobody@example.com")).toBeNull();
       await expect(profileIdByEmail(tx, a.viewer, u!.email)).rejects.toThrow(/FORBIDDEN/);
     });
-  });
-});
-
-/**
- * Two transactions in flight at once against COMMITTED rows: the only way the
- * advisory lock is tested at all. `withTestDb` gives one throwaway
- * transaction, so this opens its own connections and cleans up after itself.
- */
-describe("debitForPurchase concurrency", () => {
-  const url = process.env.TEST_DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_test";
-  const client = postgres(url, { max: 4, onnotice: () => {} });
-  const database = drizzle(client, { schema });
-  const userId = `u_race_${randomUUID()}`;
-
-  afterAll(async () => {
-    // Cascades to the profile and its ledger rows.
-    await database.delete(user).where(eq(user.id, userId));
-    await client.end({ timeout: 5 });
-  });
-
-  it("lets exactly one of two simultaneous debits through when the balance covers only one", async () => {
-    await database.insert(user).values({ id: userId, name: "Race", email: `${userId}@example.com` });
-    const [p] = await database.insert(profiles).values({ userId }).returning({ id: profiles.id });
-    const profileId = p!.id;
-    await postLedger(database as unknown as TestDb, SYSTEM, { userId: profileId, deltaCents: 5000, kind: "topup" });
-
-    const attempt = () =>
-      database.transaction(async (tx) => {
-        const out = await debitForPurchase(tx as unknown as TestDb, SYSTEM, { userId: profileId, cents: 4000, leadId: randomUUID() });
-        // Hold the lock a moment so the two genuinely overlap.
-        await new Promise((r) => setTimeout(r, 100));
-        return out;
-      });
-
-    const results = await Promise.allSettled([attempt(), attempt()]);
-    const won = results.filter((r) => r.status === "fulfilled");
-    const lost = results.filter((r) => r.status === "rejected");
-    expect(won).toHaveLength(1);
-    expect(lost).toHaveLength(1);
-    expect((lost[0] as PromiseRejectedResult).reason).toBeInstanceOf(InsufficientCredit);
-    expect(await creditBalance(database as unknown as TestDb, profileId)).toBe(1000);
   });
 });

@@ -1,18 +1,13 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { asc, eq, inArray } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
-import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
-import * as schema from "@/lib/db/schema";
-import {
-  auditLog, categories, cities, listingImages, listings, profiles, slugs, user, verticals,
-} from "@/lib/db/schema";
+import { makeListing, makeScaffold } from "@/test/factories";
+import { auditLog, listingImages } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
-import type { Viewer } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import { listingPaths } from "./paths";
+import { IP, key, owner } from "./photos.fixtures";
 import {
   createOwnerPhoto,
   deleteOwnerPhoto,
@@ -21,15 +16,6 @@ import {
   reorderOwnerPhotos,
   setOwnerPhotoAlt,
 } from "./photos";
-
-async function owner(tx: TestDb, role: "user" | "owner" | "admin" = "owner") {
-  const userId = `u_${randomUUID()}`;
-  await tx.insert(user).values({
-    id: userId, name: "Jo", email: `${userId}@example.test`, emailVerified: true,
-  });
-  const [profile] = await tx.insert(profiles).values({ userId, role }).returning({ id: profiles.id });
-  return { userId, profileId: profile!.id, viewer: { role, userId } as Viewer };
-}
 
 async function owned(tx: TestDb, patch: Record<string, unknown> = {}) {
   const ctx = await makeScaffold(tx);
@@ -40,10 +26,6 @@ async function owned(tx: TestDb, patch: Record<string, unknown> = {}) {
   return { ...jo, listingId, ctx };
 }
 
-const key = (listingId: string, n: number) =>
-  `listings/${listingId}/photo-${n.toString(16).padStart(16, "0")}.jpg`;
-
-const IP = "203.0.113.7";
 
 describe("ownerPhotoQuota", () => {
   it("reports the tier's cap and how much of it is used", async () => {
@@ -326,78 +308,5 @@ describe("deleteOwnerPhoto", () => {
       expect(await deleteOwnerPhoto(tx, jo.viewer, "nope", IP)).toEqual({ outcome: "not-found" });
       expect(await ownerPhotos(tx, jo.viewer, jo.listingId)).toHaveLength(1);
     });
-  });
-});
-
-/**
- * The one test in this file that cannot use the rollback harness.
- *
- * Two confirms have to be in flight AT THE SAME TIME against COMMITTED rows
- * for the listing lock to mean anything, and `withTestDb` gives one
- * transaction that is thrown away. So this opens its own connections, commits
- * an owner and a free-tier listing, races two confirms at `max - 1` and
- * cleans up after itself.
- */
-describe("createOwnerPhoto concurrency", () => {
-  const url =
-    process.env.TEST_DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_test";
-  const client = postgres(url, { max: 4 });
-  const database = drizzle(client, { schema }) as unknown as TestDb;
-  /** What the test committed, deleted in dependency order. */
-  const made = { userId: "", profileId: "", listingId: "", ctx: null as ListingCtx | null };
-
-  afterAll(async () => {
-    const { userId, profileId, listingId, ctx } = made;
-    if (profileId) await database.delete(auditLog).where(eq(auditLog.actorId, profileId));
-    if (listingId) await database.delete(listings).where(eq(listings.id, listingId));
-    if (ctx) {
-      await database.delete(slugs).where(eq(slugs.parentScope, ctx.cityId));
-      await database.delete(slugs).where(
-        inArray(slugs.entityId, [listingId, ctx.cityId, ctx.primaryCategoryId, ctx.verticalId]),
-      );
-      await database.delete(categories).where(eq(categories.id, ctx.primaryCategoryId));
-      await database.delete(cities).where(eq(cities.id, ctx.cityId));
-      await database.delete(verticals).where(eq(verticals.id, ctx.verticalId));
-    }
-    if (userId) await database.delete(user).where(eq(user.id, userId));
-    await client.end({ timeout: 5 });
-  });
-
-  it("lets exactly one of two simultaneous confirms through at the cap", async () => {
-    const max = siteConfig.tiers.free.maxImages!;
-    const jo = await owner(database);
-    made.userId = jo.userId;
-    made.profileId = jo.profileId;
-    const ctx = await makeScaffold(database);
-    made.ctx = ctx;
-    const listingId = await makeListing(database, ctx, {
-      name: "Race", tier: "free", ownerId: jo.profileId, claimStatus: "claimed",
-    });
-    made.listingId = listingId;
-
-    for (let n = 0; n < max - 1; n++) {
-      const r = await createOwnerPhoto(database, jo.viewer, {
-        listingId, storagePath: key(listingId, n), ip: IP,
-      });
-      expect(r.outcome).toBe("created");
-    }
-
-    const attempt = (n: number) =>
-      database.transaction(async (tx) =>
-        createOwnerPhoto(tx as unknown as TestDb, jo.viewer, {
-          listingId, storagePath: key(listingId, 100 + n), ip: IP,
-        }),
-      );
-    const [a, b] = await Promise.all([attempt(1), attempt(2)]);
-    expect([a.outcome, b.outcome].sort()).toEqual(["created", "limit"]);
-
-    const rows = await database
-      .select({ sortOrder: listingImages.sortOrder, isPrimary: listingImages.isPrimary })
-      .from(listingImages)
-      .where(eq(listingImages.listingId, listingId))
-      .orderBy(asc(listingImages.sortOrder));
-    expect(rows).toHaveLength(max);
-    expect(rows.map((r) => r.sortOrder)).toEqual([...Array(max).keys()]);
-    expect(rows.filter((r) => r.isPrimary)).toHaveLength(1);
   });
 });

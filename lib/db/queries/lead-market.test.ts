@@ -1,17 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import * as schema from "@/lib/db/schema";
 import {
-  auditLog, categories, cities, jobQueue, leadBlocklist, leadPurchases, leadRefunds, leadStandingOrders, leads, listings,
-  profiles, slugs, user, verticals,
+  auditLog, jobQueue, leadBlocklist, leadPurchases, leadRefunds, leadStandingOrders, leads, listings, profiles, user,
 } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import type { Viewer } from "@/lib/db/viewer";
-import { makeCategoryInCity, makeCity, makeScaffold, makeVertical, type ListingCtx } from "@/test/factories";
-import { credit, makeBuyer, makeLead, makeStandingOrder } from "@/test/leads";
+import { makeCity, makeScaffold, type ListingCtx } from "@/test/factories";
+import { makeBuyer, makeLead, makeStandingOrder } from "@/test/leads";
 import { siteConfig } from "@/config/site.config";
 import { creditBalance } from "./credits";
 import { checkLeadRules } from "@/lib/leads/rules";
@@ -590,74 +586,5 @@ describe("leadWonNotification", () => {
       await tx.update(leads).set({ status: "deleted" }).where(eq(leads.id, leadId));
       expect(await leadWonNotification(tx, SYSTEM, purchaseId)).toBeNull();
     });
-  });
-});
-
-/**
- * Two buyers press "buy" on one lead at the same moment, on two connections.
- * Committed rows, so both transactions really run at once; cleaned up after.
- */
-describe("buyLead concurrency", () => {
-  const url = process.env.TEST_DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_test";
-  const client = postgres(url, { max: 4, onnotice: () => {} });
-  const database = drizzle(client, { schema });
-  const made: { users: string[]; cityId?: string; verticalId?: string; categoryId?: string; listingIds: string[]; leadId?: string } = { users: [], listingIds: [] };
-
-  afterAll(async () => {
-    if (made.leadId) {
-      const sold = await database.select({ id: leadPurchases.id }).from(leadPurchases).where(eq(leadPurchases.leadId, made.leadId));
-      for (const { id } of sold) await database.delete(jobQueue).where(sql`${jobQueue.payload}->>'purchaseId' = ${id}`);
-      await database.delete(leadPurchases).where(eq(leadPurchases.leadId, made.leadId));
-      await database.delete(auditLog).where(eq(auditLog.entityId, made.leadId));
-      await database.delete(leads).where(eq(leads.id, made.leadId));
-    }
-    if (made.listingIds.length > 0) await database.delete(listings).where(inArray(listings.id, made.listingIds));
-    if (made.users.length > 0) await database.delete(user).where(inArray(user.id, made.users));
-    const entityIds = [made.cityId, made.categoryId, made.verticalId, ...made.listingIds].filter((x): x is string => !!x);
-    if (entityIds.length > 0) await database.delete(slugs).where(inArray(slugs.entityId, entityIds));
-    if (made.categoryId) await database.delete(categories).where(eq(categories.id, made.categoryId));
-    if (made.cityId) await database.delete(cities).where(eq(cities.id, made.cityId));
-    if (made.verticalId) await database.delete(verticals).where(eq(verticals.id, made.verticalId));
-    await client.end({ timeout: 5 });
-  });
-
-  it("sells to exactly one of two simultaneous buyers and debits only the winner", async () => {
-    const setup = await database.transaction(async (raw) => {
-      const tx = raw as unknown as TestDb;
-      // Committed while the test runs, so every name is unique: a "Leeds" or a
-      // "Barn Venues" here would collide with every other file's scaffold.
-      const tag = randomUUID().slice(0, 8);
-      const verticalId = await makeVertical(tx, `Race Vertical ${tag}`);
-      // And as invisible as a committed row can be to files that count
-      // globally: no region, an unpublished town, an inactive category.
-      const cityId = await makeCity(tx, `Race Town ${tag}`, null);
-      const ctx = { cityId, verticalId, primaryCategoryId: await makeCategoryInCity(tx, verticalId, cityId, `Race Things ${tag}`) };
-      await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, cityId));
-      await tx.update(categories).set({ isActive: false }).where(eq(categories.id, ctx.primaryCategoryId));
-      const a = await makeBuyer(tx, ctx, 5000);
-      const b = await makeBuyer(tx, ctx, 5000);
-      // A normalised phone no rule-checked test can draw, so this committed
-      // row is never another file's "duplicate".
-      const leadId = await makeLead(tx, ctx, { phoneNormalised: `race-${tag}` });
-      return { ctx, a, b, leadId };
-    });
-    Object.assign(made, {
-      users: [setup.a.authUserId, setup.b.authUserId], cityId: setup.ctx.cityId, verticalId: setup.ctx.verticalId,
-      categoryId: setup.ctx.primaryCategoryId, listingIds: [setup.a.listingId, setup.b.listingId], leadId: setup.leadId,
-    });
-
-    const attempt = (who: typeof setup.a) =>
-      database.transaction(async (raw) => {
-        const out = await buyLead(raw as unknown as TestDb, who.viewer, setup.leadId, who.listingId);
-        await new Promise((r) => setTimeout(r, 100));
-        return out;
-      });
-    const results = await Promise.all([attempt(setup.a), attempt(setup.b)]);
-    expect(results.map((r) => r.outcome).sort()).toEqual(["bought", "gone"]);
-
-    const db = database as unknown as TestDb;
-    const balances = [await creditBalance(db, setup.a.profileId), await creditBalance(db, setup.b.profileId)].sort();
-    expect(balances).toEqual([2500, 5000]);
-    expect(await database.select().from(leadPurchases).where(eq(leadPurchases.leadId, setup.leadId))).toHaveLength(1);
   });
 });

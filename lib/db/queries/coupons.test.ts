@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import * as schema from "@/lib/db/schema";
 import { coupons, couponRedemptions } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import { previewCoupon, redeemCoupon } from "./coupons";
@@ -99,57 +96,5 @@ describe("redeemCoupon", () => {
         reason: "exhausted",
       });
     });
-  });
-});
-
-/**
- * The one test in this file that cannot use the rollback harness.
- *
- * Two transactions have to be in flight AT THE SAME TIME against COMMITTED
- * data for the row lock to mean anything, and `withTestDb` gives one
- * transaction that is thrown away. So this opens its own connections, commits
- * a coupon, races two redemptions and cleans up after itself.
- */
-describe("redeemCoupon concurrency", () => {
-  const url =
-    process.env.TEST_DATABASE_URL ?? "postgres://directory:directory@localhost:5433/directory_test";
-  const client = postgres(url, { max: 4 });
-  const database = drizzle(client, { schema });
-  const code = `RACE-${randomUUID().slice(0, 8)}`.toUpperCase();
-
-  afterAll(async () => {
-    const [row] = await database.select({ id: coupons.id }).from(coupons).where(eq(coupons.code, code));
-    if (row) {
-      await database.delete(couponRedemptions).where(eq(couponRedemptions.couponId, row.id));
-      await database.delete(coupons).where(eq(coupons.id, row.id));
-    }
-    await client.end({ timeout: 5 });
-  });
-
-  it("lets exactly one of two simultaneous redemptions of a single-use code through", async () => {
-    await database.insert(coupons).values({
-      code,
-      discountType: "percent",
-      value: "50.00",
-      maxRedemptions: 1,
-    });
-
-    const attempt = () =>
-      database.transaction(async (tx) =>
-        redeemCoupon(tx as unknown as TestDb, OWNER, { code, ...CTX, profileId: null }),
-      );
-
-    const [a, b] = await Promise.all([attempt(), attempt()]);
-    const outcomes = [a.outcome, b.outcome].sort();
-    expect(outcomes).toEqual(["ok", "rejected"]);
-
-    const [row] = await database.select().from(coupons).where(eq(coupons.code, code));
-    expect(row!.redemptionCount).toBe(1);
-
-    const redemptions = await database
-      .select()
-      .from(couponRedemptions)
-      .where(eq(couponRedemptions.couponId, row!.id));
-    expect(redemptions).toHaveLength(1);
   });
 });
