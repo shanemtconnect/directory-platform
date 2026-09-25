@@ -92,7 +92,7 @@ import {
   boardDigestFor, leadRefundNotification, leadTopupNotification, leadWonNotification,
 } from "@/lib/db/queries/lead-market";
 import { boardDigest, leadRefundDecided, leadTopup, leadWon } from "@/lib/email/templates/leads";
-import { REFUND_REASON_LABELS } from "@/lib/leads/market";
+import { REFUND_REASON_LABELS, blocklistsOnRefund } from "@/lib/leads/market";
 
 /**
  * Drains the notification queue.
@@ -1094,6 +1094,7 @@ async function runLeadRefundDecided(db: Db, d: Delivery, payload: Record<string,
     ...leadRefundDecided({
       name: data.name,
       approved: data.status === "approved",
+      blocklisted: data.status === "approved" && blocklistsOnRefund(data.reason),
       price: creditMoney(data.priceCents),
       reason: REFUND_REASON_LABELS[data.reason],
       firstName: data.firstName,

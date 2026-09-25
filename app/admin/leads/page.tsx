@@ -25,7 +25,10 @@ export const metadata: Metadata = {
 };
 
 const REFUND_MESSAGES: Record<string, { variant: "success" | "error"; text: string }> = {
-  approved: { variant: "success", text: "Refund approved: credited back, phone and email blocklisted for 12 months, and the buyer emailed." },
+  approved: {
+    variant: "success",
+    text: "Refund approved: credited back and the buyer emailed. For a dead phone, wrong person, spam or never-asked report the phone and email are also blocklisted for 12 months.",
+  },
   rejected: { variant: "success", text: "Refund rejected. The buyer has been emailed your note." },
   "note-required": { variant: "error", text: "Please say why when rejecting. The buyer is sent your note." },
   "already-decided": { variant: "error", text: "That report has already been decided." },

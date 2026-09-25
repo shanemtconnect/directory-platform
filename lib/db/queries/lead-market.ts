@@ -10,7 +10,7 @@ import type { TestDb } from "@/lib/db/types";
 import { regionSlug } from "@/lib/routing/slugs";
 import { notifyLeadRefundDecided } from "@/lib/email/notify";
 import {
-  BLOCKLIST_MONTHS, MAX_STANDING_ORDERS_PER_LISTING, currentPriceCents, floorCents, isRefundRateFlagged,
+  BLOCKLIST_MONTHS, MAX_STANDING_ORDERS_PER_LISTING, blocklistsOnRefund, currentPriceCents, floorCents, isRefundRateFlagged,
   isRefundReason, orderCovers, refundRate, refundWindowOpen, type LeadPlace, type RefundReason,
 } from "@/lib/leads/market";
 import { InsufficientCredit, creditBalance, debitForPurchase, refundToCredit } from "./credits";
@@ -771,8 +771,9 @@ function addMonths(d: Date, months: number): Date {
 /**
  * The admin's call on a bad-lead report (D10). Approve: the price goes back
  * as credit (`refundToCredit`, idempotent per refund), the lead's phone and
- * email are blocklisted for 12 months, and `lead.refund_approved` is
- * audited. The lead itself stays `sold` — a refund re-opens nothing, and
+ * email are blocklisted for 12 months when the reason is the requester's
+ * doing (`blocklistsOnRefund` — not `wrong_area` or `bounced`), and
+ * `lead.refund_approved` is audited. The lead itself stays `sold` — a refund re-opens nothing, and
  * nobody else is offered a lead that has just been reported as bad. Reject:
  * a note is required, so the buyer is told why. Either way the buyer is
  * emailed.
@@ -815,9 +816,9 @@ export async function decideRefund(
   if (input.approve) {
     ({ balanceCents } = await refundToCredit(tx, viewer, { userId: row.userId, cents: row.priceCents, leadId: row.leadId, refundId }));
     const until = addMonths(at, BLOCKLIST_MONTHS);
-    const entries = [
+    const entries = !blocklistsOnRefund(row.reason) ? [] : [
       ...(row.phone ? [{ kind: "phone" as const, value: row.phone }] : []),
-      { kind: "email" as const, value: row.email },
+      ...(row.email ? [{ kind: "email" as const, value: row.email }] : []),
     ];
     for (const e of entries) {
       await tx
@@ -839,7 +840,10 @@ export async function decideRefund(
     action: input.approve ? "lead.refund_approved" : "lead.refund_rejected",
     entityType: "lead",
     entityId: row.leadId,
-    meta: { refundId, purchaseId: row.purchaseId, reason: row.reason, cents: row.priceCents, note: note === "" ? null : note },
+    meta: {
+      refundId, purchaseId: row.purchaseId, reason: row.reason, cents: row.priceCents, note: note === "" ? null : note,
+      blocklisted: input.approve && blocklistsOnRefund(row.reason),
+    },
     ip: input.ip ?? null,
   });
   await notifyLeadRefundDecided(tx, viewer, refundId);

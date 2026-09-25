@@ -816,9 +816,11 @@ the buyer reports a bad lead for one of: dead phone, wrong person, bounced
 email, spam, never asked, wrong area. `/admin/leads` lists the reports with
 each buyer's refund rate (reports ÷ leads bought; ⚠ above a third — a flag,
 never an automatic block). **Approve** credits the price back
-(`refundToCredit`), blocklists the lead's phone and email for 12 months (the
-next request from either is refused), audits `lead.refund_approved` and
-emails the buyer; **Reject** needs a note, which the buyer is sent. A refund
+(`refundToCredit`), audits `lead.refund_approved` and emails the buyer; for
+dead phone, wrong person, spam and never asked — the requester's doing — it
+also blocklists the lead's phone and email for 12 months (the next request
+from either is refused). Wrong area (our data) and a bounced email (often a
+typo) are refunded without a blocklist; **Reject** needs a note, which the buyer is sent. A refund
 re-opens nothing: the lead stays `sold`. `/admin/leads` can also delete a
 lead (off the board, out of the buyer's account; audited `lead.deleted`).
 Pending reports are counted on the dashboard and beside the nav link.

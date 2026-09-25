@@ -39,10 +39,13 @@ describe("leadTopup", () => {
 
 describe("leadRefundDecided", () => {
   it("approved: credit back; rejected: the admin's reason", () => {
-    const ok = leadRefundDecided({ name: null, approved: true, price: "£25", reason: "The email address bounces", firstName: "Sam", brief: "Eighty guests", note: null, leadsUrl: "https://x/account/leads" });
+    const ok = leadRefundDecided({ name: null, approved: true, blocklisted: true, price: "£25", reason: "The email address bounces", firstName: "Sam", brief: "Eighty guests", note: null, leadsUrl: "https://x/account/leads" });
     expect(ok.subject.toLowerCase()).toContain("refunded");
     expect(ok.text).toContain("£25");
-    const no = leadRefundDecided({ name: null, approved: false, price: "£25", reason: "The email address bounces", firstName: "Sam", brief: "Eighty guests", note: "It delivered fine.", leadsUrl: "https://x/account/leads" });
+    expect(ok.text).toContain("can no longer send leads");
+    const typo = leadRefundDecided({ name: null, approved: true, blocklisted: false, price: "£25", reason: "The email address bounces", firstName: "Sam", brief: "Eighty guests", note: null, leadsUrl: "https://x/account/leads" });
+    expect(typo.text).not.toContain("can no longer send leads");
+    const no = leadRefundDecided({ name: null, approved: false, blocklisted: false, price: "£25", reason: "The email address bounces", firstName: "Sam", brief: "Eighty guests", note: "It delivered fine.", leadsUrl: "https://x/account/leads" });
     expect(no.text).toContain("It delivered fine.");
     expect(no.subject.toLowerCase()).not.toContain("refunded");
   });

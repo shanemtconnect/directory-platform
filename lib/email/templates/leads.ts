@@ -78,6 +78,8 @@ export function leadTopup(d: LeadTopupData): EmailContent {
 export interface LeadRefundDecidedData {
   name: string | null;
   approved: boolean;
+  /** Whether the approval blocklisted the requester (not for `wrong_area` or `bounced`). */
+  blocklisted: boolean;
   price: string;
   /** The reason as the buyer chose it, in words. */
   reason: string;
@@ -94,7 +96,11 @@ export function leadRefundDecided(d: LeadRefundDecidedData): EmailContent {
     { label: "The lead", value: `${d.firstName}: ${d.brief}` },
     { label: "You reported", value: d.reason },
     d.approved
-      ? { value: `We have refunded ${d.price} to your lead credit, and that phone number and address can no longer send leads.` }
+      ? {
+          value: d.blocklisted
+            ? `We have refunded ${d.price} to your lead credit, and that phone number and address can no longer send leads.`
+            : `We have refunded ${d.price} to your lead credit.`,
+        }
       : { value: "We looked at your report and have not refunded this lead." },
     ...(d.note === null ? [] : [{ label: d.approved ? "Note" : "Why", value: d.note }]),
     { label: "Your leads", value: "Purchases and refunds", href: d.leadsUrl },

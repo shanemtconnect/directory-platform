@@ -27,7 +27,8 @@ export function RefundPolicy() {
         ))}
       </ul>
       <p className="text-muted text-sm">
-        When we refund a lead, its phone number and email address cannot send us another lead for 12 months.
+        When we refund a lead because the number is dead, the person is the wrong one, the request is spam or they
+        never asked, that phone number and email address cannot send us another lead for 12 months.
       </p>
     </section>
   );

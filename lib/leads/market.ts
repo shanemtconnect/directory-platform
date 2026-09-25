@@ -96,6 +96,16 @@ export function isRefundRateFlagged(purchases: number, refundRequests: number): 
 /** How long an approved refund keeps the lead's phone and email off the market. */
 export const BLOCKLIST_MONTHS = 12;
 
+/**
+ * The refund reasons that are the requester's doing, so an approval
+ * blocklists their phone and email. `wrong_area` (our data put the lead in
+ * the wrong town) and `bounced` (often a typo) are refunded without blaming
+ * the person who asked.
+ */
+export const BLOCKLISTING_REASONS: readonly RefundReason[] = ["dead_phone", "wrong_person", "spam", "never_asked"];
+
+export const blocklistsOnRefund = (reason: RefundReason): boolean => BLOCKLISTING_REASONS.includes(reason);
+
 /* ------------------------------------------------------------- coverage */
 
 /** What a standing order needs to know about a lead to decide whether it covers it. */

@@ -138,7 +138,8 @@ of at least the floor — which buy each new lead the moment it is confirmed,
 highest price first. A lead nobody's order takes stays on the board and
 halves in price after `halfPriceAfterDays`. Refunds are credit only, for the
 six reasons printed on the board, within `refundWindowDays`, approved at
-`/admin/leads`; an approval blocklists the lead's phone and email for a year.
+`/admin/leads`; an approval for a dead phone, wrong person, spam or "never
+asked" also blocklists the lead's phone and email for a year.
 The no-refund wording lives in `lib/leads/market.ts` — edit it there if your
 market's norms differ. Nothing else in the lead market needs configuring.
 

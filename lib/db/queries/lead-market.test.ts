@@ -189,6 +189,30 @@ describe("refunds", () => {
     });
   });
 
+  it.each(["wrong_area", "bounced"] as const)("approving a %s refund credits back but blocklists nothing — not the requester's fault", async (reason) => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const { buyer, leadId } = await bought(tx, ctx);
+      const req = await requestRefund(tx, buyer.viewer, { leadId, reason, note: "" }, at(1));
+      const out = await decideRefund(tx, await admin(tx), (req as { refundId: string }).refundId, { approve: true, note: "" }, at(2));
+      expect(out).toEqual({ outcome: "approved", balanceCents: 5000 });
+      expect(await tx.select().from(leadBlocklist).where(eq(leadBlocklist.leadId, leadId))).toHaveLength(0);
+      const [lead] = await tx.select().from(leads).where(eq(leads.id, leadId));
+      expect(await checkLeadRules(tx, { email: "another@example.co.uk", phone: lead!.phone, country: "GB" })).not.toEqual({ reason: "blocklisted" });
+    });
+  });
+
+  it.each(["dead_phone", "wrong_person", "spam", "never_asked"] as const)("approving a %s refund blocklists phone and email", async (reason) => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const { buyer, leadId } = await bought(tx, ctx);
+      const req = await requestRefund(tx, buyer.viewer, { leadId, reason, note: "" }, at(1));
+      await decideRefund(tx, await admin(tx), (req as { refundId: string }).refundId, { approve: true, note: "" }, at(2));
+      const blocked = await tx.select().from(leadBlocklist).where(eq(leadBlocklist.leadId, leadId));
+      expect(blocked.map((b) => b.kind).sort()).toEqual(["email", "phone"]);
+    });
+  });
+
   it("rejection needs a note, pays nothing and blocks nothing", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
