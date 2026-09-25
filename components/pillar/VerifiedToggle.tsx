@@ -30,11 +30,15 @@ export function VerifiedToggle({
   return (
     <p data-testid="verified-toggle" className="mb-4">
       {active ? (
-        <a href={offHref} aria-pressed="true">
+        <a href={offHref} aria-current="true">
           ✓ Verified {nounPlural} only — show all
         </a>
       ) : (
-        <a href={onHref} aria-pressed="false">
+        // nofollow: this link is the one thing on an ISR-cached, crawled
+        // pillar page that points at the uncached verified view — a crawler
+        // must not walk it (see Pagination's own `rel` doc for the rest of
+        // that view). noindex on the destination is a separate concern.
+        <a href={onHref} rel="nofollow">
           Show verified {nounPlural} only
         </a>
       )}

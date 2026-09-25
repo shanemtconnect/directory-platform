@@ -53,6 +53,11 @@ export function Pagination({ basePath, page, totalPages, searchStyle = false, ve
     }
     return withVerified(`${basePath}/page/${n}`);
   };
+  // Every page of the verified view is an uncached, forced render (see
+  // `verified`'s own doc above) — nofollow keeps a crawler from walking every
+  // page of every filtered grid on top of the unfiltered site it already
+  // crawls, without touching indexability (that's `noindex`, set separately).
+  const rel = (base?: string) => (verified ? [base, "nofollow"].filter(Boolean).join(" ") : base);
 
   return (
     <nav
@@ -63,7 +68,7 @@ export function Pagination({ basePath, page, totalPages, searchStyle = false, ve
       <ul className="flex list-none flex-wrap items-center gap-2 p-0">
         {page > 1 && (
           <li>
-            <a href={href(page - 1)} rel="prev" className={LINK}>
+            <a href={href(page - 1)} rel={rel("prev")} className={LINK}>
               Previous
             </a>
           </li>
@@ -89,7 +94,7 @@ export function Pagination({ basePath, page, totalPages, searchStyle = false, ve
                   {slot}
                 </span>
               ) : (
-                <a href={href(slot)} className={LINK} aria-label={`Page ${slot}`}>
+                <a href={href(slot)} rel={rel()} className={LINK} aria-label={`Page ${slot}`}>
                   {slot}
                 </a>
               )}
@@ -99,7 +104,7 @@ export function Pagination({ basePath, page, totalPages, searchStyle = false, ve
 
         {page < totalPages && (
           <li>
-            <a href={href(page + 1)} rel="next" className={LINK}>
+            <a href={href(page + 1)} rel={rel("next")} className={LINK}>
               Next
             </a>
           </li>
