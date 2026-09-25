@@ -7,7 +7,8 @@ import { createQuoteRequest } from "@/lib/db/queries/quotes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { notifyQuoteVerify } from "@/lib/email/notify";
 import { isEnabled } from "@/lib/features/flags";
-import { checkLeadRules, type LeadRejection } from "@/lib/leads/rules";
+import { checkLeadRules } from "@/lib/leads/rules";
+import { leadRefusal } from "@/lib/leads/refusal";
 import { clientIp } from "@/lib/spam/client-ip";
 import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
 import { LEAD_CAPTURE_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
@@ -34,33 +35,6 @@ export interface LeadCaptureState {
 }
 
 const CHECK_FIELDS = "Please check the fields marked below.";
-
-function refusal(reason: LeadRejection): LeadCaptureState {
-  switch (reason) {
-    case "phone_invalid":
-      return {
-        status: "error",
-        message: CHECK_FIELDS,
-        fieldErrors: { phone: "Please give a phone number we can call, including the area code." },
-      };
-    case "disposable_email":
-      return {
-        status: "error",
-        message: CHECK_FIELDS,
-        fieldErrors: { email: "Please use an email address you will still have next week." },
-      };
-    case "duplicate":
-      return {
-        status: "error",
-        message:
-          "You have sent us a request from these details in the last 30 days. That one still stands — there is no need to send it again.",
-      };
-    case "blocklisted":
-      // Deliberately unspecific: saying which detail is refused would only
-      // tell a bad actor which one to change.
-      return { status: "error", message: "We can't accept a request from these contact details." };
-  }
-}
 
 export async function submitCaptureLead(
   _prev: LeadCaptureState,
@@ -107,13 +81,15 @@ export async function submitCaptureLead(
     case "created":
       return { status: "sent" };
     case "refused":
-      return refusal(result.reason);
+      return { status: "error", ...leadRefusal(result.reason) };
     case "unknown-city":
       return { status: "error", fieldErrors: { cityId: "Please choose a town." }, message: CHECK_FIELDS };
     case "unknown-category":
       return { status: "error", fieldErrors: { categoryId: "Please choose a category." }, message: CHECK_FIELDS };
     case "no-recipients":
-      // Unreachable for a capture request, which picks no recipients.
+    case "lead-refused":
+      // Unreachable for a capture request: it picks no recipients, and its
+      // rules ran above.
       return { status: "error", message: "Something went wrong. Please try again." };
   }
 }

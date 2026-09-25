@@ -238,6 +238,28 @@ describe("createQuoteRequest", () => {
     });
   });
 
+  it("with the lead marketplace on, keeps a no-recipient request only if it can become a lead — and says why not", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: null });
+      const opts = { allowNoRecipients: true };
+
+      // No phone: the only destination is a lead, and a lead needs a number to ring.
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { phone: null }), opts))
+        .toEqual({ outcome: "lead-refused", reason: "phone_invalid" });
+      // A fiction number, a throwaway inbox: the same, told now rather than dropped after the click.
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { phone: "01632 960123" }), opts))
+        .toEqual({ outcome: "lead-refused", reason: "phone_invalid" });
+      expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { email: "x@mailinator.com" }), opts))
+        .toEqual({ outcome: "lead-refused", reason: "disposable_email" });
+      expect(await tx.select().from(quoteRequests)).toHaveLength(0);
+
+      // A request that DOES reach a listing is never held to the lead rules.
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      expect((await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { phone: null }), opts)).outcome).toBe("created");
+    });
+  });
+
   it("stores a capture request with no recipients even where listings could receive it", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
@@ -576,6 +598,27 @@ describe("expireQuoteRequests", () => {
       expect(await statusOf(confirmed.quoteRequestId)).toBe("verified");
       expect(await statusOf(fresh.quoteRequestId)).toBe("pending");
       expect(await expireQuoteRequests(tx, ADMIN)).toBe(0);
+    });
+  });
+});
+
+describe("free at submit, upgraded before the click", () => {
+  it("makes no lead: the paying local keeps its free quote (D5 reads the tier at the click)", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { email: "free@example.com" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { email: `up-${randomUUID()}@example.co.uk` }));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      await tx.update(listings).set({ tier: "essential" }).where(eq(listings.id, listingId));
+      await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
+
+      const { createLeadFromQuote } = await import("./leads");
+      expect(await createLeadFromQuote(tx, PUBLIC_VIEWER, created.quoteRequestId)).toBeNull();
+
+      // …whereas one still free at the click does make one.
+      await tx.update(listings).set({ tier: "free" }).where(eq(listings.id, listingId));
+      expect((await createLeadFromQuote(tx, PUBLIC_VIEWER, created.quoteRequestId))?.status).toBe("open");
     });
   });
 });

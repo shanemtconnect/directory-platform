@@ -13,6 +13,7 @@ import type { TestDb } from "@/lib/db/types";
 import { recordStat } from "@/lib/stats/counters";
 import { hashToken } from "@/lib/security/token-hash";
 import { QUOTE_VERIFY_TTL_HOURS } from "@/lib/quotes/verify-ttl";
+import { checkLeadRules, type LeadRejection } from "@/lib/leads/rules";
 import { writeAudit } from "./audit";
 import { ownedByViewer } from "./owner";
 
@@ -146,7 +147,14 @@ export type QuoteRequestResult =
   | { outcome: "unknown-city" }
   | { outcome: "unknown-category" }
   /** Nothing published in that town and category has an address. Nothing was written. */
-  | { outcome: "no-recipients" };
+  | { outcome: "no-recipients" }
+  /**
+   * Lead marketplace on, nobody local can receive it — so its only
+   * destination is a lead — and the lead rules refuse it (D11). Nothing was
+   * written; the requester is told why now, not after a click that would
+   * have gone nowhere.
+   */
+  | { outcome: "lead-refused"; reason: LeadRejection };
 
 /**
  * The write. Caller supplies the transaction so the request, its recipients,
@@ -195,8 +203,16 @@ export async function createQuoteRequest(
       categoryId: input.categoryId,
       limit: opts.maxRecipients ?? siteConfig.quotes.maxRecipients,
     });
-  if (recipients.length === 0 && source === "quote" && opts.allowNoRecipients !== true) {
-    return { outcome: "no-recipients" };
+  if (recipients.length === 0 && source === "quote") {
+    if (opts.allowNoRecipients !== true) return { outcome: "no-recipients" };
+    // Kept only if it can become a lead: a phone the rules accept (the form's
+    // phone is optional, a lead's is not), no throwaway inbox, no blocklist,
+    // no duplicate. Checked again at the click; this is where the requester
+    // can still be told.
+    const verdict = await checkLeadRules(tx, {
+      email: input.email, phone: input.phone, country: siteConfig.country,
+    });
+    if (verdict !== "ok") return { outcome: "lead-refused", reason: verdict.reason };
   }
 
   const at = now();

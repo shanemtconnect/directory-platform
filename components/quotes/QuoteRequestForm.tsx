@@ -126,7 +126,12 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
 
       <p>
         <label htmlFor="quote-phone">Phone (optional)</label>
-        <input id="quote-phone" name="phone" type="tel" maxLength={40} autoComplete="tel" />
+        <input id="quote-phone" name="phone" type="tel" maxLength={40} autoComplete="tel" aria-invalid={Boolean(err.phone)} />
+        {leadMarketplace && (
+          // With the lead marketplace on, a request nobody listed there can
+          // take is passed on as a lead, and a lead needs a number to ring.
+          <small className="text-muted">Needed if nobody listed in that town can take the request directly.</small>
+        )}
         {err.phone && <span role="alert">{err.phone}</span>}
       </p>
 

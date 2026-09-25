@@ -143,6 +143,34 @@ describe("submitQuoteRequest", () => {
     expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: true });
   });
 
+  it("with the lead marketplace on, tells the requester when a no-recipient request could not become a lead", async () => {
+    isEnabled.mockImplementation((flag) => flag === "quoteBroadcast" || flag === "leadMarketplace");
+    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "phone_invalid" });
+
+    const state = await submit({ ...good, phone: "" });
+
+    expect(state.status).toBe("error");
+    expect(state.fieldErrors?.phone).toMatch(/phone number we can call/);
+    expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: true });
+    // Handed the refusal, which queues nothing (notifyQuoteVerify ignores anything but "created").
+    expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, { outcome: "lead-refused", reason: "phone_invalid" });
+
+    createQuoteRequest.mockResolvedValue({ outcome: "lead-refused", reason: "duplicate" });
+    expect((await submit(good)).message).toMatch(/last 30 days/);
+  });
+
+  it("with the lead marketplace off, still refuses a request nobody can receive, as before", async () => {
+    createQuoteRequest.mockResolvedValue({ outcome: "no-recipients" });
+
+    const state = await submit({ ...good, phone: "" });
+
+    expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.any(Object), { allowNoRecipients: false });
+    expect(state).toEqual({
+      status: "error",
+      message: "Nobody in that town and category can take a request right now. Try a nearby town.",
+    });
+  });
+
   it("refuses when the feature flag is off, before anything else", async () => {
     isEnabled.mockReturnValue(false);
 

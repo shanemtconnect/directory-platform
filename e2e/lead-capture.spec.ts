@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { features } from "@/lib/features/flags";
-import { uniquePhone } from "./fixtures";
+import { leadPhone } from "./fixtures";
 import { E2E_DATABASE_URL } from "./database";
 
 /**
@@ -61,7 +61,7 @@ test("capture box on the home page: request, verification link, open lead", asyn
   await form.locator("#lead-capture-home-message").fill(JOB);
   await form.locator("#lead-capture-home-name").fill("Playwright Capture");
   await form.locator("#lead-capture-home-email").fill(EMAIL);
-  await form.locator("#lead-capture-home-phone").fill(uniquePhone());
+  await form.locator("#lead-capture-home-phone").fill(leadPhone());
   await form.locator("#lead-capture-home-consent").check();
   await expect(form.locator('input[name="cf-turnstile-response"]')).not.toHaveValue("", { timeout: 15_000 });
   await form.locator('button[type="submit"]').click();

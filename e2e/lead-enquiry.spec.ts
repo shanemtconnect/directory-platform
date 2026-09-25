@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { features } from "@/lib/features/flags";
-import { uniquePhone } from "./fixtures";
+import { leadPhone } from "./fixtures";
 import { E2E_DATABASE_URL } from "./database";
 
 /**
@@ -56,7 +56,7 @@ test("an enquiry to an unclaimed no-email listing becomes a lead only after the 
   await expect(form).toBeVisible();
   await form.locator("#enq-name").fill("Playwright Enquirer");
   await form.locator("#enq-email").fill(EMAIL);
-  await form.locator("#enq-phone").fill(uniquePhone());
+  await form.locator("#enq-phone").fill(leadPhone());
   await form.locator("#enq-message").fill(`Automated enquiry-lead test (${stamp}). Is 3 May free?`);
   await expect(form.locator('input[name="cf-turnstile-response"]')).not.toHaveValue("", { timeout: 15_000 });
   await form.locator('button[type="submit"]').click();

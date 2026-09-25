@@ -18,6 +18,7 @@ import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
 import { QUOTE_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import type { TestDb } from "@/lib/db/types";
 import { isUuid } from "./validation";
+import { leadRefusal } from "@/lib/leads/refusal";
 import { validateQuoteRequest } from "./quotes-validation";
 
 /**
@@ -107,6 +108,10 @@ export async function submitQuoteRequest(
         status: "error",
         message: "Nobody in that town and category can take a request right now. Try a nearby town.",
       };
+    case "lead-refused":
+      // Lead marketplace on and nobody local can take it, so it would only
+      // ever be a lead — and the lead rules say no (most often: no phone).
+      return { status: "error", ...leadRefusal(result.reason) };
     case "unknown-city":
       return { status: "error", fieldErrors: { cityId: "Please choose a town." }, message: "Please check the fields marked below." };
     case "unknown-category":
