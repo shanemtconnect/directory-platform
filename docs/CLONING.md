@@ -129,8 +129,9 @@ lead. The privacy line on every form then reads from `lib/leads/consent.ts`. The
 wizard writes the defaults into `leads` in `config/site.config.ts` — `floor`
 (what a lead sells for, in the site currency; at least 1), `packs` (credit
 top-ups, ascending), `halfPriceAfterDays`, `deleteAfterDays`,
-`refundWindowDays` — and the build refuses a floor below 1 or packs out of
-order. Price your market there, never in a page.
+`refundWindowDays`, `retainSoldDays` (how long a sold lead's contact details
+are kept after the sale; 90 by default) — and the build refuses a floor below
+1, packs out of order, or a `retainSoldDays` shorter than `refundWindowDays`. Price your market there, never in a page.
 
 Buyers see leads at `/leads` (signed-in only) and set up **standing orders**
 at `/account/leads` — towns, regions or everywhere, categories, and a price

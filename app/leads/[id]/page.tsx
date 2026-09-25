@@ -18,6 +18,10 @@ import type { TestDb } from "@/lib/db/types";
  * won email). Anyone else — another account, an id that does not exist, a
  * lead not bought — gets the same 404, so the URL says nothing.
  *
+ * The details are purged `retainSoldDays` after the sale (`leads.sweep`);
+ * the page then says so, and keeps the first name, brief, town and any
+ * report. The won email is the buyer's record.
+ *
  * Within `refundWindowDays` of buying, the buyer can report a bad lead for
  * one of the D10 reasons; after that, or once reported, the page says where
  * the report stands.
@@ -64,7 +68,7 @@ export default async function LeadPage({ params, searchParams }: Props) {
     <main data-testid="lead-detail">
       <div className="mx-auto max-w-2xl">
         <PageHeader
-          title={`${lead.name} in ${lead.cityName}`}
+          title={`${lead.contact?.name || lead.firstName} in ${lead.cityName}`}
           lede={`You bought this lead on ${lead.boughtAt.toLocaleDateString(siteConfig.locale)} for ${formatCredit(lead.priceCents)}.`}
           back={{ href: "/account/leads", label: "Your leads" }}
         />
@@ -74,20 +78,37 @@ export default async function LeadPage({ params, searchParams }: Props) {
           </Notice>
         )}
 
-        <dl className="mb-8" data-testid="lead-contact">
-          <dt className="font-semibold">Name</dt>
-          <dd data-testid="lead-name">{lead.name}</dd>
-          <dt className="font-semibold">Phone</dt>
-          <dd data-testid="lead-phone">{lead.phone ? <a href={`tel:${lead.phone.replace(/\s+/g, "")}`}>{lead.phone}</a> : "Not given"}</dd>
-          <dt className="font-semibold">Email</dt>
-          <dd data-testid="lead-email">
-            <a href={`mailto:${lead.email}`}>{lead.email}</a>
-          </dd>
-          <dt className="font-semibold">Where</dt>
-          <dd>{place}</dd>
-          <dt className="font-semibold">What they asked for</dt>
-          <dd className="whitespace-pre-line" data-testid="lead-message">{lead.message}</dd>
-        </dl>
+        {lead.contact === null ? (
+          <>
+            <Notice variant="status" testId="lead-contact-expired">
+              The contact details for this lead have expired: we delete them {siteConfig.leads.retainSoldDays} days
+              after a sale. The email we sent you when you bought it has them.
+            </Notice>
+            <dl className="mb-8">
+              <dt className="font-semibold">Where</dt>
+              <dd>{place}</dd>
+              <dt className="font-semibold">What they asked for</dt>
+              <dd>{lead.brief}</dd>
+            </dl>
+          </>
+        ) : (
+          <dl className="mb-8" data-testid="lead-contact">
+            <dt className="font-semibold">Name</dt>
+            <dd data-testid="lead-name">{lead.contact.name}</dd>
+            <dt className="font-semibold">Phone</dt>
+            <dd data-testid="lead-phone">
+              {lead.contact.phone ? <a href={`tel:${lead.contact.phone.replace(/\s+/g, "")}`}>{lead.contact.phone}</a> : "Not given"}
+            </dd>
+            <dt className="font-semibold">Email</dt>
+            <dd data-testid="lead-email">
+              <a href={`mailto:${lead.contact.email}`}>{lead.contact.email}</a>
+            </dd>
+            <dt className="font-semibold">Where</dt>
+            <dd>{place}</dd>
+            <dt className="font-semibold">What they asked for</dt>
+            <dd className="whitespace-pre-line" data-testid="lead-message">{lead.contact.message}</dd>
+          </dl>
+        )}
 
         <section aria-labelledby="lead-report-heading">
           <h2 id="lead-report-heading">Report a bad lead</h2>

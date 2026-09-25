@@ -15,6 +15,8 @@ const greeting = (name: string | null): Block[] =>
 export interface LeadWonData {
   buyerName: string | null;
   listingName: string | null;
+  /** Bought by a standing order (true) or off the board (false). */
+  viaStandingOrder: boolean;
   /** What it cost, e.g. "£40". */
   price: string;
   name: string;
@@ -33,7 +35,9 @@ export function leadWon(d: LeadWonData): EmailContent {
     ...greeting(d.buyerName),
     {
       value:
-        `Your standing order${d.listingName === null ? "" : ` for ${d.listingName}`} has bought a lead for ${d.price}. ` +
+        (d.viaStandingOrder
+          ? `Your standing order${d.listingName === null ? "" : ` for ${d.listingName}`} has bought a lead for ${d.price}. `
+          : `You bought this lead${d.listingName === null ? "" : ` for ${d.listingName}`} for ${d.price}. `) +
         "The person asked to be contacted, so get in touch soon.",
     },
     { label: "Name", value: d.name },
@@ -44,11 +48,15 @@ export function leadWon(d: LeadWonData): EmailContent {
     { label: "This lead", value: "Details and 'report a bad lead'", href: d.leadUrl },
     {
       value:
+        `Keep this email: we delete the contact details from the site ${siteConfig.leads.retainSoldDays} days after a sale.`,
+    },
+    {
+      value:
         `If the number is dead, the address bounces or the person never asked, report it from the lead's page within ` +
         `${siteConfig.leads.refundWindowDays} days and we will look at a refund to your credit.`,
     },
   ];
-  return { subject, ...layout({ subject, heading: "You have a new lead", blocks }) };
+  return { subject, ...layout({ subject, heading: d.viaStandingOrder ? "You have a new lead" : "Your lead's details", blocks }) };
 }
 
 export interface LeadTopupData {

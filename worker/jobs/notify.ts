@@ -1053,6 +1053,7 @@ async function runLeadWon(db: Db, d: Delivery, payload: Record<string, unknown>)
     ...leadWon({
       buyerName: data.buyerName,
       listingName: data.listingName,
+      viaStandingOrder: data.viaStandingOrder,
       price: creditMoney(data.priceCents),
       name: data.name,
       email: data.leadEmail,

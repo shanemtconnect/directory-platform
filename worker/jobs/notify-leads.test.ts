@@ -90,8 +90,12 @@ describe("lead-market notifications", () => {
       const req = await requestRefund(tx, buyer.viewer, { leadId, reason: "bounced", note: "" });
       await decideRefund(tx, await admin(tx), (req as { refundId: string }).refundId, { approve: true, note: "" });
       await processNotifications(tx);
-      const [mail] = to(buyer.email);
-      expect(String(mail!.subject)).toContain("refunded");
+      // Two emails: the board purchase's details (the buyer's record), then the decision.
+      const mails = to(buyer.email);
+      expect(mails).toHaveLength(2);
+      expect(String(mails[0]!.text)).toContain("You bought this lead");
+      expect(String(mails[0]!.text)).toContain(`lead-${leadId}@example.co.uk`);
+      const mail = mails.find((m) => String(m.subject).includes("refunded"));
       expect(String(mail!.text)).toContain("The email address bounces");
     });
   });

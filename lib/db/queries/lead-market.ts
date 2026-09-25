@@ -5,10 +5,11 @@ import {
 import type { Territory } from "@/lib/db/schema/lead-market";
 import { ensureProfile } from "@/lib/auth/profile";
 import { now } from "@/lib/clock";
+import { siteConfig } from "@/config/site.config";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 import { regionSlug } from "@/lib/routing/slugs";
-import { notifyLeadRefundDecided } from "@/lib/email/notify";
+import { notifyLeadRefundDecided, notifyLeadWon } from "@/lib/email/notify";
 import {
   BLOCKLIST_MONTHS, MAX_STANDING_ORDERS_PER_LISTING, blocklistsOnRefund, currentPriceCents, floorCents, isRefundRateFlagged,
   isRefundReason, orderCovers, refundRate, refundWindowOpen, type LeadPlace, type RefundReason,
@@ -238,6 +239,9 @@ export async function buyLead(tx: TestDb, viewer: Viewer, leadId: string, listin
   const purchaseId = await recordSale(tx, viewer, {
     leadId: lead.id, profileId: profile.id, listingId, standingOrderId: null, priceCents: price, ledgerId,
   }, at);
+  // The won email is the buyer's lasting record: the page's copy of the
+  // details is purged `retainSoldDays` after the sale.
+  await notifyLeadWon(tx, viewer, purchaseId);
   return { outcome: "bought", purchaseId };
 }
 
@@ -309,10 +313,11 @@ export interface PurchasedLead {
   readonly purchaseId: string;
   readonly boughtAt: Date;
   readonly priceCents: number;
-  readonly name: string;
-  readonly email: string;
-  readonly phone: string | null;
-  readonly message: string;
+  readonly firstName: string;
+  readonly brief: string;
+  /** Null once `leads.sweep` has purged it, `retainSoldDays` after the sale. */
+  readonly contact: { name: string; email: string; phone: string | null; message: string } | null;
+  readonly contactPurgedAt: Date | null;
   readonly cityName: string;
   readonly categoryName: string | null;
   readonly createdAt: Date;
@@ -332,7 +337,8 @@ export async function purchasedLead(tx: TestDb, viewer: Viewer, leadId: string, 
     .select({
       leadId: leads.id, purchaseId: leadPurchases.id, boughtAt: leadPurchases.createdAt, priceCents: leadPurchases.priceCents,
       name: leads.name, email: leads.email, phone: leads.phone, message: leads.message, cityName: cities.name,
-      categoryName: categories.name, createdAt: leads.createdAt,
+      categoryName: categories.name, createdAt: leads.createdAt, contactPurgedAt: leads.contactPurgedAt,
+      firstName: leads.firstName, brief: leads.brief,
       refundId: leadRefunds.id, refundStatus: leadRefunds.status, refundReason: leadRefunds.reason, decisionNote: leadRefunds.decisionNote,
     })
     .from(leadPurchases)
@@ -344,10 +350,13 @@ export async function purchasedLead(tx: TestDb, viewer: Viewer, leadId: string, 
     .limit(1);
   if (!r) return null;
   const refund = refundOf({ id: r.refundId, status: r.refundStatus, reason: r.refundReason, decisionNote: r.decisionNote });
+  const held = r.contactPurgedAt === null && r.email !== null;
   return {
-    leadId: r.leadId, purchaseId: r.purchaseId, boughtAt: r.boughtAt, priceCents: r.priceCents, name: r.name,
-    email: r.email, phone: r.phone, message: r.message, cityName: r.cityName, categoryName: r.categoryName,
-    createdAt: r.createdAt, refund, refundable: refund === null && refundWindowOpen(r.boughtAt, at),
+    leadId: r.leadId, purchaseId: r.purchaseId, boughtAt: r.boughtAt, priceCents: r.priceCents,
+    firstName: r.firstName, brief: r.brief,
+    contact: held ? { name: r.name ?? "", email: r.email!, phone: r.phone, message: r.message ?? "" } : null,
+    contactPurgedAt: r.contactPurgedAt, cityName: r.cityName, categoryName: r.categoryName,
+    createdAt: r.createdAt, refund, refundable: refund === null && held && refundWindowOpen(r.boughtAt, at),
   };
 }
 
@@ -859,9 +868,15 @@ export const DELETE_AFTER_EXPIRY_DAYS = 7;
  * `leads.sweep` (hourly): an open lead past `expires_at` becomes `expired`
  * (it leaves the board); an expired or admin-deleted lead that was never
  * bought is deleted outright seven days after `expires_at`. A bought lead
- * is never deleted here — its purchase, and any refund, point at it.
+ * is never deleted — its purchase, and any refund, point at it — but its
+ * contact details (name, email, phone, message and their normalised keys)
+ * are purged `siteConfig.leads.retainSoldDays` after the sale. First name,
+ * brief, town, category, price, the purchase and the refund stay; the won
+ * email is the buyer's record.
  */
-export async function sweepLeads(tx: TestDb, viewer: Viewer, at: Date = now()): Promise<{ expired: number; deleted: number }> {
+export async function sweepLeads(
+  tx: TestDb, viewer: Viewer, at: Date = now(),
+): Promise<{ expired: number; deleted: number; purged: number }> {
   assertAdmin(viewer);
   const expired = await tx
     .update(leads)
@@ -877,7 +892,19 @@ export async function sweepLeads(tx: TestDb, viewer: Viewer, at: Date = now()): 
       sql`not exists (select 1 from ${leadPurchases} where ${leadPurchases.leadId} = ${leads.id})`,
     ))
     .returning({ id: leads.id });
-  return { expired: expired.length, deleted: deleted.length };
+  const soldBefore = new Date(at.getTime() - siteConfig.leads.retainSoldDays * DAY_MS);
+  const purged = await tx
+    .update(leads)
+    .set({
+      name: null, email: null, phone: null, message: null, phoneNormalised: null, emailNormalised: null,
+      contactPurgedAt: at, updatedAt: at,
+    })
+    .where(and(
+      sql`${leads.contactPurgedAt} is null`,
+      sql`exists (select 1 from ${leadPurchases} where ${leadPurchases.leadId} = ${leads.id} and ${leadPurchases.createdAt} <= ${soldBefore.toISOString()}::timestamptz)`,
+    ))
+    .returning({ id: leads.id });
+  return { expired: expired.length, deleted: deleted.length, purged: purged.length };
 }
 
 /* ------------------------------------------------------------------ digest */
@@ -1001,6 +1028,8 @@ export interface LeadWonNotification {
   readonly message: string;
   readonly cityName: string;
   readonly categoryName: string | null;
+  /** Bought by a standing order, or off the board. */
+  readonly viaStandingOrder: boolean;
 }
 
 /**
@@ -1016,6 +1045,7 @@ export async function leadWonNotification(tx: TestDb, viewer: Viewer, purchaseId
       email: user.email, buyerName: user.name, listingName: listings.name, priceCents: leadPurchases.priceCents,
       leadId: leads.id, name: leads.name, leadEmail: leads.email, phone: leads.phone, message: leads.message,
       cityName: cities.name, categoryName: categories.name, status: leads.status,
+      viaStandingOrder: sql<boolean>`${leadPurchases.standingOrderId} is not null`,
     })
     .from(leadPurchases)
     .innerJoin(leads, eq(leads.id, leadPurchases.leadId))
@@ -1026,9 +1056,12 @@ export async function leadWonNotification(tx: TestDb, viewer: Viewer, purchaseId
     .leftJoin(listings, eq(listings.id, leadPurchases.listingId))
     .where(eq(leadPurchases.id, purchaseId))
     .limit(1);
-  if (!r || r.status !== "sold" || !r.email) return null;
-  const { status: _status, ...rest } = r;
-  return rest;
+  if (!r || r.status !== "sold" || !r.email || r.leadEmail === null || r.message === null) return null;
+  return {
+    email: r.email, buyerName: r.buyerName, listingName: r.listingName, priceCents: r.priceCents, leadId: r.leadId,
+    name: r.name ?? "", leadEmail: r.leadEmail, phone: r.phone, message: r.message, cityName: r.cityName,
+    categoryName: r.categoryName, viaStandingOrder: r.viaStandingOrder,
+  };
 }
 
 export interface LeadTopupNotification {

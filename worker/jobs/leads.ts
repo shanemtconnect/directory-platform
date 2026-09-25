@@ -15,7 +15,8 @@ import type { TestDb } from "@/lib/db/types";
  * with `leadMarketplace` on.
  *
  *  - `leads.sweep`, hourly: open leads past `expires_at` leave the board
- *    (`expired`); unsold expired or deleted rows go 7 days after expiry.
+ *    (`expired`); unsold expired or deleted rows go 7 days after expiry; a
+ *    sold lead's contact details are purged `retainSoldDays` after the sale.
  *  - `leads.retry_allocate`, hourly: open leads are offered to standing
  *    orders created, edited or resumed in the last run's window.
  *  - `leads.board_digest`, Mondays 09:00 in the site's zone: one digest job
@@ -35,9 +36,13 @@ export function leadsDigestCronOptions(): { timezone: string } {
   return { timezone: siteConfig.timezone };
 }
 
-export async function runLeadsSweep(db: Db | TestDb, at: Date = now()): Promise<{ expired: number; deleted: number }> {
+export async function runLeadsSweep(
+  db: Db | TestDb, at: Date = now(),
+): Promise<{ expired: number; deleted: number; purged: number }> {
   const out = await sweepLeads(db as TestDb, ADMIN_VIEWER, at);
-  if (out.expired + out.deleted > 0) console.log(`[worker] leads.sweep expired ${out.expired}, deleted ${out.deleted}`);
+  if (out.expired + out.deleted + out.purged > 0) {
+    console.log(`[worker] leads.sweep expired ${out.expired}, deleted ${out.deleted}, purged ${out.purged} sold lead(s)' contact details`);
+  }
   return out;
 }
 

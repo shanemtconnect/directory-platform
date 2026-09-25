@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import type { Viewer } from "@/lib/db/viewer";
+import { siteConfig } from "@/config/site.config";
 import { elements, links, text } from "@/test/elements";
 
 /**
@@ -128,9 +129,9 @@ describe("/leads/<id>", () => {
 
   it("shows the buyer the contact details and the report form while the window is open", async () => {
     purchasedLead.mockResolvedValue({
-      leadId: LEAD.id, purchaseId: "pu1", boughtAt: new Date(), priceCents: 2500, name: "Sam Requester",
-      email: "sam@example.co.uk", phone: "01632 970001", message: "Eighty guests.", cityName: "Leeds",
-      categoryName: null, createdAt: new Date(), refund: null, refundable: true,
+      leadId: LEAD.id, purchaseId: "pu1", boughtAt: new Date(), priceCents: 2500, firstName: "Sam", brief: "Eighty guests.",
+      contact: { name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 970001", message: "Eighty guests." },
+      contactPurgedAt: null, cityName: "Leeds", categoryName: null, createdAt: new Date(), refund: null, refundable: true,
     });
     const { default: page } = await import("./[id]/page");
     const tree = (await page(params)) as ReactElement;
@@ -139,6 +140,23 @@ describe("/leads/<id>", () => {
     expect(all).toContain("01632 970001");
     expect(all).toContain("Report this lead");
     expect(links(tree).map((l) => l.href)).toContain("mailto:sam@example.co.uk");
+  });
+
+  it("after the purge, says the details have expired and points at the won email, showing only the brief", async () => {
+    purchasedLead.mockResolvedValue({
+      leadId: LEAD.id, purchaseId: "pu1", boughtAt: new Date(), priceCents: 2500, firstName: "Sam", brief: "Eighty guests.",
+      contact: null, contactPurgedAt: new Date(), cityName: "Leeds", categoryName: null, createdAt: new Date(),
+      refund: { id: "r1", status: "rejected", reason: "wrong_area", decisionNote: null }, refundable: false,
+    });
+    const { default: page } = await import("./[id]/page");
+    const tree = (await page(params)) as ReactElement;
+    const all = text(tree);
+    expect(all).toContain("The contact details for this lead have expired");
+    expect(all).toContain(`${siteConfig.leads.retainSoldDays} days`);
+    expect(all).toContain("The email we sent you when you bought it has them.");
+    expect(all).toContain("Sam in Leeds");
+    expect(all).toContain("Eighty guests.");
+    expect(links(tree).some((l) => l.href.startsWith("mailto:") || l.href.startsWith("tel:"))).toBe(false);
   });
 
   it("sends a signed-out visitor to sign in first", async () => {

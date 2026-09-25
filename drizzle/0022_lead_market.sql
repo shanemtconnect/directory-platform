@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS "lead_refunds" (
 );
 --> statement-breakpoint
 ALTER TABLE "profiles" ADD COLUMN IF NOT EXISTS "lead_digest_opt_out" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "leads" ADD COLUMN IF NOT EXISTS "contact_purged_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "leads" ALTER COLUMN "name" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "leads" ALTER COLUMN "email" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "leads" ALTER COLUMN "email_normalised" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "leads" ALTER COLUMN "message" DROP NOT NULL;--> statement-breakpoint
 DO $$ BEGIN
 	ALTER TABLE "lead_standing_orders" ADD CONSTRAINT "lead_standing_orders_user_id_profiles_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint

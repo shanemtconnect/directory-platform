@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { siteConfig } from "@/config/site.config";
 import { boardDigest, leadRefundDecided, leadTopup, leadWon } from "./leads";
 
 beforeEach(() => {
@@ -8,7 +9,7 @@ beforeEach(() => {
 describe("leadWon", () => {
   it("hands over the full contact details, escaped, and links the lead's page", () => {
     const m = leadWon({
-      buyerName: "Pat", listingName: "Pat's Place", price: "£40", name: "Sam <b>Requester</b>", email: "sam@example.co.uk",
+      buyerName: "Pat", listingName: "Pat's Place", viaStandingOrder: true, price: "£40", name: "Sam <b>Requester</b>", email: "sam@example.co.uk",
       phone: "01632 970001", message: "Eighty guests in June.", town: "Leeds", category: "Barn Venues",
       leadUrl: "https://example.co.uk/leads/abc",
     });
@@ -22,10 +23,12 @@ describe("leadWon", () => {
 
   it("says so when the requester left no phone", () => {
     const m = leadWon({
-      buyerName: null, listingName: null, price: "£25", name: "Sam", email: "sam@example.co.uk", phone: null,
+      buyerName: null, listingName: null, viaStandingOrder: false, price: "£25", name: "Sam", email: "sam@example.co.uk", phone: null,
       message: "Hi", town: "Leeds", category: null, leadUrl: "https://example.co.uk/leads/abc",
     });
     expect(m.text).toContain("No phone");
+    expect(m.text).toContain("You bought this lead");
+    expect(m.text).toContain(`${siteConfig.leads.retainSoldDays} days`);
   });
 });
 

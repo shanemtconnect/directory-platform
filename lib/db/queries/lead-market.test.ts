@@ -15,7 +15,7 @@ import { credit, makeBuyer, makeLead, makeStandingOrder } from "@/test/leads";
 import { siteConfig } from "@/config/site.config";
 import { creditBalance } from "./credits";
 import { checkLeadRules } from "@/lib/leads/rules";
-import { NOTIFY_LEAD_REFUND_DECIDED } from "@/lib/email/notify";
+import { NOTIFY_LEAD_REFUND_DECIDED, NOTIFY_LEAD_WON } from "@/lib/email/notify";
 import { allocateLead } from "@/lib/leads/allocate";
 import {
   MAX_ORDER_CENTS, adminBuyers, adminDeleteLead, adminLeadCounts, adminRefundQueue, boardDigestFor, boardDigestRecipients,
@@ -92,13 +92,16 @@ describe("buyLead", () => {
       expect(purchase).toMatchObject({ priceCents: 1250, standingOrderId: null, userId: buyer.profileId });
 
       const details = await purchasedLead(tx, buyer.viewer, leadId, NOW);
-      expect(details).toMatchObject({ name: "Sam Requester", phone: expect.stringMatching(/^01632 97\d{4}$/), refundable: true });
+      expect(details).toMatchObject({ contact: { name: "Sam Requester", phone: expect.stringMatching(/^01632 97\d{4}$/) }, refundable: true });
       expect(await purchasedLead(tx, other.viewer, leadId, NOW)).toBeNull();
       expect(await purchasedLead(tx, { role: "public" }, leadId, NOW)).toBeNull();
 
       // The purchase list shows first name and brief, not the contact.
       const [mine] = await myPurchases(tx, buyer.viewer, NOW);
       expect(mine).toMatchObject({ leadId, firstName: "Sam", priceCents: 1250, viaStandingOrder: false, refundable: true });
+      // The won email is the buyer's record of a board purchase too.
+      const won = await tx.select().from(jobQueue).where(and(eq(jobQueue.kind, NOTIFY_LEAD_WON), sql`${jobQueue.payload}->>'purchaseId' = ${purchase!.id}`));
+      expect(won).toHaveLength(1);
       for (const key of CONTACT_KEYS) expect(mine).not.toHaveProperty(key);
     });
   });
@@ -352,6 +355,46 @@ describe("sweepLeads", () => {
       const status = Object.fromEntries(rows.map((r) => [r.id, r.status]));
       expect(status).toEqual({ [fresh]: "open", [due]: "expired", [recentlyExpired]: "expired", [soldLong]: "sold" });
       await expect(sweepLeads(tx, buyer.viewer, NOW)).rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+});
+
+describe("sweepLeads — purging a sold lead's contact details", () => {
+  const RETAIN = siteConfig.leads.retainSoldDays;
+
+  it(`keeps them for ${RETAIN - 1} days after the sale and purges them at ${RETAIN}, keeping everything else`, async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const leadId = await makeLead(tx, ctx, { expiresAt: at(30) }, NOW);
+      await buyLead(tx, buyer.viewer, leadId, buyer.listingId, NOW);
+      const req = await requestRefund(tx, buyer.viewer, { leadId, reason: "wrong_area", note: "" }, at(1));
+      await decideRefund(tx, await admin(tx), (req as { refundId: string }).refundId, { approve: false, note: "It is in town." }, at(2));
+
+      await sweepLeads(tx, SYSTEM, at(RETAIN - 1));
+      let [row] = await tx.select().from(leads).where(eq(leads.id, leadId));
+      expect(row).toMatchObject({ name: "Sam Requester", contactPurgedAt: null });
+      expect((await purchasedLead(tx, buyer.viewer, leadId, at(RETAIN - 1)))?.contact).not.toBeNull();
+
+      const out = await sweepLeads(tx, SYSTEM, at(RETAIN));
+      expect(out.purged).toBeGreaterThanOrEqual(1);
+      [row] = await tx.select().from(leads).where(eq(leads.id, leadId));
+      expect(row).toMatchObject({
+        status: "sold", name: null, email: null, phone: null, message: null, phoneNormalised: null, emailNormalised: null,
+        firstName: "Sam", brief: "About eighty guests in June.", cityId: ctx.cityId, categoryId: ctx.primaryCategoryId, priceCents: 2500,
+      });
+      expect(row!.contactPurgedAt).toEqual(at(RETAIN));
+      expect(await tx.select().from(leadPurchases).where(eq(leadPurchases.leadId, leadId))).toHaveLength(1);
+      expect(await tx.select().from(leadRefunds).where(eq(leadRefunds.status, "rejected"))).not.toHaveLength(0);
+
+      // The buyer's page still exists, without the details; the purchase list is unchanged.
+      const page = await purchasedLead(tx, buyer.viewer, leadId, at(RETAIN));
+      expect(page).toMatchObject({ contact: null, refund: { status: "rejected" } });
+      expect(page!.contactPurgedAt).toEqual(at(RETAIN));
+      expect((await myPurchases(tx, buyer.viewer, at(RETAIN)))[0]).toMatchObject({ leadId, firstName: "Sam", viewable: true });
+
+      // A second sweep changes nothing.
+      expect((await sweepLeads(tx, SYSTEM, at(RETAIN + 1))).purged).toBe(0);
     });
   });
 });

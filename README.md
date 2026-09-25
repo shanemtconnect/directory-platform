@@ -804,8 +804,14 @@ other is told it has gone. The page prints the refund and no-refund policy
 emails).
 
 **Contact details** of a sold lead appear in exactly two places: the buyer's
-`/leads/<id>` (a 404 for everybody else) and the won email. Every list — the
-board, `/account/leads`, `/admin/leads` — shows first name and brief only.
+`/leads/<id>` (a 404 for everybody else) and the won email, which is sent for
+a board purchase too. Every list — the board, `/account/leads`,
+`/admin/leads` — shows first name and brief only. `leads.sweep` purges a sold
+lead's name, email, phone, message and normalised keys
+`siteConfig.leads.retainSoldDays` (default 90, at least `refundWindowDays`)
+after the sale; the page then says the details have expired and the won
+email is the buyer's record. First name, brief, town, category, price, the
+purchase and any refund are kept.
 
 **Standing orders** live on `/account/leads`: towns, regions or everywhere,
 categories (none = all), a price of at least the floor, pause/resume, edit,
@@ -828,7 +834,7 @@ Pending reports are counted on the dashboard and beside the nav link.
 **Housekeeping.** `leads.sweep` (hourly :13) marks open leads past
 `expires_at` expired and deletes unsold expired or deleted rows seven days
 after that; sold leads are kept, since their purchase and any refund point at
-them. `leads.retry_allocate` (hourly :43) offers open leads to orders created,
+them, but their contact details are purged `retainSoldDays` after the sale. `leads.retry_allocate` (hourly :43) offers open leads to orders created,
 edited or resumed in the last 70 minutes. `leads.board_digest` (Mondays 09:00,
 site time) queues one email per account with an active order or a purchase
 in 90 days — how many open leads are in its places — with a one-click
@@ -876,7 +882,7 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `neighbourhoods.assign-queue` | every minute | Runs the same assignment once for any queued "Assign listings now" presses. Shares the `neighbourhoods.assign` advisory lock with the nightly run, so the two never overlap | — |
 | `quotes.expire` | hourly :53 | Marks quote requests whose verification link lapsed (48 h, never clicked) `expired`. The click checks the window itself; this keeps the admin list honest | — |
 | `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
-| `leads.sweep` | hourly :13, only with `leadMarketplace` on | Open leads past `expires_at` become `expired` (off the board); unsold expired or admin-deleted leads are deleted 7 days after `expires_at`. Sold leads are kept | — |
+| `leads.sweep` | hourly :13, only with `leadMarketplace` on | Open leads past `expires_at` become `expired` (off the board); unsold expired or admin-deleted leads are deleted 7 days after `expires_at`. Sold leads are kept, their contact details purged `leads.retainSoldDays` (90) after the sale | — |
 | `leads.retry_allocate` | hourly :43, only with `leadMarketplace` on | Offers open leads to standing orders created, edited or resumed in the last 70 minutes (`lib/leads/allocate.ts` `retryAllocation`) | — |
 | `leads.board_digest` | Mondays 09:00 site time, only with `leadMarketplace` on | Queues `notify.lead.board-digest` for each account with an active standing order or a purchase in 90 days that has not opted out; once per week (audit `leads.board_digest_sent`) | `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` |
 | `alerts.dispatch` | hourly :23, only with `savedSearches` on | Queues a `notify.saved_search` digest for each active saved search that is due (daily: last sent 24 h ago or more; weekly: 7 d; never sent: now) **and** has listings/jobs that went live (`coalesce(published_at, created_at)`) since its watermark; owner's email must be verified; half an hour's tolerance keeps the cadence from drifting. The notify drain re-reads, sends (with a one-click unsubscribe for that search), then stamps `last_sent_at` with the dispatch tick and moves `last_seen_published_at` | the email vars for delivery; `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` (no digest goes without its unsubscribe link) |

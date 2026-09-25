@@ -44,6 +44,8 @@ test.afterAll(async () => {
     const refunds = await sql<{ id: string }[]>`
       select r.id from lead_refunds r join lead_purchases p on p.id = r.purchase_id where p.lead_id = ${made.leadId}`;
     for (const { id } of refunds) await sql`delete from job_queue where payload->>'refundId' = ${id}`;
+    const purchases = await sql<{ id: string }[]>`select id from lead_purchases where lead_id = ${made.leadId}`;
+    for (const { id } of purchases) await sql`delete from job_queue where payload->>'purchaseId' = ${id}`;
   }
   // The accounts cascade to their profiles, and from there to the ledger,
   // the purchase and its refund.
