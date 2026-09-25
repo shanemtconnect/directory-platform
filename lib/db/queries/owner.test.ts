@@ -274,7 +274,11 @@ describe("markEnquiryHandled", () => {
       const audits = await tx
         .select({ action: auditLog.action, actorId: auditLog.actorId, ip: auditLog.ip })
         .from(auditLog)
-        .where(eq(auditLog.entityId, jo.enquiryId));
+        .where(eq(auditLog.entityId, jo.enquiryId))
+        // Both rows share one transaction's now(), and heap order is not
+        // insertion order once parallel workers' rolled-back rows leave free
+        // space behind: without ORDER BY this comparison flipped at random.
+        .orderBy(auditLog.action);
       expect(audits).toEqual([
         { action: "enquiry.marked_read", actorId: jo.profileId, ip: "203.0.113.7" },
         { action: "enquiry.marked_replied", actorId: jo.profileId, ip: "203.0.113.8" },
