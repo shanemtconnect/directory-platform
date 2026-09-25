@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { QUOTE_MESSAGE_MAX, validateQuoteRequest } from "./quotes-validation";
+import { QUOTE_MESSAGE_MAX, validateCaptureLead, validateQuoteRequest } from "./quotes-validation";
 
 const CITY = "11111111-1111-4111-8111-111111111111";
 const CATEGORY = "22222222-2222-4222-8222-222222222222";
@@ -61,5 +61,16 @@ describe("validateQuoteRequest", () => {
     const { errors } = validateQuoteRequest(form({ ...good, email: "not-an-address", name: "S" }));
     expect(errors?.email).toBeTruthy();
     expect(errors?.name).toBeTruthy();
+  });
+});
+
+describe("validateCaptureLead", () => {
+  it("is the quote form with the phone required", () => {
+    expect(validateCaptureLead(form(good)).errors).toEqual({ phone: expect.any(String) });
+    const both = validateCaptureLead(form({ ...good, consent: "" })).errors;
+    expect(both).toMatchObject({ phone: expect.any(String), consent: expect.any(String) });
+    const { values, errors } = validateCaptureLead(form({ ...good, phone: " 01632 960123 " }));
+    expect(errors).toBeUndefined();
+    expect(values?.phone).toBe("01632 960123");
   });
 });
