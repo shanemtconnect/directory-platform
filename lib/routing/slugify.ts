@@ -32,8 +32,14 @@ export const RESERVED_SLUGS = [
   "spots",
   // Task 53: `/verified/<segments>` is the internal, always-dynamic route
   // next.config.ts rewrites `?verified=1` pillar requests to — a city or
-  // vertical named "Verified" would otherwise shadow it.
-  "verified",
+  // vertical named "Verified" would otherwise shadow it. `out` and
+  // `unsubscribe` were pre-existing top-level routes (the click-tracking
+  // redirect and the digest opt-out) missing from this list; the same
+  // rewrite's regex matches their first segment too, so without these here a
+  // city named "Out" or "Unsubscribe" would have collided with them, and
+  // `/out/<id>?verified=1` / `/unsubscribe?verified=1` would 404 instead of
+  // reaching their real routes.
+  "verified", "out", "unsubscribe",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

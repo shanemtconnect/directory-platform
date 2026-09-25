@@ -84,11 +84,22 @@ const nextConfig: NextConfig = {
    *
    * Scoped with the exact RESERVED_SLUGS list the slug allocator already
    * uses to keep a city or vertical from colliding with a static route: a
-   * request's first path segment is only eligible when it is NOT one of
-   * those, so /search?verified=1, /admin/...?verified=1 and so on can never
-   * be misrouted here — they are real routes and (via `afterFiles`, below)
-   * are matched before this rewrite ever runs. `verified` itself is reserved
-   * too, so a city can never be named `/verified`.
+   * request's FIRST path segment is only eligible when it is NOT one of
+   * those, so /search?verified=1, /admin/...?verified=1 and so on are never
+   * misrouted here regardless of whether the specific route under them is
+   * static or dynamic — the match is on the first segment alone. This is
+   * only as safe as RESERVED_SLUGS is complete: a route added at the root
+   * with a dynamic segment (like /out/[id]) and left off that list WOULD be
+   * hijacked, since `afterFiles` runs before Next's own dynamic-route
+   * resolution — this bit the first version of this rewrite, until `out`
+   * and `unsubscribe` were added there. `verified` itself is reserved too,
+   * so a city can never be named `/verified`.
+   *
+   * A first segment that IS eligible can still resolve to something other
+   * than a pillar — a listing or its reviews page. `renderCatchAll`
+   * (app/[...segments]/page.tsx) redirects those back to the clean URL
+   * rather than rendering them through this uncached route, so `verified=1`
+   * cannot be used to bypass ISR on a listing page either.
    */
   async rewrites() {
     return {
