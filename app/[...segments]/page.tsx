@@ -107,15 +107,19 @@ function pillarBasePath(segments: string[]): string {
 }
 
 /**
- * Task 53: the verified-only filter. `opts.verified` is ALWAYS false here —
- * Next calls this component with one argument, so the default applies on
- * every request this route itself renders. It is only ever `true` when
- * `app/verified/[...segments]/page.tsx` imports this same function and calls
- * it directly with a second argument, which is what keeps this route (the
- * ISR-cached one, generateStaticParams above) from ever reading searchParams
- * — see the note on generateStaticParams and Pagination's `verified` prop.
+ * Task 53: the verified-only filter. `renderCatchAll` is the shared
+ * implementation; `opts.verified` is ALWAYS false through the `default`
+ * export below, which is the only thing Next itself ever calls (Next's own
+ * generated page-type validator requires that export's signature match
+ * `(props)` exactly, hence the wrapper rather than a default parameter on a
+ * function named `CatchAllPage`). It is only ever `true` when
+ * `app/verified/[...segments]/page.tsx` imports THIS named export directly
+ * and calls it with a second argument — which is what keeps the `default`
+ * route (the ISR-cached one, generateStaticParams above) from ever reading
+ * searchParams. See the note on generateStaticParams and Pagination's
+ * `verified` prop.
  */
-export default async function CatchAllPage(
+export async function renderCatchAll(
   { params }: Props,
   opts: { verified?: boolean } = {},
 ) {
@@ -369,6 +373,11 @@ export default async function CatchAllPage(
   }
 }
 
+/** The only export Next itself ever calls — see `renderCatchAll`'s comment. */
+export default async function CatchAllPage(props: Props) {
+  return renderCatchAll(props);
+}
+
 /** Trimmed to a length a SERP will actually show, on a word boundary. */
 function metaDescription(text: string, max = 155): string {
   const clean = text.replace(/\s+/g, " ").trim();
@@ -387,7 +396,7 @@ function metaDescription(text: string, max = 155): string {
  * and stays out of the sitemap. This is the single most important SEO rule in
  * the build — thin one-listing city pages drag the whole domain down.
  */
-export async function generateMetadata(
+export async function buildCatchAllMetadata(
   { params }: Props,
   opts: { verified?: boolean } = {},
 ): Promise<Metadata> {
@@ -474,4 +483,9 @@ export async function generateMetadata(
     // whether the unfiltered page itself is indexable.
     robots: heading.isIndexable && !verified ? undefined : { index: false, follow: true },
   };
+}
+
+/** The only export Next itself ever calls — see `renderCatchAll`'s comment. */
+export async function generateMetadata(props: Props): Promise<Metadata> {
+  return buildCatchAllMetadata(props);
 }

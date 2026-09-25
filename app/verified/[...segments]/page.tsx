@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import CatchAllPage, { generateMetadata as generateCatchAllMetadata } from "../../[...segments]/page";
+import { renderCatchAll, buildCatchAllMetadata } from "../../[...segments]/page";
 
 /**
  * Task 53: the `verified=1` pillar view.
@@ -21,9 +21,9 @@ interface Props {
 }
 
 export default async function VerifiedCatchAllPage(props: Props) {
-  return CatchAllPage(props, { verified: true });
+  return renderCatchAll(props, { verified: true });
 }
 
 export async function generateMetadata(props: Props): Promise<Metadata> {
-  return generateCatchAllMetadata(props, { verified: true });
+  return buildCatchAllMetadata(props, { verified: true });
 }
