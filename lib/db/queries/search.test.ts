@@ -150,3 +150,42 @@ describe("search", () => {
     });
   });
 });
+
+describe("search — publishedAfter (saved-search alerts)", () => {
+  it("keeps only listings that went live strictly after the instant — publish time, else creation", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      const since = new Date("2026-09-20T12:00:00Z");
+      const before = new Date("2026-09-19T12:00:00Z");
+      const after = new Date("2026-09-21T12:00:00Z");
+      await makeListing(tx, ctx, { name: "Before", createdAt: before });
+      await makeListing(tx, ctx, { name: "At the instant", createdAt: since });
+      await makeListing(tx, ctx, { name: "After", createdAt: after });
+      // Submitted before, approved after: new, because it went live after.
+      await makeListing(tx, ctx, { name: "Approved after", createdAt: before, publishedAt: after });
+      // Created after but published before cannot happen; published before wins either way.
+      await makeListing(tx, ctx, { name: "Published before", createdAt: before, publishedAt: before });
+      await makeListing(tx, ctx, { name: "After but pending", status: "pending", createdAt: after });
+
+      const result = await search(tx, PUBLIC_VIEWER, { city: "leeds", publishedAfter: since });
+      expect(result.rows.map((r) => r.name).sort()).toEqual(["After", "Approved after"]);
+      expect(result.total).toBe(2);
+      expect(result.rows.find((r) => r.name === "Approved after")?.liveAt).toEqual(after);
+      expect(result.rows.find((r) => r.name === "After")?.liveAt).toEqual(after);
+      // Absent, nothing changes.
+      expect((await search(tx, PUBLIC_VIEWER, { city: "leeds" })).total).toBe(5);
+    });
+  });
+
+  it("compares at the millisecond a JS Date holds, so a row read back as the watermark is not new again", async () => {
+    await withTestDb(async (tx) => {
+      const s = await scaffold(tx);
+      const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+      // Default created_at: now(), which Postgres keeps to the microsecond.
+      await makeListing(tx, ctx, { name: "Microsecond Barn" });
+      const [row] = (await search(tx, PUBLIC_VIEWER, { q: "Microsecond Barn" })).rows;
+      expect((await search(tx, PUBLIC_VIEWER, { q: "Microsecond Barn", publishedAfter: row!.liveAt })).total).toBe(0);
+    });
+  });
+});

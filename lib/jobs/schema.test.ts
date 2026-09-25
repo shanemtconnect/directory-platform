@@ -18,6 +18,7 @@ function job(patch: Partial<PublicJob> = {}): PublicJob {
     budgetMax: "22000.00",
     publishedAt: new Date("2026-09-22T10:00:00Z"),
     expiresAt: new Date("2026-10-22T10:00:00Z"),
+    liveAt: new Date("2026-09-22T10:00:00Z"),
     path: `/jobs/${ID}`,
     description: "Run the Saturday diary.",
     applyMethod: "email",

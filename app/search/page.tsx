@@ -11,6 +11,8 @@ import { LocationSwitcher } from "@/components/location/LocationSwitcher";
 import { searchCityHref } from "@/components/location/switcher-links";
 import { StatsBeacon } from "@/components/stats/StatsBeacon";
 import { SponsorRails } from "@/components/ads/SponsorRails";
+import { SaveSearchButton } from "@/components/search/SaveSearchButton";
+import { features } from "@/lib/features/flags";
 
 // Search is a utility page, not an indexable asset. Faceted URLs are a classic
 // source of near-duplicate thin pages, so it is noindexed and excluded from the
@@ -68,6 +70,15 @@ export default async function SearchPage({ searchParams }: Props) {
   if (params.category) qs.set("category", params.category);
   for (const [k, v] of Object.entries(fields)) qs.set(k, v);
   const basePath = `/search${qs.toString() ? `?${qs}` : ""}`;
+
+  // What a saved search stores: this page's own query input, minus the page
+  // number — an alert is about the search, not where in it you were.
+  const { page: _page, ...saveParams } = params;
+  const cityName = cities.find((c) => c.slug === params.city)?.name;
+  const categoryName = categories.find((c) => c.slug === params.category)?.name;
+  const saveLabel =
+    `${categoryName ?? `All ${e.plural}`}${cityName ? ` in ${cityName}` : ""}` +
+    `${params.q ? ` matching "${params.q}"` : ""}`;
 
   return (
     <>
@@ -138,9 +149,14 @@ export default async function SearchPage({ searchParams }: Props) {
         testId="search-location-switcher"
       />
 
-      <p data-testid="result-count" className="mt-8 font-medium">
-        {results.total} {results.total === 1 ? e.singular : e.plural} found
-      </p>
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <p data-testid="result-count" className="mb-0 font-medium">
+          {results.total} {results.total === 1 ? e.singular : e.plural} found
+        </p>
+        {features.savedSearches && (
+          <SaveSearchButton kind="listings" params={saveParams} label={saveLabel} currentPath={basePath} />
+        )}
+      </div>
 
       {results.rows.length === 0 ? (
         <p>

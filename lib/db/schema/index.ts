@@ -9,4 +9,5 @@ export * from "./ops";
 export * from "./modules";
 export * from "./ads";
 export * from "./spots";
+export * from "./alerts";
 export * from "./credits";

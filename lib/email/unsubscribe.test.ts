@@ -51,3 +51,28 @@ describe("unsubscribe tokens", () => {
     expect(normaliseAddress("  Owner@Example.com ")).toBe("owner@example.com");
   });
 });
+
+describe("unsubscribe tokens — the saved-search variant", () => {
+  const searchClaim = { savedSearchId: "44444444-4444-4444-8444-444444444444", email: "Alerts@Example.com" };
+
+  it("round-trips the address and the saved search, and never reads as a listing claim", () => {
+    const token = signUnsubscribe(searchClaim);
+    expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    const back = verifyUnsubscribe(token);
+    expect(back).toEqual(searchClaim);
+    expect(back && "listingId" in back).toBe(false);
+  });
+
+  it("keeps the listing claim exactly as it was", () => {
+    const back = verifyUnsubscribe(signUnsubscribe(claim));
+    expect(back).toEqual(claim);
+    expect(back && "savedSearchId" in back).toBe(false);
+  });
+
+  it("refuses a tampered saved-search token", () => {
+    const [payload, sig] = signUnsubscribe(searchClaim)!.split(".") as [string, string];
+    const forged = signUnsubscribe({ ...searchClaim, savedSearchId: "55555555-5555-4555-8555-555555555555" })!.split(".")[0]!;
+    expect(verifyUnsubscribe(`${forged}.${sig}`)).toBeNull();
+    expect(verifyUnsubscribe(`${payload}.${sig}`)).toEqual(searchClaim);
+  });
+});

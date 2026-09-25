@@ -19,6 +19,8 @@ export class ConfigError extends Error {
 export const FEATURE_DEPENDENCIES: Partial<Record<FeatureFlag, readonly FeatureFlag[]>> = {
   awards: ["reviews"],
   quoteBroadcast: ["shortlist"],
+  // savedSearches needs nothing: listings search is always there, and its
+  // jobs kind is simply not offered while jobBoard is off.
   leadMarketplace: ["quoteBroadcast"],
 };
 

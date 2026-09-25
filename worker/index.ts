@@ -11,6 +11,7 @@ import { revalidatePaths } from "@/lib/revalidate/client";
 import { features } from "@/lib/features/flags";
 import { AWARDS_CRON, awardsCronOptions } from "./jobs/awards";
 import { SPOTS_DIGEST_CRON, spotsDigestCronOptions } from "./jobs/spots-digest";
+import { ALERTS_DISPATCH_CRON } from "./jobs/alerts";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -261,3 +262,16 @@ schedule("flush-featured-clicks", "*/5 * * * *", async (tx) => {
   const { flushFeaturedClicks } = await import("./jobs/flush-featured-clicks");
   await flushFeaturedClicks(tx);
 });
+
+// Saved-search alerts (Task 54). Hourly, off the hour like the billing jobs:
+// queue a digest for each daily search last sent 24 h ago or more, each
+// weekly one 7 d ago or more, and each never sent — but only where there is
+// something new; the notify drain sends them. Only scheduled with the module
+// on, so a flag-off site runs nothing. See worker/jobs/alerts.ts.
+if (features.savedSearches) {
+  schedule("alerts.dispatch", ALERTS_DISPATCH_CRON, async (tx) => {
+    const { dispatchAlerts } = await import("./jobs/alerts");
+    const { checked, queued } = await dispatchAlerts(tx);
+    console.log(`[worker] alerts.dispatch checked ${checked}, queued ${queued}`);
+  });
+}

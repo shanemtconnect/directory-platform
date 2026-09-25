@@ -67,6 +67,7 @@
   "feature_events": false,
   "feature_bookings": false,
   "feature_multiLocale": false,
+  "feature_savedSearches": false,
 
   "seoMinListingsToIndex": 3,
   "seoRequireIntroCopyToIndex": true,

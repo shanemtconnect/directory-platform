@@ -99,6 +99,7 @@ export const FEATURE_FLAGS = [
   "events",
   "bookings",
   "multiLocale",
+  "savedSearches",
   "leadMarketplace",
 ] as const;
 

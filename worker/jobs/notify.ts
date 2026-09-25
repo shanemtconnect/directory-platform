@@ -17,6 +17,7 @@ import {
   NOTIFY_REPORT,
   NOTIFY_REVIEW_SUBMITTED,
   NOTIFY_REVIEW_VERIFIED,
+  NOTIFY_SAVED_SEARCH,
   NOTIFY_SPOT_CLOSED,
   NOTIFY_SPOT_DIGEST,
   NOTIFY_SPOT_OUTBID,
@@ -75,6 +76,11 @@ import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availabili
 import { minimumToEnter, minimumToTakeFirst, UNIT_CENTS } from "@/lib/spots/rank";
 import { leaderboardPath, prefilledBidPath } from "@/lib/spots/notify";
 import { spotClosedToOwner, spotDigestToAdmin, spotDigestToOwner, spotOutbid } from "@/lib/email/templates/spots";
+import { markSavedSearchSent, newMatchesFor, savedSearchForDigest } from "@/lib/db/queries/saved-searches";
+import { savedSearchDigest } from "@/lib/email/templates/alerts";
+import { savedSearchPath } from "@/lib/alerts/paths";
+import { features } from "@/lib/features/flags";
+import { now } from "@/lib/clock";
 import { topupNotification } from "@/lib/db/queries/credits";
 import { topupReceipt } from "@/lib/email/templates/credits";
 
@@ -451,6 +457,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runSpotDigest(db, d, job.payload);
     case NOTIFY_SPOT_CLOSED:
       return runSpotClosed(db, d, job.payload);
+    // Appended by the saved-searches module (Task 54); handler at the foot.
+    case NOTIFY_SAVED_SEARCH:
+      return runSavedSearch(db, d, job.payload);
     // Appended by the lead-credit module (Task 57); the handler is at the foot.
     case NOTIFY_CREDIT_TOPUP:
       return runCreditTopup(db, d, job.payload);
@@ -887,6 +896,60 @@ async function runSpotDigest(db: Db, d: Delivery, payload: Record<string, unknow
       unsubscribeToken: token,
     }),
   });
+}
+
+/* ------------------------------------------------ saved searches (Task 54) */
+
+/** The person who saved the search. One recipient, one stable key. */
+const SUBSCRIBER = "subscriber";
+
+/**
+ * One saved search's digest. Everything is re-read here rather than trusted
+ * from the dispatch an hour ago: a search deleted, unsubscribed or whose
+ * owner is no longer verified completes with nothing sent, and the matches
+ * are recomputed through the public query, so a listing unpublished in
+ * between never reaches the email. Nothing new by now: nothing sent, and
+ * the watermark stays where it was.
+ *
+ * The watermark moves to the newest go-live (`coalesce(published_at,
+ * created_at)`) the digest covered — not to "now" — so a row published while
+ * this ran is still new next time. `last_sent_at` is the dispatch tick from
+ * the payload, so the cadence does not slip by however long the job waited.
+ */
+async function runSavedSearch(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  // Flag off since the job was queued: the module is gone, and so is the mail.
+  if (!features.savedSearches) return;
+  const savedSearchId = readId(payload, "savedSearchId");
+  if (savedSearchId === null) throw new Retryable("The job carries no savedSearchId");
+
+  const data = await savedSearchForDigest(db, ADMIN_VIEWER, savedSearchId);
+  if (data === null) return;
+  if (data.search.kind === "jobs" && !features.jobBoard) return;
+
+  const matches = await newMatchesFor(db, data.search, data.search.lastSeenPublishedAt);
+  if (matches.length === 0) return;
+
+  // Every digest carries its unsubscribe link; one that cannot is not sent.
+  const token = signUnsubscribe({ savedSearchId, email: data.email });
+  if (token === null) throw new Retryable("No unsubscribe key (EMAIL_UNSUBSCRIBE_SECRET / BETTER_AUTH_SECRET)");
+
+  await deliver(d, SUBSCRIBER, {
+    to: data.email,
+    ...savedSearchDigest({
+      kind: data.search.kind,
+      label: data.search.label,
+      matches: matches.map((m) => ({ title: m.title, url: siteUrl(m.path), place: m.place })),
+      total: matches.total,
+      searchUrl: siteUrl(savedSearchPath(data.search.kind, data.search.params)),
+      manageUrl: siteUrl("/account/alerts"),
+      unsubscribeToken: token,
+    }),
+  });
+
+  const newest = matches.reduce((max, m) => (m.liveAt > max ? m.liveAt : max), matches[0]!.liveAt);
+  const dispatched = typeof payload.dispatchedAt === "string" ? new Date(payload.dispatchedAt) : null;
+  const sentAt = dispatched !== null && !Number.isNaN(dispatched.getTime()) ? dispatched : now();
+  await markSavedSearchSent(db, ADMIN_VIEWER, savedSearchId, { sentAt, lastSeenPublishedAt: newest });
 }
 
 /* ------------------------------------------------- lead credit (Task 57) */

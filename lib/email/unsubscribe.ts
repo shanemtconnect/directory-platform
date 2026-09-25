@@ -18,11 +18,27 @@ import { siteUrl } from "@/lib/schema/builders";
  * out without the link — the worker never sends a link that cannot work.
  */
 
-export interface UnsubscribeClaim {
+export interface ListingUnsubscribeClaim {
   /** The address as it was written to, not normalised — the page shows it back. */
   email: string;
   listingId: string;
 }
+
+/**
+ * A saved search's digest (Task 54). The link turns that one search's
+ * alerts off (`saved_searches.is_active = false`); it does not put the
+ * address on the `unsubscribes` list, which is about unsolicited mail.
+ */
+export interface SavedSearchUnsubscribeClaim {
+  savedSearchId: string;
+  /** The address the digest went to — the page shows it back. */
+  email: string;
+}
+
+export type UnsubscribeClaim = ListingUnsubscribeClaim | SavedSearchUnsubscribeClaim;
+
+export const isSavedSearchClaim = (claim: UnsubscribeClaim): claim is SavedSearchUnsubscribeClaim =>
+  "savedSearchId" in claim;
 
 function secret(): string | null {
   const s = process.env.EMAIL_UNSUBSCRIBE_SECRET?.trim() || process.env.BETTER_AUTH_SECRET?.trim() || "";
@@ -40,7 +56,12 @@ function sign(payload: string, key: string): string {
 export function signUnsubscribe(claim: UnsubscribeClaim): string | null {
   const key = secret();
   if (key === null) return null;
-  const payload = b64(JSON.stringify({ e: claim.email, l: claim.listingId }));
+  // `l` for a listing, `s` for a saved search: the key IS the variant, so a
+  // token minted for one can never be read as the other.
+  const body = isSavedSearchClaim(claim)
+    ? { e: claim.email, s: claim.savedSearchId }
+    : { e: claim.email, l: claim.listingId };
+  const payload = b64(JSON.stringify(body));
   return `${payload}.${sign(payload, key)}`;
 }
 
@@ -58,10 +79,12 @@ export function verifyUnsubscribe(token: string | null | undefined): Unsubscribe
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
 
   try {
-    const parsed = JSON.parse(unb64(payload)) as { e?: unknown; l?: unknown };
-    if (typeof parsed.e !== "string" || typeof parsed.l !== "string") return null;
-    if (parsed.e.trim() === "" || parsed.l.trim() === "") return null;
-    return { email: parsed.e, listingId: parsed.l };
+    const parsed = JSON.parse(unb64(payload)) as { e?: unknown; l?: unknown; s?: unknown };
+    const filled = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+    if (!filled(parsed.e)) return null;
+    if (filled(parsed.l) && parsed.s === undefined) return { email: parsed.e, listingId: parsed.l };
+    if (filled(parsed.s) && parsed.l === undefined) return { savedSearchId: parsed.s, email: parsed.e };
+    return null;
   } catch {
     return null;
   }

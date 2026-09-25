@@ -94,6 +94,11 @@ fail `next build` never reaches disk.
 | SEO        | listings a town needs before indexing, whether intro copy is also required, footer link cap       |
 | Seed data  | `csv` (your files), `template` (three example rows to edit) or `skip`                             |
 
+`savedSearches` (off by default, no dependency) lets a signed-in visitor save a
+search on `/search` — and on `/jobs` when `jobBoard` is also on — and get a
+daily or weekly email of new matches, managed at `/account/alerts`. It needs
+the worker running (the hourly `alerts.dispatch` job) and email configured.
+
 **The nouns are the whole game.** Every visible string comes from
 `siteConfig.entity`; no component contains a niche word, and
 `corepack pnpm check:strings` fails the build if one appears. Get the singular
