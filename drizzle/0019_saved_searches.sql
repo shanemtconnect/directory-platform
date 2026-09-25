@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS "saved_searches" (
 	"label" text NOT NULL,
 	"frequency" "saved_search_frequency" DEFAULT 'weekly' NOT NULL,
 	"last_sent_at" timestamp with time zone,
-	"last_seen_created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_seen_published_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL
 );
 --> statement-breakpoint

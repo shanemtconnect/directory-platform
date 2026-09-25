@@ -158,21 +158,27 @@ describe("listOpenJobs / countOpenJobs", () => {
   });
 });
 
-describe("listOpenJobs / countOpenJobs — createdAfter (saved-search alerts)", () => {
-  it("keeps only open jobs created strictly after the instant, and carries createdAt on the card", async () => {
+describe("listOpenJobs / countOpenJobs — publishedAfter (saved-search alerts)", () => {
+  it("keeps only open jobs that went live strictly after the instant, and carries liveAt on the card", async () => {
     await withTestDb(async (tx) => {
       setClock(new Date("2026-09-22T10:00:00Z"));
       const ctx = await makeScaffold(tx);
       const since = new Date("2026-09-20T12:00:00Z");
-      await makeJob(tx, ctx, { title: "Before", createdAt: new Date("2026-09-19T12:00:00Z") });
-      const after = await makeJob(tx, ctx, { title: "After", createdAt: new Date("2026-09-21T12:00:00Z") });
-      await makeJob(tx, ctx, { title: "After but pending", status: "pending", createdAt: new Date("2026-09-21T12:00:00Z") });
+      const before = new Date("2026-09-19T12:00:00Z");
+      const after = new Date("2026-09-21T12:00:00Z");
+      await makeJob(tx, ctx, { title: "Before", createdAt: before, publishedAt: before });
+      // Posted before, approved after — the common path for a job.
+      const approved = await makeJob(tx, ctx, { title: "Approved after", createdAt: before, publishedAt: after });
+      // Never stamped: falls back to creation.
+      const unstamped = await makeJob(tx, ctx, { title: "Unstamped", createdAt: after, publishedAt: null });
+      await makeJob(tx, ctx, { title: "After but pending", status: "pending", createdAt: after, publishedAt: null });
 
-      const rows = await listOpenJobs(tx, PUBLIC_VIEWER, { page: 1, createdAfter: since });
-      expect(rows.map((r) => r.id)).toEqual([after]);
-      expect(rows[0]?.createdAt).toEqual(new Date("2026-09-21T12:00:00Z"));
-      expect(await countOpenJobs(tx, PUBLIC_VIEWER, { createdAfter: since })).toBe(1);
-      expect(await countOpenJobs(tx, PUBLIC_VIEWER, {})).toBe(2);
+      const rows = await listOpenJobs(tx, PUBLIC_VIEWER, { page: 1, publishedAfter: since });
+      expect(rows.map((r) => r.id).sort()).toEqual([approved, unstamped].sort());
+      expect(rows.find((r) => r.id === approved)?.liveAt).toEqual(after);
+      expect(rows.find((r) => r.id === unstamped)?.liveAt).toEqual(after);
+      expect(await countOpenJobs(tx, PUBLIC_VIEWER, { publishedAfter: since })).toBe(2);
+      expect(await countOpenJobs(tx, PUBLIC_VIEWER, {})).toBe(3);
     });
   });
 
@@ -180,9 +186,9 @@ describe("listOpenJobs / countOpenJobs — createdAfter (saved-search alerts)", 
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       // Default created_at: now(), which Postgres keeps to the microsecond.
-      const id = await makeJob(tx, ctx, { title: "Microsecond job" });
+      const id = await makeJob(tx, ctx, { title: "Microsecond job", publishedAt: null });
       const [row] = (await listOpenJobs(tx, PUBLIC_VIEWER, { page: 1 })).filter((j) => j.id === id);
-      expect(await countOpenJobs(tx, PUBLIC_VIEWER, { createdAfter: row!.createdAt })).toBe(0);
+      expect(await countOpenJobs(tx, PUBLIC_VIEWER, { publishedAfter: row!.liveAt })).toBe(0);
     });
   });
 });

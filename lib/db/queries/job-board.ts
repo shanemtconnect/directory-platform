@@ -54,10 +54,11 @@ export interface JobFilters {
   readonly citySlug?: string | null;
   readonly categorySlug?: string | null;
   /**
-   * Only jobs created strictly after this instant. Not a URL facet: it is how
-   * a saved search's alert asks for what is NEW (lib/db/queries/saved-searches.ts).
+   * Only jobs that went live (`liveAt`) strictly after this instant. Not a
+   * URL facet: it is how a saved search's alert asks for what is NEW
+   * (lib/db/queries/saved-searches.ts).
    */
-  readonly createdAfter?: Date | null;
+  readonly publishedAfter?: Date | null;
 }
 
 export interface PublicJobCard {
@@ -72,8 +73,12 @@ export interface PublicJobCard {
   readonly budgetMax: string | null;
   readonly publishedAt: Date | null;
   readonly expiresAt: Date | null;
-  /** When the post was written — the saved-search alert's watermark reads it. */
-  readonly createdAt: Date;
+  /**
+   * When the post went live: `published_at`, else `created_at`. Every job is
+   * posted pending and published on approval, so the saved-search alert
+   * judges "new" — and moves its watermark — on this, never on creation.
+   */
+  readonly liveAt: Date;
   readonly path: string;
 }
 
@@ -89,17 +94,17 @@ const cardColumns = {
   budgetMax: jobs.budgetMax,
   publishedAt: jobs.publishedAt,
   expiresAt: jobs.expiresAt,
-  createdAt: jobs.createdAt,
+  liveAt: sql<Date>`coalesce(${jobs.publishedAt}, ${jobs.createdAt})`.mapWith(jobs.createdAt),
 };
 
 function filterClause(filters: JobFilters) {
   const clauses = [openJobs()];
   if (filters.citySlug) clauses.push(eq(cities.slug, filters.citySlug));
   if (filters.categorySlug) clauses.push(eq(categories.slug, filters.categorySlug));
-  // At the millisecond, as in lib/db/queries/search.ts: a watermark read back
-  // from a row must not find that row new again.
-  if (filters.createdAfter) {
-    clauses.push(sql`date_trunc('milliseconds', ${jobs.createdAt}) > ${filters.createdAfter.toISOString()}::timestamptz`);
+  // "+ 1 ms", as in lib/db/queries/search.ts: a watermark read back from a
+  // row must not find that row new again.
+  if (filters.publishedAfter) {
+    clauses.push(sql`coalesce(${jobs.publishedAt}, ${jobs.createdAt}) >= ${filters.publishedAfter.toISOString()}::timestamptz + interval '1 millisecond'`);
   }
   return and(...clauses);
 }
