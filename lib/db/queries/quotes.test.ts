@@ -44,7 +44,7 @@ function input(ctx: ListingCtx, patch: Partial<QuoteRequestInput> = {}): QuoteRe
     categoryId: ctx.primaryCategoryId,
     name: "Sam Requester",
     email: "sam@example.co.uk",
-    phone: "01632 960000",
+    phone: "01632 970000",
     message: "Looking for somewhere for about eighty people in June, with parking.",
     ip: "198.51.100.4",
     ...patch,
@@ -287,7 +287,7 @@ describe("quoteNotification", () => {
 
       const data = await quoteNotification(tx, await makeAdmin(tx), created.quoteRequestId);
       expect(data).not.toBeNull();
-      expect(data!.requester).toEqual({ name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 960000" });
+      expect(data!.requester).toEqual({ name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 970000" });
       expect(data!.message).toContain("eighty people");
       const byId = new Map(data!.recipients.map((r) => [r.listingId, r]));
       expect(byId.get(claimed)).toMatchObject({
@@ -350,7 +350,7 @@ describe("ownerQuoteLeads", () => {
         contactVisible: true,
         outcome: "open",
         job: input(ctx).message,
-        requester: { name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 960000" },
+        requester: { name: "Sam Requester", email: "sam@example.co.uk", phone: "01632 970000" },
       });
 
       const [freeLead] = await ownerQuoteLeads(tx, free.viewer, freeListing);
@@ -613,7 +613,7 @@ describe("createEnquiryLeadRequest", () => {
       const listingId = await makeListing(tx, ctx, { name: "Quiet Hall", email: null });
       const created = await createEnquiryLeadRequest(tx, PUBLIC_VIEWER, {
         listingId, cityId: ctx.cityId, categoryId: null, name: "Jo Enquirer", email: "jo@example.co.uk",
-        phone: "01632 960123", message: "Is the hall free on 3 May?", ip: "198.51.100.4",
+        phone: "01632 970123", message: "Is the hall free on 3 May?", ip: "198.51.100.4",
       });
 
       const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));

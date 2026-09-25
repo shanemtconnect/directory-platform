@@ -14,7 +14,7 @@ afterEach(() => resetClock());
 /** A number nobody else in the shared test database is using. */
 function freshPhone(): { raw: string; e164: string } {
   const tail = String(Math.floor(Math.random() * 10_000)).padStart(4, "0");
-  return { raw: `01632 96${tail}`, e164: `+44163296${tail}` };
+  return { raw: `01632 97${tail}`, e164: `+44163297${tail}` };
 }
 function freshEmail(): string {
   return `rules-${randomUUID()}@example.co.uk`;
@@ -46,9 +46,9 @@ describe("checkLeadRules", () => {
     });
   });
 
-  it("refuses a phone that does not normalise for the site's country, or is missing", async () => {
+  it("refuses a phone that does not normalise for the site's country, is a fiction or premium number, or is missing", async () => {
     await withTestDb(async (tx) => {
-      for (const phone of ["0909 879 0000", "123", "+1 212 456 7890", null, ""]) {
+      for (const phone of ["0909 879 0000", "01632 960123", "07700 900456", "123", "+1 212 456 7890", null, ""]) {
         expect(await checkLeadRules(tx, { email: freshEmail(), phone, country: "GB" }))
           .toEqual({ reason: "phone_invalid" });
       }

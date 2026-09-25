@@ -5,8 +5,8 @@ import { countryProfile, type SupportedCountry } from "./countries";
  *
  * Pay-per-lead (D11) refuses a lead whose phone does not normalise for the
  * site's own country, and uses the E.164 form as the key for the 30-day
- * duplicate check and the blocklist — so "020 7946 0018", "+44 20 7946 0018"
- * and "0044 (0)20 7946 0018" must be the same string, and a number a buyer
+ * duplicate check and the blocklist — so "020 7946 1018", "+44 20 7946 1018"
+ * and "0044 (0)20 7946 1018" must be the same string, and a number a buyer
  * cannot ring (too short, letters, a premium or personal-numbering range, a
  * reserved fiction range) must not be a lead anyone pays for.
  *
@@ -18,10 +18,41 @@ import { countryProfile, type SupportedCountry } from "./countries";
  *
  * Refused ranges:
  *  - GB: 09 (premium rate), 070 (personal numbering — the classic scam
- *    number that looks like a mobile). 0800/0808 freephone is accepted.
+ *    number that looks like a mobile), and Ofcom's drama ranges
+ *    (`FICTIONAL_RANGES.GB`). 0800/0808 freephone is otherwise accepted.
  *  - NANP (US, CA): area code 900 (premium) and 555-01xx (fiction).
- *  - AU: 19xx (premium).
+ *  - AU: 19xx (premium) and ACMA's fiction ranges (`FICTIONAL_RANGES.AU`).
+ *
+ * The fiction ranges are the numbers seed data and demos are told to use
+ * (`reservedPhoneExample` in lib/geo/countries.ts), which is exactly why a
+ * lead carrying one is not a person: it is a test, a demo, or somebody
+ * copying the example.
  */
+
+/**
+ * Numbers reserved for fiction, as prefixes of the national significant
+ * number (after the trunk 0). Every number that starts with one is refused.
+ */
+export const FICTIONAL_RANGES: Partial<Record<SupportedCountry, readonly string[]>> = {
+  // Ofcom: 01632 960xxx, 020 7946 0xxx, 07700 900xxx, 0808 157 0xxx,
+  // 0909 879 0xxx, 03069 990xxx, 0191 498 0xxx, 0113/0114/0115/0116/0117/
+  // 0118/0121/0131/0141/0161 496 0xxx, 028 9018 0xxx, 029 2018 0xxx.
+  GB: [
+    "1632960", "2079460", "7700900", "8081570", "9098790", "3069990", "1914980",
+    "1134960", "1144960", "1154960", "1164960", "1174960", "1184960",
+    "1214960", "1314960", "1414960", "1614960", "2890180", "2920180",
+  ],
+  // ACMA: 02/03/07/08 5550 xxxx and 7010 xxxx, 0491 570 xxx, 1800 160 xxx,
+  // 1900 654 xxx.
+  AU: [
+    "25550", "35550", "75550", "85550", "27010", "37010", "77010", "87010",
+    "491570", "1800160", "1900654",
+  ],
+};
+
+function fictional(code: SupportedCountry, nsn: string): boolean {
+  return (FICTIONAL_RANGES[code] ?? []).some((prefix) => nsn.startsWith(prefix));
+}
 
 type Plan = (nsn: string) => boolean;
 
@@ -77,5 +108,6 @@ export function normalisePhone(raw: string | null | undefined, country: string):
     nsn = digits.startsWith(plan.trunk) ? digits.slice(plan.trunk.length) : digits;
   }
 
-  return plan.valid(nsn) ? `+${cc}${nsn}` : null;
+  if (!plan.valid(nsn) || fictional(profile.code, nsn)) return null;
+  return `+${cc}${nsn}`;
 }

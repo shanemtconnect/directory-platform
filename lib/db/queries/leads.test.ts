@@ -18,7 +18,7 @@ const NOW = new Date("2026-09-25T12:00:00Z");
 afterEach(() => resetClock());
 
 function freshPhone(): string {
-  return `01632 96${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`;
+  return `01632 97${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`;
 }
 function freshEmail(): string {
   return `lead-${randomUUID()}@example.co.uk`;
@@ -107,7 +107,7 @@ describe("createLeadFromQuote", () => {
         cityId: ctx.cityId, categoryId: ctx.primaryCategoryId, firstName: "Sam", name: "Sam Requester",
         priceCents: siteConfig.leads.floor * 100, soldAt: null, buyerUserId: null,
       });
-      expect(lead!.phoneNormalised).toMatch(/^\+44163296\d{4}$/);
+      expect(lead!.phoneNormalised).toMatch(/^\+44163297\d{4}$/);
       expect(lead!.emailNormalised).toBe(lead!.email.toLowerCase());
       expect(lead!.halfPriceAt.getTime()).toBe(NOW.getTime() + siteConfig.leads.halfPriceAfterDays * DAY);
       expect(lead!.expiresAt.getTime()).toBe(NOW.getTime() + siteConfig.leads.deleteAfterDays * DAY);

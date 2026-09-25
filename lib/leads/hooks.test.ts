@@ -12,7 +12,7 @@ async function aLead(tx: Parameters<typeof createCaptureLead>[0]) {
   const lead = await createCaptureLead(tx, PUBLIC_VIEWER, {
     cityId: ctx.cityId, categoryId: null, name: "Hook Test",
     email: `hook-${crypto.randomUUID()}@example.co.uk`,
-    phone: `01632 96${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`,
+    phone: `01632 97${String(Math.floor(Math.random() * 10_000)).padStart(4, "0")}`,
     message: "A job for the hook test",
   });
   return lead!;

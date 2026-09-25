@@ -57,7 +57,7 @@ function form(): FormData {
   f.set("listingId", LISTING);
   f.set("name", "Jo Enquirer");
   f.set("email", "jo@example.co.uk");
-  f.set("phone", "01632 960123");
+  f.set("phone", "01632 970123");
   f.set("message", "Is the hall free on 3 May?");
   return f;
 }
@@ -97,7 +97,7 @@ describe("submitEnquiry — the lead branch", () => {
     expect(notifyEnquiry).toHaveBeenCalledTimes(1);
     expect(createEnquiryLeadRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, {
       listingId: LISTING, cityId: CITY, categoryId: null, name: "Jo Enquirer", email: "jo@example.co.uk",
-      phone: "01632 960123", message: "Is the hall free on 3 May?", ip: "203.0.113.9",
+      phone: "01632 970123", message: "Is the hall free on 3 May?", ip: "203.0.113.9",
     });
     expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, PENDING);
   });

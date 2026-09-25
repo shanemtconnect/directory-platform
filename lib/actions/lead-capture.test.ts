@@ -52,7 +52,7 @@ const good: Record<string, string> = {
   categoryId: CATEGORY,
   name: "Alex Capture",
   email: "alex@example.co.uk",
-  phone: "01632 960123",
+  phone: "01632 970123",
   message: "Office move next month, about ten desks.",
   consent: "on",
   "cf-turnstile-response": "tok",
@@ -83,11 +83,11 @@ describe("submitCaptureLead", () => {
     expect(await submit(good)).toEqual({ status: "sent" });
 
     expect(checkLeadRules).toHaveBeenCalledWith(HANDLE, {
-      email: "alex@example.co.uk", phone: "01632 960123", country: expect.any(String),
+      email: "alex@example.co.uk", phone: "01632 970123", country: expect.any(String),
     });
     expect(createQuoteRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, {
       cityId: CITY, categoryId: CATEGORY, name: "Alex Capture", email: "alex@example.co.uk",
-      phone: "01632 960123", message: "Office move next month, about ten desks.", ip: "203.0.113.9",
+      phone: "01632 970123", message: "Office move next month, about ten desks.", ip: "203.0.113.9",
     }, { source: "capture" });
     expect(notifyQuoteVerify).toHaveBeenCalledWith(HANDLE, { role: "public" }, expect.objectContaining({ token: "tok-raw" }));
     expect(limitPublicWrite).toHaveBeenCalledWith("lead-capture", expect.any(Headers), { limit: 3, windowSeconds: 3600 });
