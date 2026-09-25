@@ -63,6 +63,20 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
   }
 
   const err = state.fieldErrors ?? {};
+  const vals = state.values;
+  // React only reads `defaultValue`/`defaultChecked` when a field FIRST
+  // mounts — changing the prop on a later render of the same DOM node does
+  // nothing, and the native reset React runs after a form action returns
+  // (Task 60) restores whatever that first, mount-time default was. Keying
+  // each field on what was actually submitted forces a remount exactly when
+  // the server hands back different values, so the reset lands on the
+  // person's own typing rather than on the field's original blank default.
+  const valueKey = vals ? JSON.stringify(vals) : "initial";
+  // The specific "no phone" refusal (lib/actions/quotes.ts) sets the phone
+  // field's error to the exact same text as the notice, so this is the one
+  // way to tell it apart from a plain "too long" or "check the fields"
+  // refusal without a dedicated flag.
+  const phoneNotice = state.status === "error" && err.phone && state.message === err.phone ? state.message : null;
 
   return (
     <form action={action} data-testid="quote-form" className="card">
@@ -72,9 +86,13 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
         <input id="company_website" name="company_website" type="text" tabIndex={-1} autoComplete="off" />
       </div>
 
+      {phoneNotice && (
+        <Notice variant="error" testId="quote-phone-notice">{phoneNotice}</Notice>
+      )}
+
       <p>
         <label htmlFor="quote-category">What do you need?</label>
-        <select id="quote-category" name="categoryId" required defaultValue="" aria-invalid={Boolean(err.categoryId)}>
+        <select key={valueKey} id="quote-category" name="categoryId" required defaultValue={vals?.categoryId ?? ""} aria-invalid={Boolean(err.categoryId)}>
           <option value="" disabled>Choose a category</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
@@ -85,7 +103,7 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
 
       <p>
         <label htmlFor="quote-town">Where?</label>
-        <select id="quote-town" name="cityId" required defaultValue="" aria-invalid={Boolean(err.cityId)}>
+        <select key={valueKey} id="quote-town" name="cityId" required defaultValue={vals?.cityId ?? ""} aria-invalid={Boolean(err.cityId)}>
           <option value="" disabled>Choose a town</option>
           {towns.map((t) => (
             <option key={t.id} value={t.id}>{t.name}</option>
@@ -97,12 +115,14 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
       <p>
         <label htmlFor="quote-message">Describe the job</label>
         <textarea
+          key={valueKey}
           id="quote-message"
           name="message"
           required
           minLength={QUOTE_MESSAGE_MIN}
           maxLength={QUOTE_MESSAGE_MAX}
           rows={6}
+          defaultValue={vals?.message ?? ""}
           aria-invalid={Boolean(err.message)}
           aria-describedby="quote-message-hint"
         />
@@ -114,19 +134,19 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
 
       <p>
         <label htmlFor="quote-name">Your name</label>
-        <input id="quote-name" name="name" required maxLength={120} autoComplete="name" aria-invalid={Boolean(err.name)} />
+        <input key={valueKey} id="quote-name" name="name" required maxLength={120} defaultValue={vals?.name ?? ""} autoComplete="name" aria-invalid={Boolean(err.name)} />
         {err.name && <span role="alert">{err.name}</span>}
       </p>
 
       <p>
         <label htmlFor="quote-email">Email</label>
-        <input id="quote-email" name="email" type="email" required maxLength={254} autoComplete="email" aria-invalid={Boolean(err.email)} />
+        <input key={valueKey} id="quote-email" name="email" type="email" required maxLength={254} defaultValue={vals?.email ?? ""} autoComplete="email" aria-invalid={Boolean(err.email)} />
         {err.email && <span role="alert">{err.email}</span>}
       </p>
 
       <p>
         <label htmlFor="quote-phone">Phone (optional)</label>
-        <input id="quote-phone" name="phone" type="tel" maxLength={40} autoComplete="tel" aria-invalid={Boolean(err.phone)} />
+        <input key={valueKey} id="quote-phone" name="phone" type="tel" maxLength={40} defaultValue={vals?.phone ?? ""} autoComplete="tel" aria-invalid={Boolean(err.phone)} />
         {leadMarketplace && (
           // With the lead marketplace on, a request nobody listed there can
           // take is passed on as a lead, and a lead needs a number to ring.
@@ -137,7 +157,7 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
 
       <p>
         <label className="inline-flex items-start gap-2">
-          <input id="quote-consent" name="consent" type="checkbox" required className="mt-1" aria-invalid={Boolean(err.consent)} />
+          <input key={valueKey} id="quote-consent" name="consent" type="checkbox" required className="mt-1" defaultChecked={vals?.consent ?? false} aria-invalid={Boolean(err.consent)} />
           {leadMarketplace ? (
             <span>
               Send my name, email and phone number to up to {siteConfig.quotes.maxRecipients}{" "}
@@ -155,7 +175,9 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
 
       <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />
 
-      {state.status === "error" && state.message && (
+      {/* Already said once, above the form, when it's the "no phone" refusal —
+          this generic slot is for every other error. */}
+      {state.status === "error" && state.message && !phoneNotice && (
         <Notice variant="error" testId="quote-error">{state.message}</Notice>
       )}
 

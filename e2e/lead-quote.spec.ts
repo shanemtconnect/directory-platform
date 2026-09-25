@@ -46,13 +46,13 @@ test("a request nobody local can receive needs a phone, then becomes a lead on c
   // A town and category where no published listing has an address or an
   // owner — the seed gives none an email — and that e2e/quotes.spec.ts,
   // which lends two listings an address in the BUSIEST pair, never picks.
-  const [scope] = await sql<{ city_id: string; category_id: string }[]>`
-    select c.id as city_id, cat.id as category_id
+  const [scope] = await sql<{ city_id: string; category_id: string; city_name: string }[]>`
+    select c.id as city_id, cat.id as category_id, c.name as city_name
     from listings l
     join cities c on c.id = l.city_id
     join categories cat on cat.id = l.primary_category_id
     where l.status = 'published' and c.is_published and c.is_indexable and cat.is_active
-    group by c.id, cat.id
+    group by c.id, cat.id, c.name
     having count(*) = 1 and bool_and(nullif(trim(l.email), '') is null and l.owner_id is null)
     order by c.name, cat.name
     limit 1
@@ -61,8 +61,6 @@ test("a request nobody local can receive needs a phone, then becomes a lead on c
 
   await page.goto("/get-quotes");
   const form = page.locator('[data-testid="quote-form"]');
-  // React resets an uncontrolled form after its action returns, so the
-  // second attempt fills every field again, as a person would.
   async function fill(phone: string | null) {
     await form.locator("#quote-category").selectOption(scope!.category_id);
     await form.locator("#quote-town").selectOption(scope!.city_id);
@@ -76,13 +74,29 @@ test("a request nobody local can receive needs a phone, then becomes a lead on c
   }
   await fill(null);
 
-  // Refused on the phone, and nothing written.
-  await expect(page.locator('[data-testid="quote-error"]')).toBeVisible({ timeout: 15_000 });
-  await expect(form).toContainText("phone number we can call");
+  // Refused on the phone, told WHY (names the town, not a validation slip),
+  // and nothing written.
+  await expect(page.locator('[data-testid="quote-phone-notice"]')).toBeVisible({ timeout: 15_000 });
+  await expect(form).toContainText(`No listed`);
+  await expect(form).toContainText(scope!.city_name);
+  await expect(form).toContainText("so we need a phone number to pass it on");
   expect(await sql`select 1 from quote_requests where email = ${EMAIL}`).toHaveLength(0);
 
-  // With a phone: held for confirmation, no recipients.
-  await fill(leadPhone());
+  // React resets an uncontrolled form's fields to their defaultValue once the
+  // action returns — the action now hands those defaults back, so what was
+  // typed survives the refusal and only the phone needs adding.
+  await expect(form.locator("#quote-category")).toHaveValue(scope!.category_id);
+  await expect(form.locator("#quote-town")).toHaveValue(scope!.city_id);
+  await expect(form.locator("#quote-message")).toHaveValue(JOB);
+  await expect(form.locator("#quote-name")).toHaveValue("Playwright Leadless");
+  await expect(form.locator("#quote-email")).toHaveValue(EMAIL);
+  await expect(form.locator("#quote-consent")).toBeChecked();
+
+  // With a phone: held for confirmation, no recipients. Only the phone field
+  // is filled in — everything else was already there.
+  await form.locator("#quote-phone").fill(leadPhone());
+  await expect(form.locator('input[name="cf-turnstile-response"]')).not.toHaveValue("", { timeout: 15_000 });
+  await form.locator('button[type="submit"]').click();
   await expect(page.locator('[data-testid="quote-sent"]')).toContainText("pass it on", { timeout: 15_000 });
 
   const [request] = await sql<{ id: string; status: string }[]>`
