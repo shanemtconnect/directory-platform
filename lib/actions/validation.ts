@@ -105,7 +105,7 @@ export function validateEnquiry(form: FormData): Result<EnquiryValues> {
  * an unauthenticated form otherwise attracts.
  */
 const DESCRIPTION_MIN = 50;
-const DESCRIPTION_MAX = 500;
+export const DESCRIPTION_MAX = 500;
 
 const SUBMISSION_MAX = {
   name: 200,
