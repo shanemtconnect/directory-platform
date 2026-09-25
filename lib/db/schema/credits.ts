@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, integer, timestamp, uniqueIndex, index, pgEnum } from "drizzle-orm/pg-core";
 import { base } from "./_base";
 import { profiles } from "./ownership";
@@ -30,6 +31,8 @@ export const creditLedger = pgTable("credit_ledger", {
 }, (t) => [
   index("credit_ledger_user_idx").on(t.userId, t.createdAt),
   uniqueIndex("credit_ledger_order_key").on(t.orderId),
+  /** One refund entry per refund: `refundToCredit`'s idempotency, held by the database too. */
+  uniqueIndex("credit_ledger_refund_key").on(t.refType, t.refId).where(sql`${t.kind} = 'refund'`),
 ]);
 
 export const creditOrders = pgTable("credit_orders", {

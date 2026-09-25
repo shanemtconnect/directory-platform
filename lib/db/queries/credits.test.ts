@@ -123,6 +123,20 @@ describe("refundToCredit", () => {
   });
 });
 
+describe("the refund index", () => {
+  it("refuses a second refund entry for the same refund in the database itself, not only in code", async () => {
+    await withTestDb(async (tx) => {
+      const { profileId } = await makeAccount(tx);
+      const refundId = randomUUID();
+      const row = { userId: profileId, deltaCents: 2500, kind: "refund" as const, refType: "lead_refund", refId: refundId };
+      await tx.insert(creditLedger).values(row);
+      await expect(tx.transaction(async (sp) => sp.insert(creditLedger).values(row))).rejects.toThrow();
+      // Other kinds may share a ref (a purchase and its refund both name the lead).
+      await tx.insert(creditLedger).values({ ...row, kind: "adjust", deltaCents: 1 });
+    });
+  });
+});
+
 describe("adminAdjust", () => {
   it("adds or removes credit with a note, on the audit log as credit.adjusted", async () => {
     await withTestDb(async (tx) => {

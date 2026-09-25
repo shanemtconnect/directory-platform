@@ -37,5 +37,6 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_ledger_user_idx" ON "credit_ledger" USING btree ("user_id","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "credit_ledger_order_key" ON "credit_ledger" USING btree ("order_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "credit_ledger_refund_key" ON "credit_ledger" USING btree ("ref_type","ref_id") WHERE "credit_ledger"."kind" = 'refund';--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "credit_orders_provider_order_key" ON "credit_orders" USING btree ("provider_order_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_orders_user_idx" ON "credit_orders" USING btree ("user_id");
