@@ -152,9 +152,10 @@ export type QuoteRequestResult =
    * Lead marketplace on, nobody local can receive it — so its only
    * destination is a lead — and the lead rules refuse it (D11). Nothing was
    * written; the requester is told why now, not after a click that would
-   * have gone nowhere.
+   * have gone nowhere. `cityName` is the town they chose, so the caller can
+   * say why in words that name the place rather than a generic refusal.
    */
-  | { outcome: "lead-refused"; reason: LeadRejection };
+  | { outcome: "lead-refused"; reason: LeadRejection; cityName: string };
 
 /**
  * The write. Caller supplies the transaction so the request, its recipients,
@@ -183,7 +184,7 @@ export async function createQuoteRequest(
   if (!UUID.test(input.categoryId)) return { outcome: "unknown-category" };
 
   const [city] = await tx
-    .select({ id: cities.id })
+    .select({ id: cities.id, name: cities.name })
     .from(cities)
     .where(and(eq(cities.id, input.cityId), eq(cities.isPublished, true)))
     .limit(1);
@@ -212,7 +213,7 @@ export async function createQuoteRequest(
     const verdict = await checkLeadRules(tx, {
       email: input.email, phone: input.phone, country: siteConfig.country,
     });
-    if (verdict !== "ok") return { outcome: "lead-refused", reason: verdict.reason };
+    if (verdict !== "ok") return { outcome: "lead-refused", reason: verdict.reason, cityName: city.name };
   }
 
   const at = now();

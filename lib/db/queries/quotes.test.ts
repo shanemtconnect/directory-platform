@@ -245,13 +245,14 @@ describe("createQuoteRequest", () => {
       const opts = { allowNoRecipients: true };
 
       // No phone: the only destination is a lead, and a lead needs a number to ring.
+      // `cityName` is the town they chose — the action names it in the refusal.
       expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { phone: null }), opts))
-        .toEqual({ outcome: "lead-refused", reason: "phone_invalid" });
+        .toEqual({ outcome: "lead-refused", reason: "phone_invalid", cityName: "Leeds" });
       // A fiction number, a throwaway inbox: the same, told now rather than dropped after the click.
       expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { phone: "01632 960123" }), opts))
-        .toEqual({ outcome: "lead-refused", reason: "phone_invalid" });
+        .toEqual({ outcome: "lead-refused", reason: "phone_invalid", cityName: "Leeds" });
       expect(await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { email: "x@mailinator.com" }), opts))
-        .toEqual({ outcome: "lead-refused", reason: "disposable_email" });
+        .toEqual({ outcome: "lead-refused", reason: "disposable_email", cityName: "Leeds" });
       expect(await tx.select().from(quoteRequests)).toHaveLength(0);
 
       // A request that DOES reach a listing is never held to the lead rules.
