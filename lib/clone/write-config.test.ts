@@ -201,3 +201,11 @@ describe("renderSiteConfig — sponsor rails (Task 43)", () => {
     expect(renderSiteConfig(answers({ adsEnabled: "yes" }))).toContain("  ads: {\n    enabled: true,");
   });
 });
+
+describe("renderSiteConfig — neighbourhoods (Task 52)", () => {
+  it("renders the geo.neighbourhoods block, off by default at the shipped numbers", () => {
+    expect(renderSiteConfig(answers())).toContain(
+      "  geo: {\n    neighbourhoods: {\n      enabled: false,\n      minListings: 5,\n      defaultRadiusKm: 2,\n    },\n  },",
+    );
+  });
+});

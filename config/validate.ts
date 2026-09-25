@@ -321,6 +321,34 @@ export function validateStatsRetention(config: {
 }
 
 /**
+ * `geo.neighbourhoods` (Task 52). Neighbourhoods hang off towns, which only a
+ * niche-national site has — a local-multi-vertical site's `areas` rows are its
+ * own top-level places and must keep `city_id` null. A threshold of zero would
+ * index an empty page; a radius of zero or less assigns nothing, silently.
+ */
+export function validateNeighbourhoods(config: {
+  siteMode: string;
+  geo: { neighbourhoods: { enabled: boolean; minListings: number; defaultRadiusKm: number } };
+}): void {
+  const n = config.geo.neighbourhoods;
+  const problems: string[] = [];
+  if (n.enabled && config.siteMode !== "niche-national") {
+    problems.push(`geo.neighbourhoods is on, but neighbourhoods exist on niche-national sites only (siteMode is ${config.siteMode})`);
+  }
+  if (!Number.isInteger(n.minListings) || n.minListings < 1) {
+    problems.push(`geo.neighbourhoods.minListings must be a whole number of at least 1, got ${String(n.minListings)}`);
+  }
+  if (!Number.isFinite(n.defaultRadiusKm) || n.defaultRadiusKm <= 0) {
+    problems.push(`geo.neighbourhoods.defaultRadiusKm must be a positive distance in km, got ${String(n.defaultRadiusKm)}`);
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Neighbourhood configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
+/**
  * A clone starts life full of placeholders, which is fine right up until it is
  * serving the public. `legalEntity: "TBC"` reaches the footer, the terms page
  * and the Organization JSON-LD; an @example.com support address means a

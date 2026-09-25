@@ -255,6 +255,16 @@ export const siteConfig = {
     durationDays: 30,
     reminderDays: 7,
   },
+  // Neighbourhoods under towns (niche-national only): /<town>/<neighbourhood>,
+  // listings assigned by nearest centroid. A page is noindexed and kept out of
+  // the sitemap until it has minListings published listings.
+  geo: {
+    neighbourhoods: {
+      enabled: false,
+      minListings: 5,
+      defaultRadiusKm: 2,
+    },
+  },
 } as const satisfies SiteConfig;
 
 /**

@@ -353,6 +353,16 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     durationDays: 30,
     reminderDays: 7,
   },
+  // Neighbourhoods under towns (niche-national only): /<town>/<neighbourhood>,
+  // imported on /admin/neighbourhoods and filled by nearest centroid. A page is
+  // noindexed and kept out of the sitemap below minListings published listings.
+  geo: {
+    neighbourhoods: {
+      enabled: false,
+      minListings: 5,
+      defaultRadiusKm: 2,
+    },
+  },
 } as const satisfies SiteConfig;
 
 ${ACCESSORS}`;
