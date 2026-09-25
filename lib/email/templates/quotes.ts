@@ -1,4 +1,5 @@
 import { siteConfig } from "@/config/site.config";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { layout, unsubscribeBlock, type Block, type EmailContent } from "./layout";
 
 /**
@@ -84,6 +85,12 @@ export interface QuoteAcknowledgementData {
   /** How many businesses were actually written to. Never a padded number. */
   recipientCount: number;
   message: string;
+  /**
+   * `features.leadMarketplace`. Off, the closing line is the original "we
+   * don't sell your details"; on, that would be false, and the one shared
+   * notice (lib/leads/consent.ts) says instead who may pay for the request.
+   */
+  leadMarketplace?: boolean;
 }
 
 export function quoteAcknowledgement(data: QuoteAcknowledgementData): EmailContent {
@@ -99,7 +106,11 @@ export function quoteAcknowledgement(data: QuoteAcknowledgementData): EmailConte
         `so keep an eye on your inbox.`,
     },
     { label: "What you asked for", value: data.message },
-    { value: `${siteConfig.name} never charges you for this, and we don't sell your details.` },
+    {
+      value: data.leadMarketplace === true
+        ? `${siteConfig.name} never charges you for this. ${leadSharingNotice()}`
+        : `${siteConfig.name} never charges you for this, and we don't sell your details.`,
+    },
   ];
   return { subject, ...layout({ subject, heading: `Sent to ${n} ${noun}`, blocks }) };
 }
@@ -107,13 +118,16 @@ export function quoteAcknowledgement(data: QuoteAcknowledgementData): EmailConte
 export interface QuoteVerifyEmailData {
   requesterName: string;
   cityName: string;
-  categoryName: string;
-  /** Absolute URL of /get-quotes/verify?token=… */
+  /** Null for an enquiry to a listing with no primary category. */
+  categoryName: string | null;
+  /** The enquiry's target, for `source: "enquiry"`. */
+  listingName?: string | null;
+  /** Absolute URL of the landing page, /get-quotes/verify/<token>. */
   verifyUrl: string;
   /** How long the link lives. `QUOTE_VERIFY_TTL_HOURS`, never retyped. */
   expiresHours: number;
-  /** `capture` is a lead-capture box: nothing is broadcast, so the copy says less. */
-  source: "quote" | "capture";
+  /** `capture` is a lead-capture box, `enquiry` an enquiry to a listing with no address. */
+  source: "quote" | "capture" | "enquiry";
 }
 
 /**
@@ -123,12 +137,18 @@ export interface QuoteVerifyEmailData {
  */
 export function quoteVerifyEmail(data: QuoteVerifyEmailData): EmailContent {
   const e = siteConfig.entity;
-  const subject = `Confirm your request for ${data.categoryName} in ${data.cityName}`;
+  const enquiry = data.source === "enquiry";
+  const what = enquiry
+    ? `your enquiry${data.listingName ? ` about ${data.listingName}` : ""}`
+    : `your request${data.categoryName ? ` for ${data.categoryName}` : ""}`;
+  const subject = enquiry
+    ? `Confirm your enquiry in ${data.cityName}`
+    : `Confirm your request${data.categoryName ? ` for ${data.categoryName}` : ""} in ${data.cityName}`;
   const blocks: Block[] = [
     {
       value:
         `Hello ${data.requesterName}. Please confirm this is your email address and we will pass ` +
-        `your request for ${data.categoryName} in ${data.cityName} on to ${e.plural} that can help. ` +
+        `${what} on to ${e.plural} in ${data.cityName} that can help. ` +
         `Nothing has been sent to anyone yet.`,
     },
     { label: "Confirm my request", value: data.verifyUrl, href: data.verifyUrl },

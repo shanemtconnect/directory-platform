@@ -15,6 +15,10 @@ ALTER TABLE "quote_requests" ADD COLUMN IF NOT EXISTS "verified_at" timestamp wi
 ALTER TABLE "quote_requests" ADD COLUMN IF NOT EXISTS "verify_token_hash" text;--> statement-breakpoint
 ALTER TABLE "quote_requests" ADD COLUMN IF NOT EXISTS "verify_expires_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "quote_requests" ADD COLUMN IF NOT EXISTS "source" "lead_source" DEFAULT 'quote' NOT NULL;--> statement-breakpoint
+ALTER TABLE "quote_requests" ADD COLUMN IF NOT EXISTS "listing_id" uuid;--> statement-breakpoint
+DO $$ BEGIN
+	ALTER TABLE "quote_requests" ADD CONSTRAINT "quote_requests_listing_id_listings_id_fk" FOREIGN KEY ("listing_id") REFERENCES "public"."listings"("id") ON DELETE set null ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
 -- Every request written before verification existed was delivered on submit.
 -- Marking them verified keeps them on owners' leads pages and out of the
 -- expiry sweep; nothing already sent is gated again.

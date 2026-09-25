@@ -200,7 +200,7 @@ export async function createQuoteRequest(
   }
 
   const at = now();
-  const token = randomBytes(32).toString("base64url");
+  const { token, ...verify } = mintVerifyLink(at);
   const [row] = await tx
     .insert(quoteRequests)
     .values({
@@ -214,8 +214,7 @@ export async function createQuoteRequest(
       consentAt: at,
       status: "pending",
       source,
-      verifyTokenHash: hashToken(token),
-      verifyExpiresAt: new Date(at.getTime() + QUOTE_VERIFY_TTL_HOURS * 3_600_000),
+      ...verify,
     })
     .returning({ id: quoteRequests.id });
   const quoteRequestId = row!.id;
@@ -249,11 +248,81 @@ export async function createQuoteRequest(
   return { outcome: "created", quoteRequestId, recipientCount: recipients.length, token };
 }
 
+/**
+ * A verification link: 32 random bytes, base64url, for the email; its
+ * SHA-256 and a 48-hour expiry for the row. The raw token is returned once
+ * and never stored.
+ */
+function mintVerifyLink(at: Date): { token: string; verifyTokenHash: string; verifyExpiresAt: Date } {
+  const token = randomBytes(32).toString("base64url");
+  return {
+    token,
+    verifyTokenHash: hashToken(token),
+    verifyExpiresAt: new Date(at.getTime() + QUOTE_VERIFY_TTL_HOURS * 3_600_000),
+  };
+}
+
+export interface EnquiryLeadRequestInput {
+  listingId: string;
+  cityId: string;
+  categoryId: string | null;
+  name: string;
+  email: string;
+  phone: string | null;
+  message: string;
+  ip: string | null;
+}
+
+/**
+ * The verification link for an enquiry that will become a lead (D5, D6).
+ *
+ * An enquiry to an unclaimed listing with no address reaches nobody, so
+ * with the lead marketplace on it is offered as a lead — but only once the
+ * enquirer confirms, like every other lead. This row is the pending
+ * confirmation: source `enquiry`, the target listing, the enquirer's
+ * details, no recipients. The enquiry row itself (lib/db/queries/enquiries)
+ * is written exactly as before; the caller queues `notifyQuoteVerify`.
+ */
+export async function createEnquiryLeadRequest(
+  tx: TestDb,
+  viewer: Viewer,
+  input: EnquiryLeadRequestInput,
+): Promise<Extract<QuoteRequestResult, { outcome: "created" }>> {
+  const at = now();
+  const { token, ...verify } = mintVerifyLink(at);
+  const [row] = await tx
+    .insert(quoteRequests)
+    .values({
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      message: input.message,
+      cityId: input.cityId,
+      categoryId: input.categoryId,
+      listingId: input.listingId,
+      ip: input.ip,
+      consentAt: at,
+      status: "pending",
+      source: "enquiry",
+      ...verify,
+    })
+    .returning({ id: quoteRequests.id });
+
+  await writeAudit(tx, viewer, {
+    action: "quote.requested",
+    entityType: "quote_request",
+    entityId: row!.id,
+    meta: { source: "enquiry", listingId: input.listingId, recipients: [] },
+    ip: input.ip,
+  });
+  return { outcome: "created", quoteRequestId: row!.id, recipientCount: 0, token };
+}
+
 export type QuoteVerifyResult =
   | {
     outcome: "verified";
     quoteRequestId: string;
-    source: "quote" | "capture";
+    source: "quote" | "capture" | "enquiry";
     /** How many listings the request is now delivered to. */
     recipientCount: number;
   }
@@ -266,6 +335,50 @@ export type QuoteVerifyResult =
 
 /** A base64url token is 43 characters; anything far longer is not ours. */
 const MAX_TOKEN_CHARS = 128;
+
+/** The digest lookup both the preview and the click start from. */
+async function rowForToken(tx: TestDb, raw: string) {
+  if (raw === "" || raw.length > MAX_TOKEN_CHARS) return null;
+  const [row] = await tx
+    .select({
+      id: quoteRequests.id,
+      status: quoteRequests.status,
+      source: quoteRequests.source,
+      isSpam: quoteRequests.isSpam,
+      expiresAt: quoteRequests.verifyExpiresAt,
+    })
+    .from(quoteRequests)
+    .where(eq(quoteRequests.verifyTokenHash, hashToken(raw)))
+    .limit(1);
+  if (!row || row.isSpam || row.status === "spam") return null;
+  return row;
+}
+
+export type QuoteTokenPreview =
+  | { outcome: "live"; source: "quote" | "capture" | "enquiry" }
+  | { outcome: "already-verified" }
+  | { outcome: "expired" }
+  | { outcome: "unknown" };
+
+/**
+ * What the landing page (`/get-quotes/verify/<token>`) shows, WITHOUT
+ * spending the link. The page is a GET, and mail scanners, link rewriters
+ * and previewers GET every link in a message; only the POST behind the
+ * page's button (`verifyQuoteToken`) confirms anything. Writes nothing — an
+ * expired link is reported, and the sweep or the POST marks it.
+ */
+export async function previewQuoteToken(
+  tx: TestDb,
+  _viewer: Viewer,
+  raw: string,
+): Promise<QuoteTokenPreview> {
+  const row = await rowForToken(tx, raw);
+  if (!row) return { outcome: "unknown" };
+  if (row.status === "verified") return { outcome: "already-verified" };
+  if (row.status === "expired") return { outcome: "expired" };
+  if (row.expiresAt === null || row.expiresAt.getTime() <= now().getTime()) return { outcome: "expired" };
+  return { outcome: "live", source: row.source };
+}
 
 /**
  * The click. Single use: the pending → verified step is one conditional
@@ -283,20 +396,8 @@ export async function verifyQuoteToken(
   viewer: Viewer,
   raw: string,
 ): Promise<QuoteVerifyResult> {
-  if (raw === "" || raw.length > MAX_TOKEN_CHARS) return { outcome: "unknown" };
-
-  const [row] = await tx
-    .select({
-      id: quoteRequests.id,
-      status: quoteRequests.status,
-      source: quoteRequests.source,
-      isSpam: quoteRequests.isSpam,
-      expiresAt: quoteRequests.verifyExpiresAt,
-    })
-    .from(quoteRequests)
-    .where(eq(quoteRequests.verifyTokenHash, hashToken(raw)))
-    .limit(1);
-  if (!row || row.isSpam || row.status === "spam" || row.source === "enquiry") return { outcome: "unknown" };
+  const row = await rowForToken(tx, raw);
+  if (!row) return { outcome: "unknown" };
   if (row.status === "verified") return { outcome: "already-verified", quoteRequestId: row.id };
   if (row.status === "expired") return { outcome: "expired" };
 
@@ -334,7 +435,7 @@ export async function verifyQuoteToken(
   return {
     outcome: "verified",
     quoteRequestId: row.id,
-    source: row.source === "capture" ? "capture" : "quote",
+    source: row.source,
     recipientCount: recipients.length,
   };
 }
@@ -343,7 +444,10 @@ export interface QuoteVerification {
   name: string | null;
   email: string;
   cityName: string;
-  categoryName: string;
+  /** Null for an enquiry to a listing with no primary category. */
+  categoryName: string | null;
+  /** The enquiry's target listing, for `source = 'enquiry'`. */
+  listingName: string | null;
   status: "pending" | "verified" | "expired" | "spam";
   source: "quote" | "capture" | "enquiry";
   /** The digest of the live link; the job's token must hash to it. */
@@ -366,6 +470,7 @@ export async function quoteVerification(
       email: quoteRequests.email,
       cityName: cities.name,
       categoryName: categories.name,
+      listingName: listings.name,
       status: quoteRequests.status,
       source: quoteRequests.source,
       tokenHash: quoteRequests.verifyTokenHash,
@@ -373,7 +478,8 @@ export async function quoteVerification(
     })
     .from(quoteRequests)
     .innerJoin(cities, eq(cities.id, quoteRequests.cityId))
-    .innerJoin(categories, eq(categories.id, quoteRequests.categoryId))
+    .leftJoin(categories, eq(categories.id, quoteRequests.categoryId))
+    .leftJoin(listings, eq(listings.id, quoteRequests.listingId))
     .where(eq(quoteRequests.id, quoteRequestId))
     .limit(1);
   if (!row || row.email === null) return null;
@@ -671,6 +777,9 @@ export async function listQuoteRequests(
     .from(quoteRequests)
     .innerJoin(cities, eq(cities.id, quoteRequests.cityId))
     .innerJoin(categories, eq(categories.id, quoteRequests.categoryId))
+    // An `enquiry` row is an enquirer's verification link, not a quote
+    // request; the enquiry itself is on the listing's enquiries.
+    .where(sql`${quoteRequests.source} <> 'enquiry'`)
     .orderBy(desc(quoteRequests.createdAt))
     .limit(limit);
 }

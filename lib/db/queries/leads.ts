@@ -19,7 +19,9 @@ import { writeAudit } from "./audit";
  *  - a lead-capture box (home page, rails), once its requester has clicked
  *    the same verification link (`createCaptureLead`);
  *  - an enquiry to an unclaimed listing we hold no address for — a message
- *    that would otherwise go nowhere (`createEnquiryLead`).
+ *    that would otherwise go nowhere — once the enquirer has clicked the
+ *    same verification link (`createLeadFromEnquiryRequest`, which calls
+ *    `createEnquiryLead`). No lead is ever created before a click (D6).
  *
  * Every lead is created OPEN at `siteConfig.leads.floor`, with its half-price
  * and expiry dates fixed at creation, after `checkLeadRules` (D11). None of
@@ -284,6 +286,34 @@ export interface EnquiryLeadInput {
   email: string;
   phone: string | null;
   message: string;
+  /** The verified enquiry request it came from. */
+  quoteRequestId?: string | null;
+}
+
+/**
+ * Whether an enquiry to this listing is one nobody would read — published,
+ * UNCLAIMED, no email on file — and if so, the town and category a lead from
+ * it belongs to. The enquiry action asks this before sending the enquirer a
+ * verification link; `createEnquiryLead` asks it again after the click, in
+ * case the listing has been claimed or given an address since.
+ */
+export async function enquiryLeadTarget(
+  tx: TestDb,
+  viewer: Viewer,
+  listingId: string,
+): Promise<{ cityId: string; categoryId: string | null } | null> {
+  if (!UUID.test(listingId)) return null;
+  const [target] = await tx
+    .select({ cityId: listings.cityId, categoryId: listings.primaryCategoryId })
+    .from(listings)
+    .where(and(
+      eq(listings.id, listingId),
+      publishedListings(viewer),
+      eq(listings.claimStatus, "unclaimed"),
+      sql`nullif(trim(${listings.email}), '') is null`,
+    ))
+    .limit(1);
+  return target ?? null;
 }
 
 /**
@@ -298,23 +328,20 @@ export async function createEnquiryLead(
   listingId: string,
   input: EnquiryLeadInput,
 ): Promise<Lead | null> {
-  if (!UUID.test(listingId)) return null;
-
-  const [target] = await tx
-    .select({ cityId: listings.cityId, categoryId: listings.primaryCategoryId })
-    .from(listings)
-    .where(and(
-      eq(listings.id, listingId),
-      publishedListings(viewer),
-      eq(listings.claimStatus, "unclaimed"),
-      sql`nullif(trim(${listings.email}), '') is null`,
-    ))
-    .limit(1);
+  const target = await enquiryLeadTarget(tx, viewer, listingId);
   if (!target) return null;
+  if (input.quoteRequestId) {
+    const [existing] = await tx
+      .select({ id: leads.id })
+      .from(leads)
+      .where(eq(leads.quoteRequestId, input.quoteRequestId))
+      .limit(1);
+    if (existing) return null;
+  }
 
   return insertLead(tx, viewer, {
     source: "enquiry",
-    quoteRequestId: null,
+    quoteRequestId: input.quoteRequestId ?? null,
     listingId,
     cityId: target.cityId,
     categoryId: target.categoryId,
@@ -322,5 +349,40 @@ export async function createEnquiryLead(
     email: input.email,
     phone: input.phone,
     message: input.message,
+  });
+}
+
+/**
+ * The confirm route's door for an enquiry: the verified `enquiry` request,
+ * read back and handed to `createEnquiryLead` (which re-checks the listing).
+ */
+export async function createLeadFromEnquiryRequest(
+  tx: TestDb,
+  viewer: Viewer,
+  quoteRequestId: string,
+): Promise<Lead | null> {
+  if (!UUID.test(quoteRequestId)) return null;
+  const [request] = await tx
+    .select({
+      name: quoteRequests.name,
+      email: quoteRequests.email,
+      phone: quoteRequests.phone,
+      message: quoteRequests.message,
+      listingId: quoteRequests.listingId,
+      status: quoteRequests.status,
+      source: quoteRequests.source,
+      isSpam: quoteRequests.isSpam,
+    })
+    .from(quoteRequests)
+    .where(eq(quoteRequests.id, quoteRequestId))
+    .limit(1);
+  if (!request || request.status !== "verified" || request.isSpam || request.source !== "enquiry") return null;
+  if (request.email === null || request.message === null || request.listingId === null) return null;
+  return createEnquiryLead(tx, viewer, request.listingId, {
+    name: request.name ?? request.email,
+    email: request.email,
+    phone: request.phone,
+    message: request.message,
+    quoteRequestId,
   });
 }

@@ -22,6 +22,7 @@ const verifyQuoteToken = vi.fn<(...a: unknown[]) => Promise<QuoteVerifyResult>>(
 const notifyQuoteRequest = vi.fn<(...a: unknown[]) => Promise<void>>();
 const createLeadFromQuote = vi.fn<(...a: unknown[]) => Promise<Lead | null>>();
 const createLeadFromCaptureRequest = vi.fn<(...a: unknown[]) => Promise<Lead | null>>();
+const createLeadFromEnquiryRequest = vi.fn<(...a: unknown[]) => Promise<Lead | null>>();
 const runAfterLeadCreated = vi.fn<(...a: unknown[]) => Promise<boolean>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
 let flags: Record<string, boolean> = {};
@@ -36,6 +37,7 @@ vi.mock("@/lib/db/queries/quotes", () => ({
 vi.mock("@/lib/db/queries/leads", () => ({
   createLeadFromQuote: (...a: unknown[]) => createLeadFromQuote(...a),
   createLeadFromCaptureRequest: (...a: unknown[]) => createLeadFromCaptureRequest(...a),
+  createLeadFromEnquiryRequest: (...a: unknown[]) => createLeadFromEnquiryRequest(...a),
 }));
 vi.mock("@/lib/leads/hooks", () => ({
   runAfterLeadCreated: (...a: unknown[]) => runAfterLeadCreated(...a),
@@ -50,16 +52,20 @@ vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
 
 const allowed: RateLimitResult = { allowed: true, remaining: 29, retryAfterSeconds: 0 };
 
-function click(token: string | null): Request {
-  const q = token === null ? "" : `?token=${encodeURIComponent(token)}`;
-  return new Request(`http://localhost:3215/get-quotes/verify${q}`, {
-    headers: { "x-forwarded-for": "198.51.100.7" },
-  });
+/** The button on /get-quotes/verify/<token>: a POST to …/<token>/confirm. */
+function click(token: string): [Request, { params: Promise<{ token: string }> }] {
+  return [
+    new Request(`http://localhost:3215/get-quotes/verify/${encodeURIComponent(token)}/confirm`, {
+      method: "POST",
+      headers: { "x-forwarded-for": "198.51.100.7" },
+    }),
+    { params: Promise.resolve({ token: encodeURIComponent(token) }) },
+  ];
 }
 
-async function GET(request: Request): Promise<Response> {
+async function POST(args: [Request, { params: Promise<{ token: string }> }]): Promise<Response> {
   const route = await import("./route");
-  return route.GET(request);
+  return route.POST(...args);
 }
 
 beforeEach(() => {
@@ -71,13 +77,31 @@ beforeEach(() => {
   notifyQuoteRequest.mockReset().mockResolvedValue(undefined);
   createLeadFromQuote.mockReset().mockResolvedValue(LEAD);
   createLeadFromCaptureRequest.mockReset().mockResolvedValue(LEAD);
+  createLeadFromEnquiryRequest.mockReset().mockResolvedValue(LEAD);
   runAfterLeadCreated.mockReset().mockResolvedValue(true);
   limitPublicWrite.mockReset().mockResolvedValue(allowed);
 });
 
-describe("GET /get-quotes/verify", () => {
+describe("POST /get-quotes/verify/[token]/confirm", () => {
+  it("has no GET: a scanner that follows the URL confirms nothing", async () => {
+    const route = await import("./route");
+    expect("GET" in route).toBe(false);
+  });
+
+  it("an enquiry's link makes the enquiry lead and emails nobody", async () => {
+    verifyQuoteToken.mockResolvedValue({ outcome: "verified", quoteRequestId: REQUEST_ID, source: "enquiry", recipientCount: 0 });
+
+    const res = await POST(click("tok-enquiry"));
+
+    expect(res.headers.get("location")).toMatch(/state=verified$/);
+    expect(notifyQuoteRequest).not.toHaveBeenCalled();
+    expect(createLeadFromEnquiryRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, REQUEST_ID);
+    expect(createLeadFromQuote).not.toHaveBeenCalled();
+    expect(runAfterLeadCreated).toHaveBeenCalledWith(HANDLE, { role: "public" }, LEAD);
+  });
+
   it("a valid link queues the delivery, makes the lead, runs the hook, and lands on the confirmed page", async () => {
-    const res = await GET(click("tok-live"));
+    const res = await POST(click("tok-live"));
 
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("http://localhost:3215/get-quotes/confirmed?state=verified");
@@ -92,7 +116,7 @@ describe("GET /get-quotes/verify", () => {
     verifyQuoteToken.mockResolvedValue({ outcome: "verified", quoteRequestId: REQUEST_ID, source: "quote", recipientCount: 0 });
     createLeadFromQuote.mockResolvedValue(null);
 
-    await GET(click("tok-live"));
+    await POST(click("tok-live"));
 
     expect(notifyQuoteRequest).not.toHaveBeenCalled();
     expect(createLeadFromQuote).toHaveBeenCalled();
@@ -102,7 +126,7 @@ describe("GET /get-quotes/verify", () => {
   it("a capture box's link makes a capture lead and emails nobody", async () => {
     verifyQuoteToken.mockResolvedValue({ outcome: "verified", quoteRequestId: REQUEST_ID, source: "capture", recipientCount: 0 });
 
-    await GET(click("tok-capture"));
+    await POST(click("tok-capture"));
 
     expect(notifyQuoteRequest).not.toHaveBeenCalled();
     expect(createLeadFromCaptureRequest).toHaveBeenCalledWith(HANDLE, { role: "public" }, REQUEST_ID);
@@ -113,7 +137,7 @@ describe("GET /get-quotes/verify", () => {
   it("with the lead marketplace off, delivers exactly as before and creates no lead", async () => {
     flags = { quoteBroadcast: true, leadMarketplace: false };
 
-    const res = await GET(click("tok-live"));
+    const res = await POST(click("tok-live"));
 
     expect(res.headers.get("location")).toMatch(/state=verified$/);
     expect(notifyQuoteRequest).toHaveBeenCalledTimes(1);
@@ -129,7 +153,7 @@ describe("GET /get-quotes/verify", () => {
   ])("a %o link does nothing and lands on state=%s", async (result, state) => {
     verifyQuoteToken.mockResolvedValue(result);
 
-    const res = await GET(click("tok-old"));
+    const res = await POST(click("tok-old"));
 
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe(`http://localhost:3215/get-quotes/confirmed?state=${state}`);
@@ -138,22 +162,20 @@ describe("GET /get-quotes/verify", () => {
     expect(runAfterLeadCreated).not.toHaveBeenCalled();
   });
 
-  it("treats a missing token as unknown without a lookup that could match", async () => {
-    verifyQuoteToken.mockResolvedValue({ outcome: "unknown" });
-    const res = await GET(click(null));
-    expect(res.headers.get("location")).toMatch(/state=unknown$/);
-    expect(verifyQuoteToken).toHaveBeenCalledWith(HANDLE, { role: "public" }, "");
+  it("decodes the token from the path before looking it up", async () => {
+    await POST(click("a/b+c"));
+    expect(verifyQuoteToken).toHaveBeenCalledWith(HANDLE, { role: "public" }, "a/b+c");
   });
 
   it("counts every click against its own bucket and refuses a client over it with 429", async () => {
     const { QUOTE_VERIFY_RATE_LIMIT } = await import("@/lib/spam/write-limit");
-    const request = click("tok-guess");
-    await GET(request);
-    expect(limitPublicWrite).toHaveBeenCalledWith("quote-verify", request.headers, QUOTE_VERIFY_RATE_LIMIT);
+    const args = click("tok-guess");
+    await POST(args);
+    expect(limitPublicWrite).toHaveBeenCalledWith("quote-verify", args[0].headers, QUOTE_VERIFY_RATE_LIMIT);
 
     limitPublicWrite.mockResolvedValue({ allowed: false, remaining: 0, retryAfterSeconds: 30 });
     verifyQuoteToken.mockClear();
-    const res = await GET(click("tok-guess"));
+    const res = await POST(click("tok-guess"));
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBe("30");
     expect(verifyQuoteToken).not.toHaveBeenCalled();
@@ -161,7 +183,7 @@ describe("GET /get-quotes/verify", () => {
 
   it("is a 404 when the site does not do quotes", async () => {
     flags = {};
-    const res = await GET(click("tok-live"));
+    const res = await POST(click("tok-live"));
     expect(res.status).toBe(404);
     expect(verifyQuoteToken).not.toHaveBeenCalled();
   });

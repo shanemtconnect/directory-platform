@@ -8,7 +8,7 @@ import { Steps } from "@/components/ui/Steps";
 import { Notice } from "@/components/ui/Notice";
 
 /**
- * Where the verification link lands (app/get-quotes/verify/route.ts sends
+ * Where the confirm button lands (app/get-quotes/verify/[token]/confirm/route.ts sends
  * every outcome here with `?state=`). It reads nothing and writes nothing:
  * the click has already happened, and this only says what it did.
  */

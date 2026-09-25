@@ -229,7 +229,7 @@ describe("processNotifications — quote verification", () => {
       expect(mail.map((m) => m.to)).toEqual(["sam@example.co.uk"]);
       expect(mail[0]!.subject).toMatch(/confirm/i);
       expect(mail[0]!.text).toContain(
-        `https://example.co.uk/get-quotes/verify?token=${encodeURIComponent(created.token)}`,
+        `https://example.co.uk/get-quotes/verify/${encodeURIComponent(created.token)}`,
       );
       expect(mail[0]!.text).toContain("48 hours");
       const job = await jobRow(tx);

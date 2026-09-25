@@ -65,7 +65,7 @@ export const NOTIFY_QUOTE = "notify.quote";
 /**
  * The requester's verification link (Task 56). Queued on submit INSTEAD of
  * NOTIFY_QUOTE: nobody else is written to until the link is clicked, and the
- * click (app/get-quotes/verify/route.ts) is what queues NOTIFY_QUOTE.
+ * click (app/get-quotes/verify/[token]/confirm/route.ts) is what queues NOTIFY_QUOTE.
  */
 export const NOTIFY_QUOTE_VERIFY = "notify.quote-verify";
 

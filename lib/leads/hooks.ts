@@ -3,9 +3,9 @@ import type { Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 
 /**
- * Called once for every lead created — by the get-quotes verify route (a
- * quote or capture lead) and by the enquiry action (an enquiry lead) — in the
- * same transaction that wrote it, after the insert.
+ * Called once for every lead created — by the get-quotes confirm route
+ * (`app/get-quotes/verify/[token]/confirm`), the only place a lead is made,
+ * after the requester's click — in the same transaction that wrote it.
  *
  * A no-op until Task 58 fills it with `allocateLead(tx, viewer, lead.id)`
  * (standing orders, then the board). Callers run it inside a savepoint and

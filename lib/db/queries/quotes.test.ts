@@ -11,7 +11,9 @@ import { hashToken } from "@/lib/security/token-hash";
 import { resetClock, setClock } from "@/lib/clock";
 import {
   QUOTE_VERIFY_TTL_HOURS,
+  createEnquiryLeadRequest,
   createQuoteRequest,
+  previewQuoteToken,
   expireQuoteRequests,
   quoteVerification,
   verifyQuoteToken,
@@ -574,6 +576,61 @@ describe("expireQuoteRequests", () => {
       expect(await statusOf(confirmed.quoteRequestId)).toBe("verified");
       expect(await statusOf(fresh.quoteRequestId)).toBe("pending");
       expect(await expireQuoteRequests(tx, ADMIN)).toBe(0);
+    });
+  });
+});
+
+describe("previewQuoteToken", () => {
+  it("reports a link's state and never spends it", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const T0 = Date.parse("2026-09-25T12:00:00Z");
+      setClock(new Date(T0));
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      // Twice, as a scanner and then the person would: still live, still pending.
+      expect(await previewQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "live", source: "quote" });
+      expect(await previewQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "live", source: "quote" });
+      const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));
+      expect(row).toMatchObject({ status: "pending", verifiedAt: null });
+
+      expect(await previewQuoteToken(tx, PUBLIC_VIEWER, "made-up")).toEqual({ outcome: "unknown" });
+      setClock(new Date(T0 + QUOTE_VERIFY_TTL_HOURS * 3_600_000 + 1000));
+      expect(await previewQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "expired" });
+      setClock(new Date(T0));
+      await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
+      expect(await previewQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "already-verified" });
+    });
+  });
+});
+
+describe("createEnquiryLeadRequest", () => {
+  it("holds an enquirer's verification link against the listing, with no recipients, off the admin quote list", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listingId = await makeListing(tx, ctx, { name: "Quiet Hall", email: null });
+      const created = await createEnquiryLeadRequest(tx, PUBLIC_VIEWER, {
+        listingId, cityId: ctx.cityId, categoryId: null, name: "Jo Enquirer", email: "jo@example.co.uk",
+        phone: "01632 960123", message: "Is the hall free on 3 May?", ip: "198.51.100.4",
+      });
+
+      const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));
+      expect(row).toMatchObject({ source: "enquiry", status: "pending", listingId, categoryId: null });
+      expect(row!.verifyTokenHash).toBe(hashToken(created.token));
+      expect(await recipientsOf(tx, created.quoteRequestId)).toEqual([]);
+
+      const ADMIN = await makeAdmin(tx);
+      expect(await quoteVerification(tx, ADMIN, created.quoteRequestId)).toMatchObject({
+        source: "enquiry", listingName: "Quiet Hall", categoryName: null, status: "pending",
+      });
+      expect((await listQuoteRequests(tx, ADMIN)).map((r) => r.id)).not.toContain(created.quoteRequestId);
+
+      expect(await previewQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "live", source: "enquiry" });
+      expect(await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({
+        outcome: "verified", quoteRequestId: created.quoteRequestId, source: "enquiry", recipientCount: 0,
+      });
     });
   });
 });

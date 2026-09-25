@@ -8,7 +8,8 @@ import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
 import { resetClock, setClock } from "@/lib/clock";
 import { siteConfig } from "@/config/site.config";
 import {
-  briefFor, createCaptureLead, createEnquiryLead, createLeadFromCaptureRequest, createLeadFromQuote,
+  briefFor, createCaptureLead, createEnquiryLead, createLeadFromCaptureRequest, createLeadFromEnquiryRequest,
+  createLeadFromQuote, enquiryLeadTarget,
 } from "./leads";
 
 const DAY = 86_400_000;
@@ -215,6 +216,39 @@ describe("createEnquiryLead", () => {
       expect(await createEnquiryLead(tx, PUBLIC_VIEWER, randomUUID(), enquiry())).toBeNull();
       // Whitespace is not an address.
       expect(await createEnquiryLead(tx, PUBLIC_VIEWER, blankEmail, enquiry())).not.toBeNull();
+    });
+  });
+});
+
+describe("createLeadFromEnquiryRequest", () => {
+  it("makes the enquiry lead only once its request is verified, and only once", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listing = await makeListing(tx, ctx, { email: null });
+      expect(await enquiryLeadTarget(tx, PUBLIC_VIEWER, listing))
+        .toEqual({ cityId: ctx.cityId, categoryId: ctx.primaryCategoryId });
+      const pending = await verifiedRequest(tx, ctx, [], {
+        source: "enquiry", listingId: listing, status: "pending", verifiedAt: null,
+      });
+      const verified = await verifiedRequest(tx, ctx, [], { source: "enquiry", listingId: listing, name: "Jo Enquirer" });
+
+      expect(await createLeadFromEnquiryRequest(tx, PUBLIC_VIEWER, pending)).toBeNull();
+      const lead = await createLeadFromEnquiryRequest(tx, PUBLIC_VIEWER, verified);
+      expect(lead).toMatchObject({ source: "enquiry", listingId: listing, quoteRequestId: verified, firstName: "Jo" });
+      expect(await createLeadFromEnquiryRequest(tx, PUBLIC_VIEWER, verified)).toBeNull();
+    });
+  });
+
+  it("makes nothing if the listing was claimed between the enquiry and the click", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const listing = await makeListing(tx, ctx, { email: null });
+      const verified = await verifiedRequest(tx, ctx, [], { source: "enquiry", listingId: listing });
+      const { listings } = await import("@/lib/db/schema");
+      await tx.update(listings).set({ claimStatus: "claimed" }).where(eq(listings.id, listing));
+
+      expect(await enquiryLeadTarget(tx, PUBLIC_VIEWER, listing)).toBeNull();
+      expect(await createLeadFromEnquiryRequest(tx, PUBLIC_VIEWER, verified)).toBeNull();
     });
   });
 });

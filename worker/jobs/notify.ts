@@ -674,6 +674,7 @@ async function runAuthEmail(
 /* ------------------------------------------------------- quotes (Task 47) */
 
 import { QUOTE_VERIFY_TTL_HOURS, quoteNotification, quoteVerification } from "@/lib/db/queries/quotes";
+import { isEnabled } from "@/lib/features/flags";
 import { quoteAcknowledgement, quoteToRecipient, quoteVerifyEmail } from "@/lib/email/templates/quotes";
 
 /**
@@ -701,9 +702,11 @@ async function runQuoteVerify(db: Db, d: Delivery, payload: Record<string, unkno
       requesterName: data.name ?? data.email,
       cityName: data.cityName,
       categoryName: data.categoryName,
-      verifyUrl: siteUrl(`/get-quotes/verify?token=${encodeURIComponent(token)}`),
+      listingName: data.listingName,
+      // The landing page, not the confirmation: the page's button POSTs.
+      verifyUrl: siteUrl(`/get-quotes/verify/${encodeURIComponent(token)}`),
       expiresHours: QUOTE_VERIFY_TTL_HOURS,
-      source: data.source === "capture" ? "capture" : "quote",
+      source: data.source,
     }),
   });
 }
@@ -764,6 +767,7 @@ async function runQuote(db: Db, d: Delivery, payload: Record<string, unknown>): 
       categoryName: data.categoryName,
       recipientCount: delivered,
       message: data.message,
+      leadMarketplace: isEnabled("leadMarketplace"),
     }),
   });
 

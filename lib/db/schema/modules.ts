@@ -115,9 +115,16 @@ export const quoteRequests = pgTable("quote_requests", {
   verifyExpiresAt: timestamp("verify_expires_at", { withTimezone: true }),
   /**
    * `quote` for the get-quotes form, `capture` for a lead-capture box (home
-   * page, rails) — which is never broadcast and becomes a lead on the click.
+   * page, rails) — which is never broadcast and becomes a lead on the click —
+   * and `enquiry` for an enquiry to an unclaimed listing with no address.
    */
   source: leadSource("source").notNull().default("quote"),
+  /**
+   * `enquiry` rows only: the unclaimed, no-email listing an enquiry was sent
+   * to. The row holds the enquirer's verification link; confirming it makes
+   * the enquiry lead (D6 — no unverified lead ever exists).
+   */
+  listingId: uuid("listing_id").references(() => listings.id, { onDelete: "set null" }),
 }, (t) => [
   index("quote_requests_created_idx").on(t.createdAt),
   uniqueIndex("quote_requests_verify_token_key").on(t.verifyTokenHash),

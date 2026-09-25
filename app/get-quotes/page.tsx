@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { guardFeature } from "@/lib/features/guard";
 import { isEnabled } from "@/lib/features/flags";
 import { QUOTE_VERIFY_TTL_HOURS } from "@/lib/quotes/verify-ttl";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { listCategories } from "@/lib/db/queries/indexes";
@@ -69,7 +70,7 @@ export default async function GetQuotesPage() {
         <li>We only send your request to {e.plural} that are listed in the town you choose and have an address we can reach.</li>
         <li>You never pay for this. {e.Plural} on a paid plan see your details straight away; the rest are told a request arrived.</li>
         {leadMarketplace ? (
-          <li>Your details go to those {e.plural}. If none of them is on a paid plan, one other local {e.singular} may buy your request so you still hear back. See our <a href="/privacy">privacy policy</a>.</li>
+          <li>{leadSharingNotice()} See our <a href="/privacy">privacy policy</a>.</li>
         ) : (
           <li>Your details go to those {e.plural} and nowhere else. See our <a href="/privacy">privacy policy</a>.</li>
         )}
