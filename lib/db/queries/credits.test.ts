@@ -15,6 +15,7 @@ import {
   creditLedgerFor,
   debitForPurchase,
   postLedger,
+  profileIdByEmail,
   refundToCredit,
 } from "./credits";
 
@@ -174,6 +175,19 @@ describe("creditLedgerFor and creditBalances", () => {
       expect(row).toMatchObject({ balanceCents: 2500, email: expect.stringContaining("@example.com") });
       expect(all.find((r) => r.profileId === b.profileId)).toBeUndefined();
       await expect(creditBalances(tx, a.viewer)).rejects.toThrow(/FORBIDDEN/);
+    });
+  });
+});
+
+describe("profileIdByEmail", () => {
+  it("finds an account's profile by email, case-insensitively, for an admin only", async () => {
+    await withTestDb(async (tx) => {
+      const admin = await makeAccount(tx, "admin");
+      const a = await makeAccount(tx);
+      const [u] = await tx.select({ email: user.email }).from(user).innerJoin(profiles, eq(profiles.userId, user.id)).where(eq(profiles.id, a.profileId));
+      expect(await profileIdByEmail(tx, admin.viewer, ` ${u!.email.toUpperCase()} `)).toBe(a.profileId);
+      expect(await profileIdByEmail(tx, admin.viewer, "nobody@example.com")).toBeNull();
+      await expect(profileIdByEmail(tx, a.viewer, u!.email)).rejects.toThrow(/FORBIDDEN/);
     });
   });
 });

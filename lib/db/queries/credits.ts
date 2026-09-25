@@ -286,3 +286,15 @@ export async function topupNotification(tx: TestDb, viewer: Viewer, creditOrderI
   if (!row || row.status !== "captured") return null;
   return { email: row.email, name: row.name, packCents: row.packCents, balanceCents: await creditBalance(tx, row.userId) };
 }
+
+/** The profile behind an account email, for the admin adjust form. Admin-only; creates nothing. */
+export async function profileIdByEmail(tx: TestDb, viewer: Viewer, email: string): Promise<string | null> {
+  assertAdmin(viewer);
+  const [row] = await tx
+    .select({ id: profiles.id })
+    .from(user)
+    .innerJoin(profiles, eq(profiles.userId, user.id))
+    .where(sql`lower(${user.email}) = ${email.trim().toLowerCase()}`)
+    .limit(1);
+  return row?.id ?? null;
+}
