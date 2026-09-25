@@ -97,7 +97,7 @@ export const FEATURE_FLAG_DESCRIPTIONS: Record<FeatureFlag, string> = {
   bookings: "Availability calendar and booking requests handled on site.",
   multiLocale: "Serve more than one locale from the same deployment.",
   savedSearches: "Signed-in visitors save a search and get a daily or weekly email of new matches. Jobs searches only when jobBoard is on.",
-  leadMarketplace: "Pay-per-lead: owners buy prepaid credit through PayPal and spend it on verified quote requests. Needs quoteBroadcast.",
+  leadMarketplace: "Pay-per-lead: verified requests no paying listing received are sold to owners from prepaid credit. Needs quoteBroadcast.",
 };
 
 export type SeedSource = "csv" | "template" | "skip";

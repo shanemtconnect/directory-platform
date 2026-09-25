@@ -268,9 +268,9 @@ export const siteConfig = {
       defaultRadiusKm: 2,
     },
   },
-  // The pay-per-lead marketplace (flag leadMarketplace). Board floor price and
-  // credit packs in the site currency; the day counts drive price halving,
-  // deletion and the refund window.
+  // Pay-per-lead (flag leadMarketplace). A lead sells at the floor, halves
+  // after a week on the board and is deleted after a month. Credit is bought
+  // in these packs; a bad lead can be reported for a week after purchase.
   leads: {
     floor: 25,
     packs: [50, 100, 300],

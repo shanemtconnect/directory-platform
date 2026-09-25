@@ -120,6 +120,18 @@ name gates the field to that tier and above. Contact details — name, address,
 phone, opening hours, map pin, category, the enquiry form and the reviews — are
 never gated on any tier, so never put one behind one.
 
+**Pay-per-lead** (`leadMarketplace`, needs `quoteBroadcast`) is off by
+default. With it on, every get-quotes request is held until the requester
+confirms it from a verification link (48 hours, then it expires); a verified request
+that reached no paying local listing, a lead-capture box on the home page or a
+rail, or a confirmed enquiry to an unclaimed listing with no email becomes a
+lead. The privacy line on every form then reads from `lib/leads/consent.ts`. The
+wizard writes the defaults into `leads` in `config/site.config.ts` — `floor`
+(what a lead sells for, in the site currency; at least 1), `packs` (credit
+top-ups, ascending), `halfPriceAfterDays`, `deleteAfterDays`,
+`refundWindowDays` — and the build refuses a floor below 1 or packs out of
+order. Price your market there, never in a page.
+
 ---
 
 ## 2. Seed data (30 minutes, or a day if you are sourcing it)

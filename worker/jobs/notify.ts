@@ -11,6 +11,7 @@ import {
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
   NOTIFY_QUOTE,
+  NOTIFY_QUOTE_VERIFY,
   NOTIFY_REMOVAL,
   NOTIFY_REMOVAL_ACTIONED,
   NOTIFY_REMOVAL_REJECTED,
@@ -447,6 +448,8 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     // Appended by the quotes module; the handler is at the foot of the file.
     case NOTIFY_QUOTE:
       return runQuote(db, d, job.payload);
+    case NOTIFY_QUOTE_VERIFY:
+      return runQuoteVerify(db, d, job.payload);
     // Appended by the awards module; the handler is at the foot of the file.
     case NOTIFY_AWARD_WON:
       return runAwardWon(db, d, job.payload);
@@ -685,8 +688,43 @@ async function runAuthEmail(
 
 /* ------------------------------------------------------- quotes (Task 47) */
 
-import { quoteNotification } from "@/lib/db/queries/quotes";
-import { quoteAcknowledgement, quoteToRecipient } from "@/lib/email/templates/quotes";
+import { QUOTE_VERIFY_TTL_HOURS, quoteNotification, quoteVerification } from "@/lib/db/queries/quotes";
+import { isEnabled } from "@/lib/features/flags";
+import { quoteAcknowledgement, quoteToRecipient, quoteVerifyEmail } from "@/lib/email/templates/quotes";
+
+/**
+ * The requester's verification link (Task 56).
+ *
+ * Re-reads the request: one already clicked, expired or flagged, or whose
+ * live digest is not this payload's token, is a completed job with nothing
+ * to send — never a retry of a link that no longer works. The link is built
+ * here from our own origin, never carried in the payload.
+ */
+async function runQuoteVerify(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const quoteRequestId = readId(payload, "quoteRequestId");
+  if (quoteRequestId === null) throw new Retryable("The job carries no quoteRequestId");
+
+  const data = await quoteVerification(db, ADMIN_VIEWER, quoteRequestId);
+  if (!data || data.status !== "pending" || data.tokenHash === null) return;
+
+  const token = readId(payload, "token");
+  if (token === null) throw new Retryable("The job carries no token");
+  if (hashToken(token) !== data.tokenHash) return;
+
+  await deliver(d, REQUESTER, {
+    to: data.email,
+    ...quoteVerifyEmail({
+      requesterName: data.name ?? data.email,
+      cityName: data.cityName,
+      categoryName: data.categoryName,
+      listingName: data.listingName,
+      // The landing page, not the confirmation: the page's button POSTs.
+      verifyUrl: siteUrl(`/get-quotes/verify/${encodeURIComponent(token)}`),
+      expiresHours: QUOTE_VERIFY_TTL_HOURS,
+      source: data.source,
+    }),
+  });
+}
 
 /**
  * One request, many recipients, one job.
@@ -744,6 +782,7 @@ async function runQuote(db: Db, d: Delivery, payload: Record<string, unknown>): 
       categoryName: data.categoryName,
       recipientCount: delivered,
       message: data.message,
+      leadMarketplace: isEnabled("leadMarketplace"),
     }),
   });
 

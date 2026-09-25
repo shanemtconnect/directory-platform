@@ -366,9 +366,9 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
       defaultRadiusKm: 2,
     },
   },
-  // The pay-per-lead marketplace (flag leadMarketplace). Board floor price and
-  // credit packs in the site currency; the day counts drive price halving,
-  // deletion and the refund window.
+  // Pay-per-lead (flag leadMarketplace). The floor is what a lead sells for,
+  // in the site currency; it halves after halfPriceAfterDays on the board and
+  // is deleted after deleteAfterDays. Buyers top up in these packs.
   leads: {
     floor: 25,
     packs: [50, 100, 300],

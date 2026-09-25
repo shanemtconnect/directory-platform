@@ -37,12 +37,15 @@ export function AdminQuoteList({ requests }: { requests: AdminQuoteRequest[] }) 
   return (
     <ul data-testid="quote-request-list" className="link-grid">
       {requests.map((r) => (
-        <li key={r.id} className="card" data-testid="quote-request-row" data-spam={r.isSpam}>
+        <li key={r.id} className="card" data-testid="quote-request-row" data-spam={r.isSpam} data-status={r.status}>
           <p className="text-sm text-muted">
             <time dateTime={r.createdAt.toISOString()}>{when(r.createdAt)}</time>
             {" · "}{r.categoryName} in {r.cityName}
             {" · "}sent to {r.recipientCount}, won {r.wonCount}
             {r.isSpam && <strong> · Flagged as spam</strong>}
+            {/* Task 56: nothing is sent until the requester clicks the link. */}
+            {r.status === "pending" && <strong data-testid="quote-unconfirmed"> · Awaiting the requester&rsquo;s confirmation</strong>}
+            {r.status === "expired" && <strong> · Never confirmed — not sent</strong>}
           </p>
           <p>
             <strong>{r.name ?? "No name given"}</strong>

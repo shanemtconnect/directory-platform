@@ -55,6 +55,32 @@ describe("/admin/quotes", () => {
     expect(listQuoteRequests).toHaveBeenCalled();
   });
 
+  it("marks a request still waiting for the requester's click, and one that expired unsent", async () => {
+    currentViewer.mockResolvedValue({ role: "admin", userId: "user_admin" });
+    const row = (id: string, status: AdminQuoteRequest["status"]): AdminQuoteRequest => ({
+      id, createdAt: new Date("2026-09-25T10:00:00Z"), name: "Sam", email: "sam@example.co.uk", phone: null,
+      message: "A job", cityName: "Bath", categoryName: "Barns", recipientCount: 2, wonCount: 0,
+      isSpam: false, status,
+    });
+    listQuoteRequests.mockResolvedValue([
+      row("11111111-1111-4111-8111-111111111111", "pending"),
+      row("22222222-2222-4222-8222-222222222222", "expired"),
+      row("33333333-3333-4333-8333-333333333333", "verified"),
+    ]);
+    const { default: page } = await import("./page");
+    const { elements, text } = await import("@/test/elements");
+
+    const tree = await page();
+    const rows = [...elements(tree)].filter(
+      (el) => (el.props as Record<string, unknown>)["data-testid"] === "quote-request-row",
+    );
+
+    expect(rows.map((r) => (r.props as Record<string, unknown>)["data-status"])).toEqual(["pending", "expired", "verified"]);
+    expect(text(rows[0])).toMatch(/Awaiting the requester/);
+    expect(text(rows[1])).toMatch(/Never confirmed/);
+    expect(text(rows[2])).not.toMatch(/Awaiting|Never confirmed/);
+  });
+
   it("is never indexed", async () => {
     const { metadata } = await import("./page");
     expect(metadata.robots).toMatchObject({ index: false });

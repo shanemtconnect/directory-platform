@@ -1,14 +1,17 @@
+import type { ReactNode } from "react";
 import type { AdPlacement } from "@/config/types";
 import { db } from "@/lib/db/client";
 import { now } from "@/lib/clock";
 import { activeSponsorCampaigns } from "@/lib/db/queries/ads";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { buildInventory, type RailInventory, type RailItem } from "@/lib/ads/inventory";
+import { MAX_PER_RAIL, buildInventory, type RailInventory, type RailItem } from "@/lib/ads/inventory";
 import { decideSponsorRails, type PageListing } from "@/lib/ads/policy";
 import { rotationSeed } from "@/lib/ads/rotation";
 import { currentBuildId } from "@/lib/observability/build-id";
 import { dayKey } from "@/lib/stats/keys";
 import type { TestDb } from "@/lib/db/types";
+import { features } from "@/lib/features/flags";
+import { LeadCaptureBox } from "@/components/leads/LeadCaptureBox";
 import { PlaceholderCard, SponsorCard } from "./SponsorCard";
 
 /**
@@ -26,11 +29,15 @@ export interface SponsorRailsProps {
   listing?: PageListing | null;
 }
 
-function Rail({ side, items }: { side: "left" | "right"; items: readonly RailItem[] }) {
-  if (items.length === 0) return null;
+function Rail({ side, items, house = null }: { side: "left" | "right"; items: readonly RailItem[]; house?: ReactNode }) {
+  if (items.length === 0 && house === null) return null;
+  // The house slot is a card like any other: it counts against the rail's
+  // cap, so the rail never grows past MAX_PER_RAIL.
+  const shown = house === null ? items : items.slice(0, MAX_PER_RAIL - 1);
   return (
     <div className={`sponsor-rail sponsor-rail-${side}`} data-testid={`sponsor-rail-${side}`}>
-      {items.map((item) => (
+      {house}
+      {shown.map((item) => (
         <SponsorCard
           key={item.kind === "house" ? `house-${item.ad.id}` : item.campaign.id}
           item={item}
@@ -41,10 +48,19 @@ function Rail({ side, items }: { side: "left" | "right"; items: readonly RailIte
   );
 }
 
+/**
+ * The site's own slot at the top of the left rail: the lead-capture box when
+ * the lead marketplace is on (Task 56), nothing otherwise. A build-time
+ * constant, so a flag-off build carries no trace of it.
+ */
+function captureSlot(): ReactNode {
+  return features.leadMarketplace ? <LeadCaptureBox variant="rail" /> : null;
+}
+
 function Rails({ inventory }: { inventory: RailInventory }) {
   return (
     <aside className="sponsor-rails" aria-label="Sponsored" data-testid="sponsor-rails" data-state="live">
-      <Rail side="left" items={inventory.left} />
+      <Rail side="left" items={inventory.left} house={captureSlot()} />
       <Rail side="right" items={inventory.right} />
       {inventory.inline !== null && (
         <div className="sponsor-inline" data-testid="sponsor-inline">
@@ -59,6 +75,7 @@ function Placeholder() {
   return (
     <aside className="sponsor-rails" aria-label="Sponsor slots" data-testid="sponsor-rails" data-state="placeholder">
       <div className="sponsor-rail sponsor-rail-left" data-testid="sponsor-rail-left">
+        {captureSlot()}
         <PlaceholderCard slot="left" />
       </div>
       <div className="sponsor-rail sponsor-rail-right" data-testid="sponsor-rail-right">

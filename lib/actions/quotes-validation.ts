@@ -68,3 +68,18 @@ export function validateQuoteRequest(form: FormData): Result<QuoteFormValues> {
   if (Object.keys(errors).length > 0) return { errors };
   return { values: { cityId, categoryId, name, email, phone: phone || null, message } };
 }
+
+/**
+ * The lead-capture box (Task 56): the get-quotes fields, with the phone
+ * REQUIRED — a capture request becomes a lead a business pays for, and a
+ * lead is a number to ring. Whether the number is diallable is the lead
+ * rules' call (lib/leads/rules.ts), made inside the action's transaction.
+ */
+export function validateCaptureLead(form: FormData): Result<QuoteFormValues> {
+  const result = validateQuoteRequest(form);
+  const phone = field(form, "phone");
+  if (phone === "") {
+    return { errors: { ...(result.errors ?? {}), phone: "Please give a phone number we can call." } };
+  }
+  return result;
+}

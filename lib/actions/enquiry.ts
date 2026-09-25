@@ -3,8 +3,13 @@
 import { headers } from "next/headers";
 import { db } from "@/lib/db/client";
 import { createEnquiry } from "@/lib/db/queries/enquiries";
+import { siteConfig } from "@/config/site.config";
+import { enquiryLeadTarget } from "@/lib/db/queries/leads";
+import { createEnquiryLeadRequest } from "@/lib/db/queries/quotes";
+import { isEnabled } from "@/lib/features/flags";
+import { checkLeadRules } from "@/lib/leads/rules";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { notifyEnquiry } from "@/lib/email/notify";
+import { notifyEnquiry, notifyQuoteVerify } from "@/lib/email/notify";
 import { clientIp, rateLimitSubject } from "@/lib/spam/client-ip";
 import { rateLimit } from "@/lib/spam/rate-limit";
 import { verifyTurnstile, isHoneypotTripped } from "@/lib/spam/turnstile";
@@ -14,6 +19,12 @@ import { validateEnquiry } from "./validation";
 
 export interface EnquiryState {
   status: "idle" | "sent" | "error";
+  /**
+   * On "sent": the enquiry went to a listing nobody reads (unclaimed, no
+   * address) and, with the lead marketplace on, the enquirer has been sent a
+   * link to confirm before it is passed on. The form says so.
+   */
+  confirmByEmail?: boolean;
   message?: string;
   fieldErrors?: Record<string, string>;
 }
@@ -68,7 +79,28 @@ export async function submitEnquiry(
     const handle = tx as unknown as TestDb;
     const created = await createEnquiry(handle, PUBLIC_VIEWER, { ...values, ip });
     await notifyEnquiry(handle, PUBLIC_VIEWER, created);
-    return created;
+    // Pay-per-lead (Task 56): an enquiry to an unclaimed listing we hold no
+    // address for reaches nobody, so it may become a lead — but, like every
+    // lead (D6), only once the enquirer confirms their address. Here that is
+    // the verification email and nothing more; the confirm route makes the
+    // lead. The enquiry row, its counter and its admin notification are
+    // exactly what they were without the flag. A requester the lead rules
+    // would refuse is not sent a link to confirm something that goes nowhere.
+    let confirmByEmail = false;
+    if (created.outcome === "created" && isEnabled("leadMarketplace")) {
+      const target = await enquiryLeadTarget(handle, PUBLIC_VIEWER, values.listingId);
+      const verdict = target === null
+        ? null
+        : await checkLeadRules(handle, { email: values.email, phone: values.phone, country: siteConfig.country });
+      if (target !== null && verdict === "ok") {
+        const pending = await createEnquiryLeadRequest(handle, PUBLIC_VIEWER, {
+          ...values, cityId: target.cityId, categoryId: target.categoryId, ip,
+        });
+        await notifyQuoteVerify(handle, PUBLIC_VIEWER, pending);
+        confirmByEmail = true;
+      }
+    }
+    return { ...created, confirmByEmail };
   });
   if (result.outcome === "unknown-listing") {
     return { status: "error", message: "That listing is no longer available." };
@@ -76,5 +108,5 @@ export async function submitEnquiry(
 
   // The notification is a queued job committed with the enquiry above, so a
   // dead mail provider cannot cost us the lead — or slow this response down.
-  return { status: "sent" };
+  return result.confirmByEmail ? { status: "sent", confirmByEmail: true } : { status: "sent" };
 }

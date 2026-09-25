@@ -4,7 +4,9 @@ import { useActionState } from "react";
 import { siteConfig } from "@/config/site.config";
 import { submitQuoteRequest, type QuoteFormState } from "@/lib/actions/quotes";
 import { QUOTE_MESSAGE_MAX, QUOTE_MESSAGE_MIN } from "@/lib/actions/quotes-validation";
+import { QUOTE_VERIFY_TTL_HOURS } from "@/lib/quotes/verify-ttl";
 import { TurnstileWidget } from "@/components/submit/TurnstileWidget";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { Notice } from "@/components/ui/Notice";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 
@@ -20,6 +22,12 @@ export interface QuoteRequestFormProps {
   towns: QuoteOption[];
   /** Null outside production; the server-side check skips in the same case. */
   turnstileSiteKey: string | null;
+  /**
+   * `features.leadMarketplace`, passed from the server page: the flag is
+   * resolved at build on the server, and the consent wording must match what
+   * the site will actually do with the request.
+   */
+  leadMarketplace?: boolean;
 }
 
 /**
@@ -32,17 +40,23 @@ export interface QuoteRequestFormProps {
  * handing their details to businesses they have not chosen, and that is
  * something a person says yes to, not something a form assumes.
  */
-export function QuoteRequestForm({ categories, towns, turnstileSiteKey }: QuoteRequestFormProps) {
+export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMarketplace = false }: QuoteRequestFormProps) {
   const [state, action, pending] = useActionState(submitQuoteRequest, initial);
   const e = siteConfig.entity;
 
   if (state.status === "sent") {
     const n = state.recipientCount ?? 0;
+    // Nothing has gone anywhere yet: the requester's click on the emailed
+    // link is what sends it (app/get-quotes/verify/[token]/confirm/route.ts).
     return (
-      <Notice variant="success" testId="quote-sent" title={`Sent to ${n} ${n === 1 ? e.singular : e.plural}`}>
+      <Notice variant="success" testId="quote-sent" title="Check your email">
         <p className="mb-0">
-          Your request has gone to {n} {n === 1 ? e.singular : e.plural} in the town you chose.
-          Any that can help will reply to you directly — we&rsquo;ve emailed you a copy.
+          We&rsquo;ve emailed you a link to confirm your request. Click it within{" "}
+          {QUOTE_VERIFY_TTL_HOURS} hours and{" "}
+          {n > 0
+            ? `we'll send it to ${n} ${n === 1 ? e.singular : e.plural} in the town you chose`
+            : `we'll pass it on to ${e.plural} that can help`}
+          . Nothing is sent to anyone until you do.
         </p>
       </Notice>
     );
@@ -112,17 +126,29 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey }: QuoteR
 
       <p>
         <label htmlFor="quote-phone">Phone (optional)</label>
-        <input id="quote-phone" name="phone" type="tel" maxLength={40} autoComplete="tel" />
+        <input id="quote-phone" name="phone" type="tel" maxLength={40} autoComplete="tel" aria-invalid={Boolean(err.phone)} />
+        {leadMarketplace && (
+          // With the lead marketplace on, a request nobody listed there can
+          // take is passed on as a lead, and a lead needs a number to ring.
+          <small className="text-muted">Needed if nobody listed in that town can take the request directly.</small>
+        )}
         {err.phone && <span role="alert">{err.phone}</span>}
       </p>
 
       <p>
         <label className="inline-flex items-start gap-2">
           <input id="quote-consent" name="consent" type="checkbox" required className="mt-1" aria-invalid={Boolean(err.consent)} />
-          <span>
-            Send my name, email and phone number to up to {siteConfig.quotes.maxRecipients}{" "}
-            {e.plural} in this town so they can quote. We don&rsquo;t sell your details.
-          </span>
+          {leadMarketplace ? (
+            <span>
+              Send my name, email and phone number to up to {siteConfig.quotes.maxRecipients}{" "}
+              {e.plural} in this town so they can quote. {leadSharingNotice()}
+            </span>
+          ) : (
+            <span>
+              Send my name, email and phone number to up to {siteConfig.quotes.maxRecipients}{" "}
+              {e.plural} in this town so they can quote. We don&rsquo;t sell your details.
+            </span>
+          )}
         </label>
         {err.consent && <span role="alert">{err.consent}</span>}
       </p>

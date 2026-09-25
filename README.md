@@ -746,6 +746,36 @@ webhook: `applyCaptureEvent` dispatches on the `custom_id` prefix (`credit:`,
 `job:`, or a bare job id for orders created before the prefixes). The sandbox
 checks still owed before this takes real money are in
 `docs/PAYPAL-CREDIT-VERIFY.md`.
+### Quote verification and leads (Task 56)
+
+With `quoteBroadcast` on, a get-quotes request is written **pending** and the
+only email queued is `notify.quote-verify`, to the requester. Nobody else is
+written to, and nothing appears on an owner's leads page, until they click
+the link and press **Confirm** on the page it opens: the link
+(`/get-quotes/verify/<token>`; 32 random bytes, stored as a sha256 digest,
+single use, 48 hours) only previews the token — mail scanners GET links — and
+the button's `POST …/confirm` marks the request verified, queues the usual
+`notify.quote` delivery, and lands on `/get-quotes/confirmed`. The
+`quotes.expire` worker job marks unclicked requests expired every hour;
+`/admin/quotes` shows which requests are still awaiting confirmation.
+
+With `leadMarketplace` on as well (it requires `quoteBroadcast`), a
+**lead** (`leads` table) is created — open, at `siteConfig.leads.floor` — when:
+a verified quote request reached no listing on a paid tier (including one
+nobody in town could receive, which the form now keeps instead of refusing);
+a lead-capture box (home page, the top of the left sponsor rail) is confirmed
+by the same email link; or an enquiry sent to an unclaimed listing with no
+email on file is confirmed by the enquirer through the same link (the enquiry
+itself is recorded as always). No unverified lead ever exists. With the flag
+on, every "we don't sell your details" line is replaced by the one notice in
+`lib/leads/consent.ts`; with it off they are unchanged. Every lead passes the rules in `lib/leads/rules.ts` first: a
+phone that normalises for the site's country (`lib/geo/phone.ts`; premium,
+personal-numbering and fiction ranges refused), an email not at a throwaway
+inbox (`lib/spam/disposable-domains.ts`), neither on `lead_blocklist`, and
+neither on another lead in the last 30 days. The board only ever shows
+`first_name` and `brief`, which is generated with addresses, digit runs,
+postcodes and the surname stripped. Creating a lead emails nobody; selling it
+is `afterLeadCreated` in `lib/leads/hooks.ts` (Task 58).
 
 ### Testing gotchas
 
@@ -787,6 +817,7 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `subscription-sync` | hourly :37 | Reconciles subscriptions whose paid period ended over three days ago against PayPal; lapses or extends; returns the pages to revalidate | `PAYPAL_*` (logs "not configured" otherwise), `INTERNAL_REVALIDATE_SECRET` (optional) |
 | `neighbourhoods.assign` | daily 02:41:30 | Assigns each listing in a town with neighbourhoods to the nearest centroid within its radius and recounts each neighbourhood; returns the town and neighbourhood pages that moved. No-op with `geo.neighbourhoods` off | — |
 | `neighbourhoods.assign-queue` | every minute | Runs the same assignment once for any queued "Assign listings now" presses. Shares the `neighbourhoods.assign` advisory lock with the nightly run, so the two never overlap | — |
+| `quotes.expire` | hourly :53 | Marks quote requests whose verification link lapsed (48 h, never clicked) `expired`. The click checks the window itself; this keeps the admin list honest | — |
 | `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
 | `alerts.dispatch` | hourly :23, only with `savedSearches` on | Queues a `notify.saved_search` digest for each active saved search that is due (daily: last sent 24 h ago or more; weekly: 7 d; never sent: now) **and** has listings/jobs that went live (`coalesce(published_at, created_at)`) since its watermark; owner's email must be verified; half an hour's tolerance keeps the cadence from drifting. The notify drain re-reads, sends (with a one-click unsubscribe for that search), then stamps `last_sent_at` with the dispatch tick and moves `last_seen_published_at` | the email vars for delivery; `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` (no digest goes without its unsubscribe link) |
 

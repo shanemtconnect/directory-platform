@@ -43,6 +43,8 @@ export const RESERVED_SLUGS = [
   // `/out/<id>?verified=1` / `/unsubscribe?verified=1` would 404 instead of
   // reaching their real routes.
   "verified", "out", "unsubscribe",
+  // Wave G: the pay-per-lead board lives at /leads.
+  "leads",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

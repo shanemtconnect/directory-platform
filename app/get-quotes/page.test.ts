@@ -15,6 +15,7 @@ class NotFound extends Error {}
 const listCategories = vi.fn<() => Promise<CategoryIndexRow[]>>();
 const listSwitcherCities = vi.fn<() => Promise<SwitcherCity[]>>();
 let quoteBroadcast = true;
+let leadMarketplace = false;
 
 vi.mock("next/navigation", () => ({
   notFound: () => {
@@ -24,9 +25,10 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/db/client", () => ({ db: { marker: "the pool" } }));
 vi.mock("@/lib/features/flags", () => ({
   get features() {
-    return { quoteBroadcast };
+    return { quoteBroadcast, leadMarketplace };
   },
-  isEnabled: (flag: string) => flag === "quoteBroadcast" && quoteBroadcast,
+  isEnabled: (flag: string) =>
+    (flag === "quoteBroadcast" && quoteBroadcast) || (flag === "leadMarketplace" && leadMarketplace),
 }));
 vi.mock("@/lib/db/queries/indexes", () => ({ listCategories: () => listCategories() }));
 vi.mock("@/lib/db/queries/cities", () => ({ listSwitcherCities: () => listSwitcherCities() }));
@@ -34,6 +36,7 @@ vi.mock("@/lib/db/queries/cities", () => ({ listSwitcherCities: () => listSwitch
 beforeEach(() => {
   vi.resetModules();
   quoteBroadcast = true;
+  leadMarketplace = false;
   listCategories.mockReset().mockResolvedValue([
     { id: "c1", name: "Barn Hall", slug: "barn-halls", plural: "Barn Halls", listingCount: 4 },
   ]);
@@ -62,6 +65,24 @@ describe("/get-quotes", () => {
     const props = form!.props as { categories: { id: string; name: string }[]; towns: { id: string; name: string }[] };
     expect(props.categories).toEqual([{ id: "c1", name: "Barn Halls" }]);
     expect(props.towns).toEqual([{ id: "t1", name: "Bath" }]);
+  });
+
+  it("keeps 'nowhere else' with the lead marketplace off, and says who may pay with it on", async () => {
+    const { text } = await import("@/test/elements");
+    const { leadSharingNotice } = await import("@/lib/leads/consent");
+    const { default: page } = await import("./page");
+    const { QuoteRequestForm } = await import("@/components/quotes/QuoteRequestForm");
+
+    const off = await page();
+    expect(text(off)).toMatch(/and nowhere else/);
+    expect(text(off)).not.toContain(leadSharingNotice());
+    expect([...elements(off)].find((el) => el.type === QuoteRequestForm)!.props).toMatchObject({ leadMarketplace: false });
+
+    leadMarketplace = true;
+    const on = await page();
+    expect(text(on)).toContain(leadSharingNotice());
+    expect(text(on)).not.toMatch(/and nowhere else/);
+    expect([...elements(on)].find((el) => el.type === QuoteRequestForm)!.props).toMatchObject({ leadMarketplace: true });
   });
 
   it("is rendered per request", async () => {

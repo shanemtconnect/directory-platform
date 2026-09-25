@@ -363,29 +363,41 @@ export function validateNeighbourhoods(config: {
 }
 
 /**
- * The lead marketplace's money (flag `leadMarketplace`). A floor below 1 would
- * give leads away; a pack list out of order or with a fractional or zero
- * amount is a top-up page whose buttons do not mean what they say, and the
- * packs are the ONLY amounts `startTopup` accepts.
+ * The pay-per-lead numbers. A floor below one currency unit is a lead given
+ * away; packs out of order are a top-up page whose "smallest" button is not
+ * the smallest; a non-positive day count halves or deletes a lead the moment
+ * it is created. All refused at build.
  */
-export function validateLeads(config: { leads: { floor: number; packs: readonly number[] } }): void {
-  const { floor, packs } = config.leads;
+export function validateLeads(config: {
+  leads: {
+    floor: number;
+    packs: readonly number[];
+    halfPriceAfterDays: number;
+    deleteAfterDays: number;
+    refundWindowDays: number;
+  };
+}): void {
+  const l = config.leads;
   const problems: string[] = [];
-  if (!Number.isFinite(floor) || floor < 1) {
-    problems.push(`leads.floor must be at least 1, got ${String(floor)}`);
+  if (!Number.isFinite(l.floor) || l.floor < 1) {
+    problems.push(`leads.floor must be at least 1, got ${String(l.floor)}`);
   }
-  if (packs.length === 0) problems.push("leads.packs must list at least one pack");
-  for (const pack of packs) {
-    if (!Number.isInteger(pack) || pack < 1) {
-      problems.push(`leads.packs must be whole amounts of at least 1, got ${String(pack)}`);
+  if (l.packs.length === 0) problems.push("leads.packs must list at least one pack");
+  for (let i = 0; i < l.packs.length; i++) {
+    const p = l.packs[i]!;
+    if (!Number.isInteger(p) || p <= 0) problems.push(`leads.packs[${i}] must be a whole positive amount, got ${String(p)}`);
+    if (i > 0 && p <= l.packs[i - 1]!) {
+      problems.push(`leads.packs must be ascending; ${p} follows ${l.packs[i - 1]}`);
     }
   }
-  if (packs.some((pack, i) => i > 0 && pack <= packs[i - 1]!)) {
-    problems.push(`leads.packs must be strictly ascending, got [${packs.join(", ")}]`);
+  for (const key of ["halfPriceAfterDays", "deleteAfterDays", "refundWindowDays"] as const) {
+    if (!Number.isInteger(l[key]) || l[key] < 1) {
+      problems.push(`leads.${key} must be a whole number of days, at least 1, got ${String(l[key])}`);
+    }
   }
   if (problems.length > 0) {
     throw new ConfigError(
-      `Lead marketplace configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+      `Lead configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
     );
   }
 }
