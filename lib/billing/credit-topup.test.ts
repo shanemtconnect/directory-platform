@@ -9,9 +9,10 @@ import { attachJobOrder, createJob } from "@/lib/db/queries/job-board";
 import { creditBalance } from "@/lib/db/queries/credits";
 import { NOTIFY_CREDIT_TOPUP } from "@/lib/email/notify";
 import { BILLING_SYSTEM_VIEWER, processPayPalWebhook } from "./process";
-import type { PayPalClient } from "./paypal";
+import type { PayPalClient, PayPalHttp } from "./paypal";
+import { siteConfig } from "@/config/site.config";
 import { parseEvent } from "./webhooks";
-import { applyCaptureEvent, amountMatches, creditTopupAmount, type CreateOrderInput, type PayPalOrdersClient } from "./orders";
+import { applyCaptureEvent, amountMatches, createPayPalOrdersClient, creditTopupAmount, jobPostingAmount, type CreateOrderInput, type PayPalOrdersClient } from "./orders";
 import { settleTopupOrder, startTopup, topupPackCents } from "./credit-topup";
 
 const ORDER = "8TOPUP0127TN3647";
@@ -97,6 +98,56 @@ describe("creditTopupAmount and amountMatches per purpose", () => {
 
   it("offers exactly the configured packs, in minor units", () => {
     expect(topupPackCents()).toEqual([5000, 10000, 30000]);
+  });
+});
+
+/**
+ * The request PayPal actually receives, through the real Orders client and
+ * a stubbed `fetch` (the pattern in orders.test.ts). This body decides what
+ * the buyer is charged; the fakes above never build it.
+ */
+describe("createPayPalOrdersClient for a credit top-up", () => {
+  const ENV = { PAYPAL_CLIENT_ID: "id", PAYPAL_CLIENT_SECRET: "secret" };
+
+  function stub(): { http: PayPalHttp; bodies: Record<string, unknown>[] } {
+    const bodies: Record<string, unknown>[] = [];
+    const http: PayPalHttp = async (url, init) => {
+      if (url.endsWith("/v1/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "tok", expires_in: 32400 }), { status: 200 });
+      }
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return new Response(
+        JSON.stringify({ id: ORDER, status: "PAYER_ACTION_REQUIRED", links: [{ rel: "payer-action", href: "https://paypal.test/approve" }] }),
+        { status: 201 },
+      );
+    };
+    return { http, bodies };
+  }
+
+  it("sends the pack's amount in the site currency, not the job price, with the credit custom_id", async () => {
+    const { http, bodies } = stub();
+    const client = createPayPalOrdersClient({ env: ENV, http });
+    await withTestDb(async (tx) => {
+      const { viewer } = await makeAccount(tx);
+      const out = await startTopup(tx, viewer, 5000, { client });
+      if (out.outcome !== "pay") throw new Error(`expected pay, got ${out.outcome}`);
+      expect(bodies).toHaveLength(1);
+      const unit = (bodies[0]!.purchase_units as Record<string, unknown>[])[0]!;
+      expect(unit.amount).toEqual({ value: "50.00", currency_code: siteConfig.currency });
+      expect(unit.amount).not.toEqual(jobPostingAmount());
+      expect(unit.custom_id).toBe(`credit:${out.creditOrderId}`);
+      expect(bodies[0]!.intent).toBe("CAPTURE");
+      expect(JSON.stringify(bodies[0])).toContain("/account/credit/return");
+    });
+  });
+
+  it("refuses a non-job purpose with no amount before anything is sent", async () => {
+    const { http, bodies } = stub();
+    const client = createPayPalOrdersClient({ env: ENV, http });
+    await expect(
+      client.createOrder({ customId: "credit:x", description: "d", returnUrl: "r", cancelUrl: "c", purpose: "credit_topup" }),
+    ).rejects.toThrow(/needs an amount/);
+    expect(bodies).toEqual([]);
   });
 });
 
