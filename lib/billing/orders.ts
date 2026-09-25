@@ -11,6 +11,7 @@ import type { TestDb } from "@/lib/db/types";
 import type { Viewer } from "@/lib/db/viewer";
 import { billingConfigured, createPayPalRequest, type PayPalHttp } from "./paypal";
 import type { PayPalEvent } from "./webhooks";
+import { applyTopupCapture, type TopupCaptureOutcome } from "./credit-topup";
 
 /**
  * One-off payments through PayPal Orders (Task 49).
@@ -35,12 +36,27 @@ import type { PayPalEvent } from "./webhooks";
 
 type Env = Record<string, string | undefined>;
 
+/**
+ * What an order pays for (Task 57). A job post (Task 49) and a lead-credit
+ * top-up share the Orders client, the capture webhook and the idempotency
+ * rules; what differs is the amount and which rows a capture settles.
+ */
+export type OrderPurpose = "job" | "credit_topup";
+
+/** `custom_id` prefixes. A job's legacy custom_id is its bare row id and still settles the job. */
+export const JOB_CUSTOM_ID_PREFIX = "job:";
+export const CREDIT_CUSTOM_ID_PREFIX = "credit:";
+
 export interface CreateOrderInput {
   /** Our own row id. Comes back on the capture as `custom_id`. */
   readonly customId: string;
   readonly description: string;
   readonly returnUrl: string;
   readonly cancelUrl: string;
+  /** Defaults to "job", whose amount is the configured job price. */
+  readonly purpose?: OrderPurpose;
+  /** Required for anything but a job. `value` is PayPal's decimal string ("50.00"). */
+  readonly amount?: { readonly value: string; readonly currency: string };
 }
 
 export interface CreatedOrder {
@@ -64,14 +80,17 @@ export interface CapturedOrder {
 }
 
 /**
- * Whether a capture is for exactly the configured price in the configured
- * currency. Nothing is marked paid on any other amount: a capture we did not
- * create can carry our row id in `custom_id`, and a price raised in config
- * must not be settled by an order created at the old one.
+ * Whether a capture is for exactly the expected amount in the expected
+ * currency — the job price unless the caller names another (a top-up passes
+ * its own pack). Nothing is marked paid on any other amount: a capture we did
+ * not create can carry our row id in `custom_id`, and a price raised in
+ * config must not be settled by an order created at the old one.
  */
-export function amountMatches(amount: CaptureAmount | null): boolean {
+export function amountMatches(
+  amount: CaptureAmount | null,
+  expected: { value: string; currency_code: string } = jobPostingAmount(),
+): boolean {
   if (amount === null) return false;
-  const expected = jobPostingAmount();
   return (
     Number(amount.value) === Number(expected.value) &&
     amount.currencyCode.toUpperCase() === expected.currency_code.toUpperCase()
@@ -89,6 +108,19 @@ function readAmount(node: unknown): CaptureAmount | null {
 export interface PayPalOrdersClient {
   createOrder(input: CreateOrderInput): Promise<CreatedOrder>;
   captureOrder(orderId: string): Promise<CapturedOrder>;
+}
+
+/** A credit pack, in minor units, as PayPal wants it written. Integer maths: no float rounding. */
+export function creditTopupAmount(packCents: number): { value: string; currency_code: string } {
+  const whole = Math.floor(packCents / 100);
+  const minor = String(packCents % 100).padStart(2, "0");
+  return { value: `${whole}.${minor}`, currency_code: siteConfig.currency };
+}
+
+function orderAmount(input: CreateOrderInput): { value: string; currency_code: string } {
+  if (input.amount !== undefined) return { value: input.amount.value, currency_code: input.amount.currency };
+  if ((input.purpose ?? "job") !== "job") throw new Error(`createOrder: purpose ${input.purpose} needs an amount`);
+  return jobPostingAmount();
 }
 
 /** The price a non-verified poster pays, as PayPal wants it written. */
@@ -139,7 +171,7 @@ export function createPayPalOrdersClient(opts: { env?: Env; http?: PayPalHttp } 
           {
             custom_id: input.customId,
             description: input.description,
-            amount: jobPostingAmount(),
+            amount: orderAmount(input),
           },
         ],
         // The current Orders API takes the buyer-facing settings here.
@@ -246,7 +278,37 @@ export function captureFromEvent(event: PayPalEvent): CaptureEvent | null {
   return { captureId, orderId, customId: str(event.resource.custom_id), amount: readAmount(event.resource.amount) };
 }
 
-export type CaptureOutcome = MarkPaidResult["outcome"] | "not-a-capture" | "wrong-amount";
+export type CaptureOutcome =
+  | MarkPaidResult["outcome"]
+  | TopupCaptureOutcome
+  | "not-a-capture"
+  | "wrong-amount";
+
+/**
+ * Settles whatever a capture event paid for, by its `custom_id` prefix:
+ * `credit:` is a lead-credit top-up (lib/billing/credit-topup.ts); `job:` or
+ * a bare id (every job order created before the prefixes) is a job post,
+ * settled exactly as it always was.
+ */
+export async function applyCaptureEvent(
+  tx: TestDb,
+  viewer: Viewer,
+  event: PayPalEvent,
+): Promise<{ outcome: CaptureOutcome; jobId?: string; creditOrderId?: string }> {
+  const capture = captureFromEvent(event);
+  if (capture === null) return { outcome: "not-a-capture" };
+  const customId = capture.customId;
+  if (customId !== null && customId.startsWith(CREDIT_CUSTOM_ID_PREFIX)) {
+    return applyTopupCapture(tx, viewer, {
+      capture,
+      creditOrderId: customId.slice(CREDIT_CUSTOM_ID_PREFIX.length),
+      eventId: event.id,
+    });
+  }
+  const jobCustomId =
+    customId !== null && customId.startsWith(JOB_CUSTOM_ID_PREFIX) ? customId.slice(JOB_CUSTOM_ID_PREFIX.length) : customId;
+  return applyJobCapture(tx, viewer, event, { ...capture, customId: jobCustomId });
+}
 
 /**
  * Settles a job from its capture event. Runs inside the webhook's transaction,
@@ -254,14 +316,12 @@ export type CaptureOutcome = MarkPaidResult["outcome"] | "not-a-capture" | "wron
  * billing system viewer. A capture that names no job we hold — another
  * product on the same PayPal account — is reported, not thrown.
  */
-export async function applyCaptureEvent(
+async function applyJobCapture(
   tx: TestDb,
   viewer: Viewer,
   event: PayPalEvent,
+  capture: CaptureEvent,
 ): Promise<{ outcome: CaptureOutcome; jobId?: string }> {
-  const capture = captureFromEvent(event);
-  if (capture === null) return { outcome: "not-a-capture" };
-
   let orderId = capture.orderId;
   if (orderId === null && capture.customId !== null) {
     orderId = await providerOrderIdForJob(tx, viewer, capture.customId);

@@ -32,6 +32,8 @@ const LINKS: { href: string; label: string }[] = [
   { href: "/admin/audit", label: "Audit log" },
   // Jobs board (Task 49): a flag-off site has no /admin/jobs page to link to.
   ...(features.jobBoard ? [{ href: "/admin/jobs", label: "Jobs" }] : []),
+  // Lead credit (Task 57): flag-off sites have no /admin/credit page.
+  ...(features.leadMarketplace ? [{ href: "/admin/credit", label: "Credit" }] : []),
 ];
 
 export function AdminNav({ current, counts }: { current: string; counts?: NavCounts }) {

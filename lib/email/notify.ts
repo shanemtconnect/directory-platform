@@ -507,3 +507,21 @@ export async function notifySpotClosed(
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_CLOSED, payload });
 }
+
+/* ------------------------------------------------- lead credit (Task 57) */
+
+/**
+ * A credit top-up settled: the buyer gets a receipt with the new balance.
+ * The payload is the `credit_orders` id; the worker re-reads the order, the
+ * account's address and the balance when it runs. The handler sits at the
+ * foot of worker/jobs/notify.ts.
+ */
+export const NOTIFY_CREDIT_TOPUP = "notify.credit.topup";
+NOTIFY_KINDS.push(NOTIFY_CREDIT_TOPUP);
+
+export type CreditTopupJobPayload = { creditOrderId: string };
+
+export async function notifyCreditTopup(tx: TestDb, viewer: Viewer, creditOrderId: string): Promise<void> {
+  const payload: CreditTopupJobPayload = { creditOrderId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_CREDIT_TOPUP, payload });
+}

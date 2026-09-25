@@ -356,6 +356,16 @@ ${FEATURE_FLAGS.map((f) => `    ${f}: ${features[f]},`).join("\n")}
     durationDays: 30,
     reminderDays: 7,
   },
+  // The pay-per-lead marketplace (flag leadMarketplace). Board floor price and
+  // credit packs in the site currency; the day counts drive price halving,
+  // deletion and the refund window.
+  leads: {
+    floor: 25,
+    packs: [50, 100, 300],
+    halfPriceAfterDays: 7,
+    deleteAfterDays: 30,
+    refundWindowDays: 7,
+  },
 } as const satisfies SiteConfig;
 
 ${ACCESSORS}`;

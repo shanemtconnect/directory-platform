@@ -99,6 +99,7 @@ export const FEATURE_FLAGS = [
   "events",
   "bookings",
   "multiLocale",
+  "leadMarketplace",
 ] as const;
 
 export type FeatureFlag = (typeof FEATURE_FLAGS)[number];
@@ -285,5 +286,22 @@ export interface SiteConfig {
     readonly durationDays: number;
     /** How many days before expiry the poster is reminded. Less than durationDays. */
     readonly reminderDays: number;
+  };
+
+  /**
+   * The pay-per-lead marketplace (flag `leadMarketplace`). Money is in major
+   * units of `currency`; the ledger stores minor units (x100).
+   */
+  readonly leads: {
+    /** What a lead costs on the board when nobody's standing order took it. At least 1. */
+    readonly floor: number;
+    /** The prepaid credit top-up packs, ascending. The only amounts a top-up can be. */
+    readonly packs: readonly number[];
+    /** The board price halves this many days after the lead was created. */
+    readonly halfPriceAfterDays: number;
+    /** An unsold lead is deleted this many days after it was created. */
+    readonly deleteAfterDays: number;
+    /** How long a buyer has to report a bad lead for a credit refund. */
+    readonly refundWindowDays: number;
   };
 }

@@ -666,6 +666,43 @@ services, restart. The next `subscription-sync` tick reconciles whatever was
 missed; nothing needs replaying by hand. `scripts/paypal-setup.ts` prints this
 reminder because it deliberately does not create the webhook.
 
+### Lead credit (flag `leadMarketplace`)
+
+Buyers of leads hold prepaid credit. **No new environment variables** — top-ups
+reuse the `PAYPAL_*` group above and the same webhook. `/account/credit` shows
+the balance, the ledger that explains it and one button per pack in
+`siteConfig.leads.packs` (major units of `siteConfig.currency`; the ledger
+stores minor units). A button creates a `credit_orders` row and a PayPal
+**Order** (one-off, `intent: CAPTURE`) for exactly that pack with
+`custom_id = credit:<row id>`, then sends the buyer to PayPal.
+`/account/credit/return` captures it: with `intent: CAPTURE`, approving moves
+no money, and **the return page is the only thing that captures**. A buyer who
+approves and then closes the tab before it loads is neither charged nor
+credited; the order simply expires at PayPal. The return page captures
+before it checks the session, so a buyer whose login lapsed at PayPal is
+still credited and then asked to sign in. The `PAYMENT.CAPTURE.COMPLETED`
+webhook is a backstop for a capture that happened but was not recorded (the
+return page's transaction failing after PayPal took the money) and for
+redeliveries: whichever of the two arrives first credits the account and
+the other finds it done (row lock + the ledger's unique `order_id`). A capture for any amount or currency other than the row's pack is
+refused, the order is marked `failed`, and a `credit.payment.mismatch` audit
+row is written for a manual refund; a capture naming an order this site does
+not hold is logged and ignored. The buyer gets a receipt
+(`notify.credit.topup`) with the new balance.
+
+Credit is spent by `debitForPurchase` and returned by `refundToCredit`
+(`lib/db/queries/credits.ts`), both under a per-account advisory lock so two
+simultaneous purchases cannot overspend one balance. It is never cashed out
+except by an admin at `/admin/credit`, where every adjustment needs a reason
+and is audited as `credit.adjusted`. The capture webhook deliberately does
+not check the flag: an order started while `leadMarketplace` was on and
+captured after it was turned off has taken the buyer's money, so it is still
+credited. Job-post orders share the same capture
+webhook: `applyCaptureEvent` dispatches on the `custom_id` prefix (`credit:`,
+`job:`, or a bare job id for orders created before the prefixes). The sandbox
+checks still owed before this takes real money are in
+`docs/PAYPAL-CREDIT-VERIFY.md`.
+
 ### Testing gotchas
 
 `corepack pnpm test:e2e -- e2e/admin.spec.ts` does **not** run one file — the
