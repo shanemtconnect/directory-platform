@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { features } from "@/lib/features/flags";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { paginatingCity, uniquePhone } from "./fixtures";
 
 let CITY: string;
@@ -28,6 +30,14 @@ test.describe("enquiry submission", () => {
 
     const form = page.locator('[data-testid="enquiry-form"]');
     await expect(form).toBeVisible();
+    // The privacy line: unchanged with the lead marketplace off; the one
+    // shared notice (lib/leads/consent.ts) with it on.
+    if (features.leadMarketplace) {
+      await expect(form).toContainText(leadSharingNotice());
+      await expect(form).not.toContainText("sell your details");
+    } else {
+      await expect(form).toContainText("We don’t sell your details.");
+    }
 
     const stamp = Date.now();
     await form.locator("#enq-name").fill("Playwright Smoke");

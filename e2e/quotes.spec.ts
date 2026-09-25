@@ -10,8 +10,9 @@ import { E2E_DATABASE_URL } from "./database";
  *
  * A visitor describes a job on /get-quotes; the request is written PENDING
  * with its recipients and one `notify.quote-verify` job to the requester and
- * nothing else; the requester follows the link in that email; only then is
- * the `notify.quote` job queued; the worker (run here in-process,
+ * nothing else; the requester follows the link in that email — which only
+ * shows a Confirm button, because mail scanners GET links too — and presses
+ * it; only then is the `notify.quote` job queued; the worker (run here in-process,
  * against the same database — Playwright starts no worker) drains that job;
  * and the owner of a paid recipient sees the job and the requester on the
  * leads page, while the same listing on the free tier sees only that a
@@ -180,8 +181,20 @@ test.describe("the quote broadcast", () => {
     `;
     expect(early, "no business may be emailed before the requester confirms").toHaveLength(0);
 
-    // The requester follows the link in the email.
-    await page.goto(`/get-quotes/verify?token=${encodeURIComponent(verifyJob!.token!)}`);
+    // The requester follows the link in the email. Opening it confirms
+    // nothing — that is what a mail scanner does — and queues nothing.
+    const link = `/get-quotes/verify/${encodeURIComponent(verifyJob!.token!)}`;
+    await page.goto(link);
+    const confirm = page.locator('[data-testid="quote-verify-confirm"]');
+    await expect(confirm).toBeVisible();
+    const [stillPending] = await sql<{ status: string }[]>`select status from quote_requests where id = ${quoteRequestId}`;
+    expect(stillPending?.status, "opening the link must not confirm it").toBe("pending");
+    expect(await sql`
+      select 1 from job_queue where kind = 'notify.quote' and payload->>'quoteRequestId' = ${quoteRequestId}
+    `, "opening the link must not queue a delivery").toHaveLength(0);
+
+    // The person presses the button.
+    await confirm.locator('button[type="submit"]').click();
     await page.waitForURL(/\/get-quotes\/confirmed\?state=verified$/);
     await expect(page.locator('[data-testid="quote-confirmed"]')).toBeVisible();
     const [verified] = await sql<{ status: string; verified_at: Date | null }[]>`
@@ -196,7 +209,7 @@ test.describe("the quote broadcast", () => {
       where kind = 'notify.quote' and payload->>'quoteRequestId' = ${quoteRequestId}
     `;
     expect(job?.status, "one notify.quote job must be queued by the click").toBe("pending");
-    await page.goto(`/get-quotes/verify?token=${encodeURIComponent(verifyJob!.token!)}`);
+    await page.goto(link);
     await page.waitForURL(/\/get-quotes\/confirmed\?state=already$/);
     const jobs = await sql`
       select 1 from job_queue where kind = 'notify.quote' and payload->>'quoteRequestId' = ${quoteRequestId}

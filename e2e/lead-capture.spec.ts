@@ -81,7 +81,9 @@ test("capture box on the home page: request, verification link, open lead", asyn
   `;
   expect(job?.token).toBeTruthy();
 
-  await page.goto(`/get-quotes/verify?token=${encodeURIComponent(job!.token)}`);
+  await page.goto(`/get-quotes/verify/${encodeURIComponent(job!.token)}`);
+  expect(await sql`select 1 from leads where email = ${EMAIL}`, "opening the link makes no lead").toHaveLength(0);
+  await page.locator('[data-testid="quote-verify-confirm"] button[type="submit"]').click();
   await page.waitForURL(/\/get-quotes\/confirmed\?state=verified$/);
   await expect(page.locator('[data-testid="quote-confirmed"]')).toBeVisible();
 
