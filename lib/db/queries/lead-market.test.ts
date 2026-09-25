@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { withTestDb, type TestDb } from "@/test/db";
 import type { Viewer } from "@/lib/db/viewer";
-import { makeCity, makeScaffold, type ListingCtx } from "@/test/factories";
+import { makeCategoryInCity, makeCity, makeScaffold, makeVertical, type ListingCtx } from "@/test/factories";
 import { credit, makeBuyer, makeLead, makeStandingOrder } from "@/test/leads";
 import { siteConfig } from "@/config/site.config";
 import { creditBalance } from "./credits";
@@ -444,7 +444,12 @@ describe("buyLead concurrency", () => {
   it("sells to exactly one of two simultaneous buyers and debits only the winner", async () => {
     const setup = await database.transaction(async (raw) => {
       const tx = raw as unknown as TestDb;
-      const ctx = await makeScaffold(tx);
+      // Committed while the test runs, so every name is unique: a "Leeds" or a
+      // "Barn Venues" here would collide with every other file's scaffold.
+      const tag = randomUUID().slice(0, 8);
+      const verticalId = await makeVertical(tx, `Race Vertical ${tag}`);
+      const cityId = await makeCity(tx, `Race Town ${tag}`, `Race Region ${tag}`);
+      const ctx = { cityId, verticalId, primaryCategoryId: await makeCategoryInCity(tx, verticalId, cityId, `Race Things ${tag}`) };
       const a = await makeBuyer(tx, ctx, 5000);
       const b = await makeBuyer(tx, ctx, 5000);
       const leadId = await makeLead(tx, ctx);
