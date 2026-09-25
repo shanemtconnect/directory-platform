@@ -515,12 +515,13 @@ async function validateOrder(
   return { errors, territories, categoryIds };
 }
 
+/** One of the viewer's PUBLISHED listings — the only kind allocation will sell to. */
 async function ownedListingId(tx: TestDb, profileId: string, listingId: string): Promise<string | null> {
   if (!UUID.test(listingId)) return null;
   const [row] = await tx
     .select({ id: listings.id })
     .from(listings)
-    .where(and(eq(listings.id, listingId), eq(listings.ownerId, profileId)))
+    .where(and(eq(listings.id, listingId), eq(listings.ownerId, profileId), eq(listings.status, "published")))
     .limit(1);
   return row?.id ?? null;
 }
@@ -730,6 +731,8 @@ export interface AdminLeadRow {
   readonly categoryName: string | null;
   readonly priceCents: number;
   readonly soldToListingName: string | null;
+  /** Sold, then refunded (the lead stays `sold`). */
+  readonly refunded: boolean;
 }
 
 /** The newest leads that still exist, for the admin list. First name and brief only. */
@@ -740,6 +743,10 @@ export async function adminRecentLeads(tx: TestDb, viewer: Viewer, limit = 100):
       id: leads.id, createdAt: leads.createdAt, status: leads.status, source: leads.source, firstName: leads.firstName,
       brief: leads.brief, cityName: cities.name, categoryName: categories.name, priceCents: leads.priceCents,
       soldToListingName: listings.name,
+      refunded: sql<boolean>`exists (
+        select 1 from ${leadRefunds} join ${leadPurchases} on ${leadPurchases.id} = ${leadRefunds.purchaseId}
+        where ${leadPurchases.leadId} = ${leads.id} and ${leadRefunds.status} = 'approved'
+      )`,
     })
     .from(leads)
     .innerJoin(cities, eq(cities.id, leads.cityId))
@@ -750,18 +757,23 @@ export async function adminRecentLeads(tx: TestDb, viewer: Viewer, limit = 100):
     .limit(limit);
 }
 
-/** Takes a lead off the board (or out of its buyer's reach). The sweep removes the row later. Audited. */
-export async function adminDeleteLead(tx: TestDb, viewer: Viewer, leadId: string, at: Date = now()): Promise<boolean> {
+/**
+ * Takes an UNSOLD lead (open or expired) off the board; the sweep removes the
+ * row later. A sold lead is refused: it belongs to its buyer, whose page, report
+ * and refund all hang off it — a bad sold lead is dealt with by a refund.
+ * Audited.
+ */
+export async function adminDeleteLead(
+  tx: TestDb, viewer: Viewer, leadId: string, at: Date = now(),
+): Promise<"deleted" | "sold" | "not-found"> {
   assertAdmin(viewer);
-  if (!UUID.test(leadId)) return false;
-  const rows = await tx
-    .update(leads)
-    .set({ status: "deleted", updatedAt: at })
-    .where(and(eq(leads.id, leadId), sql`${leads.status} <> 'deleted'`))
-    .returning({ id: leads.id });
-  if (rows.length === 0) return false;
-  await writeAudit(tx, viewer, { action: "lead.deleted", entityType: "lead", entityId: leadId });
-  return true;
+  if (!UUID.test(leadId)) return "not-found";
+  const [row] = await tx.select({ status: leads.status }).from(leads).where(eq(leads.id, leadId)).for("update");
+  if (!row || row.status === "deleted") return "not-found";
+  if (row.status === "sold") return "sold";
+  await tx.update(leads).set({ status: "deleted", updatedAt: at }).where(eq(leads.id, leadId));
+  await writeAudit(tx, viewer, { action: "lead.deleted", entityType: "lead", entityId: leadId, meta: { from: row.status } });
+  return "deleted";
 }
 
 export type RefundDecision =
@@ -822,6 +834,7 @@ export async function decideRefund(
     .where(eq(leadRefunds.id, refundId));
 
   let balanceCents = 0;
+  let blocklisted = false;
   if (input.approve) {
     ({ balanceCents } = await refundToCredit(tx, viewer, { userId: row.userId, cents: row.priceCents, leadId: row.leadId, refundId }));
     const until = addMonths(at, BLOCKLIST_MONTHS);
@@ -844,6 +857,7 @@ export async function decideRefund(
           },
         });
     }
+    blocklisted = entries.length > 0;
   }
   await writeAudit(tx, viewer, {
     action: input.approve ? "lead.refund_approved" : "lead.refund_rejected",
@@ -851,7 +865,7 @@ export async function decideRefund(
     entityId: row.leadId,
     meta: {
       refundId, purchaseId: row.purchaseId, reason: row.reason, cents: row.priceCents, note: note === "" ? null : note,
-      blocklisted: input.approve && blocklistsOnRefund(row.reason),
+      blocklisted,
     },
     ip: input.ip ?? null,
   });
@@ -872,7 +886,8 @@ export const DELETE_AFTER_EXPIRY_DAYS = 7;
  * contact details (name, email, phone, message and their normalised keys)
  * are purged `siteConfig.leads.retainSoldDays` after the sale. First name,
  * brief, town, category, price, the purchase and the refund stay; the won
- * email is the buyer's record.
+ * email is the buyer's record. The clock is `leads.sold_at`, and a lead
+ * with a refund report still pending waits for the decision.
  */
 export async function sweepLeads(
   tx: TestDb, viewer: Viewer, at: Date = now(),
@@ -901,7 +916,17 @@ export async function sweepLeads(
     })
     .where(and(
       sql`${leads.contactPurgedAt} is null`,
-      sql`exists (select 1 from ${leadPurchases} where ${leadPurchases.leadId} = ${leads.id} and ${leadPurchases.createdAt} <= ${soldBefore.toISOString()}::timestamptz)`,
+      // Keyed on the lead's own sale date, not on the purchase row: a buyer
+      // deleting their account cascades that row away, and the details must
+      // go on time all the same.
+      lte(leads.soldAt, soldBefore),
+      // A report still waiting for a decision needs the details it is about
+      // (and the blocklist its approval may write); the next hourly run
+      // after the decision purges them.
+      sql`not exists (
+        select 1 from ${leadRefunds} join ${leadPurchases} on ${leadPurchases.id} = ${leadRefunds.purchaseId}
+        where ${leadPurchases.leadId} = ${leads.id} and ${leadRefunds.status} = 'pending'
+      )`,
     ))
     .returning({ id: leads.id });
   return { expired: expired.length, deleted: deleted.length, purged: purged.length };
@@ -1101,6 +1126,8 @@ export interface LeadRefundNotification {
   readonly leadId: string;
   readonly firstName: string;
   readonly brief: string;
+  /** Whether the approval actually wrote blocklist entries for this lead. */
+  readonly blocklisted: boolean;
 }
 
 /** The refund decision email's data; null while undecided. Admin (worker) only. */
@@ -1111,6 +1138,7 @@ export async function leadRefundNotification(tx: TestDb, viewer: Viewer, refundI
     .select({
       email: user.email, name: user.name, status: leadRefunds.status, reason: leadRefunds.reason, decisionNote: leadRefunds.decisionNote,
       priceCents: leadPurchases.priceCents, leadId: leads.id, firstName: leads.firstName, brief: leads.brief,
+      blocklisted: sql<boolean>`exists (select 1 from ${leadBlocklist} where ${leadBlocklist.leadId} = ${leads.id})`,
     })
     .from(leadRefunds)
     .innerJoin(leadPurchases, eq(leadPurchases.id, leadRefunds.purchaseId))
@@ -1120,5 +1148,5 @@ export async function leadRefundNotification(tx: TestDb, viewer: Viewer, refundI
     .where(eq(leadRefunds.id, refundId))
     .limit(1);
   if (!r || r.status === "pending" || !r.email) return null;
-  return { ...r, status: r.status };
+  return { ...r, status: r.status, blocklisted: r.status === "approved" && r.blocklisted };
 }

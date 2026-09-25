@@ -53,7 +53,7 @@ function RateBadge({ rate, flagged }: { rate: number; flagged: boolean }) {
  * The lead market's console (Task 58): the counts, the bad-lead reports
  * waiting for a decision (each with its buyer's refund rate, ⚠ above a
  * third — flagged, never blocked, per D10), every buyer's rate, and the
- * recent leads with a delete. Lists carry first name and brief only; an
+ * recent leads (a refunded sale marked, and a delete for unsold ones). Lists carry first name and brief only; an
  * admin decides a report on the buyer's reason, not by calling the person.
  */
 export default async function AdminLeadsPage({ searchParams }: { searchParams: Promise<{ refund?: string; deleted?: string }> }) {
@@ -80,7 +80,12 @@ export default async function AdminLeadsPage({ searchParams }: { searchParams: P
           {message.text}
         </Notice>
       )}
-      {deleted === "1" && <Notice variant="success" testId="lead-deleted-message">Lead deleted. It is off the board and out of its buyer&rsquo;s account.</Notice>}
+      {deleted === "deleted" && <Notice variant="success" testId="lead-deleted-message">Lead deleted. It is off the board.</Notice>}
+      {deleted === "sold" && (
+        <Notice variant="error" testId="lead-deleted-message">
+          A sold lead cannot be deleted: it belongs to its buyer. A bad one is dealt with by refunding it.
+        </Notice>
+      )}
 
       <dl className="mb-8 flex flex-wrap gap-6" data-testid="lead-counts">
         <div><dt className="text-muted text-sm">Open</dt><dd className="m-0 text-2xl font-semibold" data-testid="lead-count-open">{counts.open}</dd></div>
@@ -167,15 +172,22 @@ export default async function AdminLeadsPage({ searchParams }: { searchParams: P
                       <span className="text-muted block text-sm">{l.brief}</span>
                     </td>
                     <td data-label="Status">
-                      {l.status}{l.soldToListingName && ` to ${l.soldToListingName}`}
+                      <span data-testid="recent-lead-status">
+                        {l.status}{l.soldToListingName && ` to ${l.soldToListingName}`}
+                        {l.refunded && " · refunded"}
+                      </span>
                       <span className="text-muted block text-sm">{l.source} · {l.createdAt.toLocaleDateString(siteConfig.locale)}</span>
                     </td>
                     <td data-label="Price">{formatCredit(l.priceCents)}</td>
                     <td data-label="Delete">
-                      <form action={adminDeleteLeadAction}>
-                        <input type="hidden" name="leadId" value={l.id} />
-                        <button type="submit" className="btn btn-secondary">Delete</button>
-                      </form>
+                      {l.status === "sold" ? (
+                        <span className="text-muted text-sm">Sold leads stay with their buyer</span>
+                      ) : (
+                        <form action={adminDeleteLeadAction}>
+                          <input type="hidden" name="leadId" value={l.id} />
+                          <button type="submit" className="btn btn-secondary">Delete</button>
+                        </form>
+                      )}
                     </td>
                   </tr>
                 ))}

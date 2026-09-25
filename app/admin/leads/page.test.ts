@@ -26,9 +26,10 @@ vi.mock("@/lib/db/queries/lead-market", () => ({
   adminLeadCounts: async () => ({ open: 3, sold: 2, expired: 1, pendingRefunds: 1 }),
   adminRefundQueue: (...a: unknown[]) => adminRefundQueue(...a),
   adminBuyers: async () => [],
-  adminRecentLeads: async () => [],
+  adminRecentLeads: async () => recent,
 }));
 
+let recent: unknown[] = [];
 const ROW = {
   refundId: "r1", requestedAt: new Date(), reason: "dead_phone", note: "Unobtainable", leadId: "l1", firstName: "Sam",
   brief: "Eighty guests", cityName: "Leeds", priceCents: 2500, boughtAt: new Date(), buyerName: "Pat", buyerEmail: "pat@example.com",
@@ -40,6 +41,7 @@ beforeEach(() => {
   flagOn = true;
   currentViewer.mockReset().mockResolvedValue({ role: "admin", userId: "a1" });
   adminRefundQueue.mockReset().mockResolvedValue([ROW]);
+  recent = [];
 });
 
 async function render() {
@@ -72,5 +74,18 @@ describe("/admin/leads", () => {
     adminRefundQueue.mockResolvedValue([{ ...ROW, buyer: { purchases: 3, refundRequests: 1, rate: 1 / 3, flagged: false } }]);
     const tree = await render();
     expect([...elements(tree)].some((el) => (el.props as Record<string, unknown>)["data-testid"] === "refund-rate-flag")).toBe(false);
+  });
+
+  it("marks a refunded sale and offers Delete only for unsold leads", async () => {
+    const base = { createdAt: new Date(), source: "quote", firstName: "Sam", brief: "b", cityName: "Leeds", categoryName: null, priceCents: 2500 };
+    recent = [
+      { ...base, id: "sold1", status: "sold", soldToListingName: "Pat's Place", refunded: true },
+      { ...base, id: "open1", status: "open", soldToListingName: null, refunded: false },
+    ];
+    const tree = await render();
+    const rows = [...elements(tree)].filter((el) => (el.props as Record<string, unknown>)["data-testid"] === "recent-lead-row");
+    expect(text(rows[0])).toContain("sold to Pat's Place · refunded");
+    expect(text(rows[0])).not.toContain("Delete");
+    expect(text(rows[1])).toContain("Delete");
   });
 });

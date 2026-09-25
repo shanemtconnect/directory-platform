@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { withTestDb, type TestDb } from "@/test/db";
-import { profiles, user } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { leads, profiles, user } from "@/lib/db/schema";
 import type { SendResult } from "@/lib/email/sender";
 import type { Viewer } from "@/lib/db/viewer";
 
@@ -17,7 +18,7 @@ vi.mock("@/lib/features/flags", async (orig) => {
 const { makeScaffold } = await import("@/test/factories");
 const { makeBuyer, makeLead, makeStandingOrder } = await import("@/test/leads");
 const { allocateLead } = await import("@/lib/leads/allocate");
-const { adminDeleteLead, buyLead, decideRefund, requestRefund } = await import("@/lib/db/queries/lead-market");
+const { buyLead, decideRefund, requestRefund } = await import("@/lib/db/queries/lead-market");
 const { notifyLeadBoardDigest } = await import("@/lib/email/notify");
 const { processNotifications } = await import("./notify");
 
@@ -60,7 +61,7 @@ describe("lead-market notifications", () => {
       sendEmail.mockClear();
       const second = await makeLead(tx, ctx);
       await allocateLead(tx, SYSTEM, second);
-      await adminDeleteLead(tx, SYSTEM, second);
+      await tx.update(leads).set({ status: "deleted" }).where(eq(leads.id, second));
       await processNotifications(tx);
       expect(to(buyer.email)).toHaveLength(0);
     });

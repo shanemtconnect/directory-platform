@@ -18,7 +18,7 @@ import { checkLeadRules } from "@/lib/leads/rules";
 import { NOTIFY_LEAD_REFUND_DECIDED, NOTIFY_LEAD_WON } from "@/lib/email/notify";
 import { allocateLead } from "@/lib/leads/allocate";
 import {
-  MAX_ORDER_CENTS, adminBuyers, adminDeleteLead, adminLeadCounts, adminRefundQueue, boardDigestFor, boardDigestRecipients,
+  MAX_ORDER_CENTS, adminBuyers, adminDeleteLead, adminLeadCounts, adminRecentLeads, leadRefundNotification, adminRefundQueue, boardDigestFor, boardDigestRecipients,
   boardLeads, buyLead, createStandingOrder, decideRefund, deleteStandingOrder, leadWonNotification, myPurchases,
   purchasedLead, requestRefund, setLeadDigestOptOut, setStandingOrderStatus, standingOrdersFor, sweepLeads,
   updateStandingOrder,
@@ -296,6 +296,16 @@ describe("standing orders", () => {
     });
   });
 
+  it("need a published listing, as allocation does", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx);
+      await tx.update(listings).set({ status: "draft" }).where(eq(listings.id, buyer.listingId));
+      const out = await createStandingOrder(tx, buyer.viewer, { listingId: buyer.listingId, territories: [{ kind: "national" }], categoryIds: null, priceCents: FLOOR });
+      expect(out).toMatchObject({ outcome: "invalid", errors: { listing: expect.any(String) } });
+    });
+  });
+
   it("are capped at five per listing", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
@@ -399,17 +409,118 @@ describe("sweepLeads — purging a sold lead's contact details", () => {
   });
 });
 
+describe("sweepLeads — the purge does not depend on the buyer's account", () => {
+  it("purges a sold lead whose buyer deleted their account (the purchase row cascaded away)", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const leadId = await makeLead(tx, ctx, { expiresAt: at(30) }, NOW);
+      await buyLead(tx, buyer.viewer, leadId, buyer.listingId, NOW);
+      await tx.delete(user).where(eq(user.id, buyer.authUserId));
+      expect(await tx.select().from(leadPurchases).where(eq(leadPurchases.leadId, leadId))).toHaveLength(0);
+
+      await sweepLeads(tx, SYSTEM, at(siteConfig.leads.retainSoldDays));
+      const [row] = await tx.select().from(leads).where(eq(leads.id, leadId));
+      expect(row).toMatchObject({ status: "sold", name: null, email: null, phone: null, message: null });
+      expect(row!.contactPurgedAt).toEqual(at(siteConfig.leads.retainSoldDays));
+    });
+  });
+
+  it("waits while a refund request on the lead is pending, then purges once it is decided", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const leadId = await makeLead(tx, ctx, { expiresAt: at(30) }, NOW);
+      await buyLead(tx, buyer.viewer, leadId, buyer.listingId, NOW);
+      const req = await requestRefund(tx, buyer.viewer, { leadId, reason: "dead_phone", note: "" }, at(6));
+      const late = at(siteConfig.leads.retainSoldDays + 5);
+
+      expect((await sweepLeads(tx, SYSTEM, late)).purged).toBe(0);
+      const out = await decideRefund(tx, await admin(tx), (req as { refundId: string }).refundId, { approve: true, note: "" }, late);
+      expect(out.outcome).toBe("approved");
+      // Decided with the details still there, so the blocklist really happened.
+      expect(await tx.select().from(leadBlocklist).where(eq(leadBlocklist.leadId, leadId))).toHaveLength(2);
+      expect((await sweepLeads(tx, SYSTEM, late)).purged).toBe(1);
+    });
+  });
+});
+
+describe("decideRefund — the blocklist flag reports what happened", () => {
+  it("records blocklisted: false when the lead's details are already gone, and the decided email says so", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const leadId = await makeLead(tx, ctx, {}, NOW);
+      await buyLead(tx, buyer.viewer, leadId, buyer.listingId, NOW);
+      const req = await requestRefund(tx, buyer.viewer, { leadId, reason: "spam", note: "" }, at(1));
+      const refundId = (req as { refundId: string }).refundId;
+      await tx.update(leads).set({ phoneNormalised: null, emailNormalised: null }).where(eq(leads.id, leadId));
+
+      await decideRefund(tx, await admin(tx), refundId, { approve: true, note: "" }, at(2));
+      expect(await tx.select().from(leadBlocklist).where(eq(leadBlocklist.leadId, leadId))).toHaveLength(0);
+      const [audit] = await tx.select().from(auditLog).where(and(eq(auditLog.action, "lead.refund_approved"), eq(auditLog.entityId, leadId)));
+      expect(audit?.meta).toMatchObject({ blocklisted: false });
+      expect(await leadRefundNotification(tx, SYSTEM, refundId)).toMatchObject({ status: "approved", blocklisted: false });
+    });
+  });
+
+  it("records blocklisted: true when entries were written", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const leadId = await makeLead(tx, ctx, {}, NOW);
+      await buyLead(tx, buyer.viewer, leadId, buyer.listingId, NOW);
+      const req = await requestRefund(tx, buyer.viewer, { leadId, reason: "spam", note: "" }, at(1));
+      const refundId = (req as { refundId: string }).refundId;
+      await decideRefund(tx, await admin(tx), refundId, { approve: true, note: "" }, at(2));
+      expect(await leadRefundNotification(tx, SYSTEM, refundId)).toMatchObject({ blocklisted: true });
+    });
+  });
+});
+
 describe("admin", () => {
-  it("deletes a lead off the board, audited", async () => {
+  it("deletes an unsold lead off the board, audited", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const leadId = await makeLead(tx, ctx);
+      const expired = await makeLead(tx, ctx, { status: "expired" });
       const staff = await admin(tx);
-      expect(await adminDeleteLead(tx, staff, leadId)).toBe(true);
-      expect(await adminDeleteLead(tx, staff, leadId)).toBe(false);
+      expect(await adminDeleteLead(tx, staff, leadId)).toBe("deleted");
+      expect(await adminDeleteLead(tx, staff, leadId)).toBe("not-found");
+      expect(await adminDeleteLead(tx, staff, expired)).toBe("deleted");
       const [row] = await tx.select().from(leads).where(eq(leads.id, leadId));
       expect(row!.status).toBe("deleted");
       expect(await tx.select().from(auditLog).where(and(eq(auditLog.action, "lead.deleted"), eq(auditLog.entityId, leadId)))).toHaveLength(1);
+    });
+  });
+
+  it("refuses to delete a sold lead: it belongs to its buyer", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const leadId = await makeLead(tx, ctx);
+      await buyLead(tx, buyer.viewer, leadId, buyer.listingId);
+      expect(await adminDeleteLead(tx, await admin(tx), leadId)).toBe("sold");
+      const [row] = await tx.select().from(leads).where(eq(leads.id, leadId));
+      expect(row!.status).toBe("sold");
+      expect(await purchasedLead(tx, buyer.viewer, leadId)).not.toBeNull();
+    });
+  });
+
+  it("marks a refunded sale in the recent-leads list", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const buyer = await makeBuyer(tx, ctx, 10_000);
+      const refunded = await makeLead(tx, ctx);
+      const kept = await makeLead(tx, ctx);
+      await buyLead(tx, buyer.viewer, refunded, buyer.listingId);
+      await buyLead(tx, buyer.viewer, kept, buyer.listingId);
+      const req = await requestRefund(tx, buyer.viewer, { leadId: refunded, reason: "wrong_area", note: "" });
+      const staff = await admin(tx);
+      await decideRefund(tx, staff, (req as { refundId: string }).refundId, { approve: true, note: "" });
+      const rows = await adminRecentLeads(tx, staff);
+      expect(rows.find((r) => r.id === refunded)).toMatchObject({ status: "sold", refunded: true });
+      expect(rows.find((r) => r.id === kept)).toMatchObject({ status: "sold", refunded: false });
     });
   });
 });
@@ -476,7 +587,7 @@ describe("leadWonNotification", () => {
       const purchaseId = (sold as { purchaseId: string }).purchaseId;
       await expect(leadWonNotification(tx, buyer.viewer, purchaseId)).rejects.toThrow(/FORBIDDEN/);
       expect(await leadWonNotification(tx, SYSTEM, purchaseId)).toMatchObject({ email: buyer.email, name: "Sam Requester", phone: expect.stringMatching(/^01632 97\d{4}$/) });
-      await adminDeleteLead(tx, SYSTEM, leadId);
+      await tx.update(leads).set({ status: "deleted" }).where(eq(leads.id, leadId));
       expect(await leadWonNotification(tx, SYSTEM, purchaseId)).toBeNull();
     });
   });

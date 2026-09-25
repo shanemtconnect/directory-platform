@@ -135,6 +135,6 @@ export async function decideRefundAction(form: FormData): Promise<void> {
 export async function adminDeleteLeadAction(form: FormData): Promise<void> {
   assertFlag();
   const viewer = await requireAdmin();
-  const done = await tx((h) => adminDeleteLead(h, viewer, str(form, "leadId")));
-  redirect(`${ADMIN_LEADS}?deleted=${done ? "1" : "0"}`);
+  const result = await tx((h) => adminDeleteLead(h, viewer, str(form, "leadId")));
+  redirect(`${ADMIN_LEADS}?deleted=${result}`);
 }

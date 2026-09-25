@@ -809,7 +809,8 @@ a board purchase too. Every list — the board, `/account/leads`,
 `/admin/leads` — shows first name and brief only. `leads.sweep` purges a sold
 lead's name, email, phone, message and normalised keys
 `siteConfig.leads.retainSoldDays` (default 90, at least `refundWindowDays`)
-after the sale; the page then says the details have expired and the won
+after the sale (`leads.sold_at`, so it happens even if the buyer deletes their
+account; a lead with a refund report still pending waits for the decision); the page then says the details have expired and the won
 email is the buyer's record. First name, brief, town, category, price, the
 purchase and any refund are kept.
 
@@ -827,8 +828,9 @@ dead phone, wrong person, spam and never asked — the requester's doing — it
 also blocklists the lead's phone and email for 12 months (the next request
 from either is refused). Wrong area (our data) and a bounced email (often a
 typo) are refunded without a blocklist; **Reject** needs a note, which the buyer is sent. A refund
-re-opens nothing: the lead stays `sold`. `/admin/leads` can also delete a
-lead (off the board, out of the buyer's account; audited `lead.deleted`).
+re-opens nothing: the lead stays `sold`, marked refunded in the admin list.
+`/admin/leads` can also delete an unsold lead (off the board; audited
+`lead.deleted`); a sold lead belongs to its buyer and is refused.
 Pending reports are counted on the dashboard and beside the nav link.
 
 **Housekeeping.** `leads.sweep` (hourly :13) marks open leads past
