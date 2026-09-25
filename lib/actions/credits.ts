@@ -9,6 +9,7 @@ import { clientIp } from "@/lib/spam/client-ip";
 import { isUuid } from "@/lib/actions/validation";
 import { CREDIT_PATH, startTopup } from "@/lib/billing/credit-topup";
 import { adminAdjust, profileIdByEmail } from "@/lib/db/queries/credits";
+import { parseCreditAmount } from "@/lib/credits/format";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -51,12 +52,13 @@ export async function adminAdjustAction(form: FormData): Promise<void> {
     email !== ""
       ? ((await profileIdByEmail(db as unknown as TestDb, viewer, email)) ?? "")
       : String(form.get("userId") ?? "");
-  const amount = Number(String(form.get("amount") ?? "").trim());
+  // Parsed from the string, never rounded: "10.005" and an out-of-range
+  // figure are refused here rather than silently changed or overflowing.
+  const cents = parseCreditAmount(String(form.get("amount") ?? ""));
   const note = String(form.get("note") ?? "");
   if (!isUuid(userId)) redirect(`${ADMIN_CREDIT}?adjust=unknown-account`);
-  if (!Number.isFinite(amount)) redirect(`${ADMIN_CREDIT}?adjust=invalid-amount`);
+  if (cents === null) redirect(`${ADMIN_CREDIT}?adjust=invalid-amount`);
 
-  const cents = Math.round(amount * 100);
   const ip = clientIp(await headers());
   const result = await db.transaction(async (tx) =>
     adminAdjust(tx as unknown as TestDb, viewer, { userId, cents, note, ip }),

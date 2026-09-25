@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 const ADJUST_MESSAGES: Record<string, { variant: "success" | "error"; text: string }> = {
   adjusted: { variant: "success", text: "Adjusted. The entry is on the account's ledger and in the audit log." },
   "note-required": { variant: "error", text: "Please give a reason. Every adjustment carries one." },
-  "invalid-amount": { variant: "error", text: "Please enter an amount other than zero, to the penny at most." },
+  "invalid-amount": { variant: "error", text: "Please enter an amount other than zero, to the penny at most, and no more than 100,000 either way." },
   "would-go-negative": { variant: "error", text: "That would take the balance below zero. Nothing was changed." },
   "unknown-account": { variant: "error", text: "No account matches that. Nothing was changed." },
 };
@@ -31,7 +31,7 @@ function AdjustFields({ idPrefix }: { idPrefix: string }) {
   return (
     <>
       <label htmlFor={`${idPrefix}-amount`} className="sr-only">Amount ({siteConfig.currency}, negative to remove)</label>
-      <input id={`${idPrefix}-amount`} name="amount" type="number" step="0.01" required placeholder="e.g. 10 or -10" className="w-32" />
+      <input id={`${idPrefix}-amount`} name="amount" type="text" inputMode="decimal" pattern="[+-]?[0-9]{1,6}([.][0-9]{1,2})?" required placeholder="e.g. 10 or -10" className="w-32" />
       <label htmlFor={`${idPrefix}-note`} className="sr-only">Reason</label>
       <input id={`${idPrefix}-note`} name="note" type="text" required placeholder="Reason" />
       <button type="submit" className="btn btn-secondary">Adjust</button>
