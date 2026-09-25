@@ -494,6 +494,8 @@ describe("buyLead concurrency", () => {
 
   afterAll(async () => {
     if (made.leadId) {
+      const sold = await database.select({ id: leadPurchases.id }).from(leadPurchases).where(eq(leadPurchases.leadId, made.leadId));
+      for (const { id } of sold) await database.delete(jobQueue).where(sql`${jobQueue.payload}->>'purchaseId' = ${id}`);
       await database.delete(leadPurchases).where(eq(leadPurchases.leadId, made.leadId));
       await database.delete(auditLog).where(eq(auditLog.entityId, made.leadId));
       await database.delete(leads).where(eq(leads.id, made.leadId));
