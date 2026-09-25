@@ -664,9 +664,11 @@ reminder because it deliberately does not create the webhook.
 With `quoteBroadcast` on, a get-quotes request is written **pending** and the
 only email queued is `notify.quote-verify`, to the requester. Nobody else is
 written to, and nothing appears on an owner's leads page, until they click
-the link: `GET /get-quotes/verify?token=…` (32 random bytes, stored as a
-sha256 digest, single use, 48 hours) marks the request verified, queues the
-usual `notify.quote` delivery, and lands on `/get-quotes/confirmed`. The
+the link and press **Confirm** on the page it opens: the link
+(`/get-quotes/verify/<token>`; 32 random bytes, stored as a sha256 digest,
+single use, 48 hours) only previews the token — mail scanners GET links — and
+the button's `POST …/confirm` marks the request verified, queues the usual
+`notify.quote` delivery, and lands on `/get-quotes/confirmed`. The
 `quotes.expire` worker job marks unclicked requests expired every hour;
 `/admin/quotes` shows which requests are still awaiting confirmation.
 
@@ -675,8 +677,11 @@ With `leadMarketplace` on as well (it requires `quoteBroadcast`), a
 a verified quote request reached no listing on a paid tier (including one
 nobody in town could receive, which the form now keeps instead of refusing);
 a lead-capture box (home page, the top of the left sponsor rail) is confirmed
-by the same email link; or an enquiry is sent to an unclaimed listing with no
-email on file. Every lead passes the rules in `lib/leads/rules.ts` first: a
+by the same email link; or an enquiry sent to an unclaimed listing with no
+email on file is confirmed by the enquirer through the same link (the enquiry
+itself is recorded as always). No unverified lead ever exists. With the flag
+on, every "we don't sell your details" line is replaced by the one notice in
+`lib/leads/consent.ts`; with it off they are unchanged. Every lead passes the rules in `lib/leads/rules.ts` first: a
 phone that normalises for the site's country (`lib/geo/phone.ts`; premium,
 personal-numbering and fiction ranges refused), an email not at a throwaway
 inbox (`lib/spam/disposable-domains.ts`), neither on `lead_blocklist`, and

@@ -6,6 +6,7 @@ import { submitCaptureLead, type LeadCaptureState } from "@/lib/actions/lead-cap
 import { QUOTE_MESSAGE_MAX, QUOTE_MESSAGE_MIN } from "@/lib/actions/quotes-validation";
 import { QUOTE_VERIFY_TTL_HOURS } from "@/lib/quotes/verify-ttl";
 import { TurnstileWidget } from "@/components/submit/TurnstileWidget";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { Notice } from "@/components/ui/Notice";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 
@@ -115,8 +116,8 @@ export function LeadCaptureForm({ categories, towns, turnstileSiteKey, idPrefix 
         <label className="inline-flex items-start gap-2">
           <input id={id("consent")} name="consent" type="checkbox" required className="mt-1" aria-invalid={Boolean(err.consent)} />
           <span>
-            Pass my request and contact details to a local {e.singular} that can help. They pay us
-            for the introduction; I never pay anything.
+            Pass my request and contact details to a local {e.singular} that can help.{" "}
+            {leadSharingNotice()}
           </span>
         </label>
         {err.consent && <span role="alert">{err.consent}</span>}

@@ -176,6 +176,7 @@ export function ListingDetail({
             listingId={listing.id}
             listingName={listing.name}
             turnstileSiteKey={process.env.TURNSTILE_SITE_KEY?.trim() || null}
+            leadMarketplace={features.leadMarketplace}
           />
         </aside>
       </div>

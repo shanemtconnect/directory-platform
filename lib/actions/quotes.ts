@@ -88,7 +88,7 @@ export async function submitQuoteRequest(
 
   // Recipients, request, audit row and the queued verification email land
   // together or not at all. The recipients are NOT written to here: the
-  // requester's click (app/get-quotes/verify/route.ts) is what queues their
+  // requester's click (app/get-quotes/verify/[token]/confirm/route.ts) is what queues their
   // copies. With the lead marketplace on, a request nobody local can take is
   // kept rather than refused — the click turns it into a lead.
   const allowNoRecipients = isEnabled("leadMarketplace");

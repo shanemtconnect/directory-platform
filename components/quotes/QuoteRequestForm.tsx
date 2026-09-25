@@ -6,6 +6,7 @@ import { submitQuoteRequest, type QuoteFormState } from "@/lib/actions/quotes";
 import { QUOTE_MESSAGE_MAX, QUOTE_MESSAGE_MIN } from "@/lib/actions/quotes-validation";
 import { QUOTE_VERIFY_TTL_HOURS } from "@/lib/quotes/verify-ttl";
 import { TurnstileWidget } from "@/components/submit/TurnstileWidget";
+import { leadSharingNotice } from "@/lib/leads/consent";
 import { Notice } from "@/components/ui/Notice";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 
@@ -46,7 +47,7 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
   if (state.status === "sent") {
     const n = state.recipientCount ?? 0;
     // Nothing has gone anywhere yet: the requester's click on the emailed
-    // link is what sends it (app/get-quotes/verify/route.ts).
+    // link is what sends it (app/get-quotes/verify/[token]/confirm/route.ts).
     return (
       <Notice variant="success" testId="quote-sent" title="Check your email">
         <p className="mb-0">
@@ -135,8 +136,7 @@ export function QuoteRequestForm({ categories, towns, turnstileSiteKey, leadMark
           {leadMarketplace ? (
             <span>
               Send my name, email and phone number to up to {siteConfig.quotes.maxRecipients}{" "}
-              {e.plural} in this town so they can quote. If none of them is on a paid plan, we may
-              pass my request to one other local {e.singular}, which pays us for it.
+              {e.plural} in this town so they can quote. {leadSharingNotice()}
             </span>
           ) : (
             <span>

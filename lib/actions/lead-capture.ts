@@ -22,7 +22,7 @@ import { validateCaptureLead } from "./quotes-validation";
  * budget, Turnstile, one transaction — and the same verification email. The
  * request is stored as a `capture` quote request: never broadcast to
  * anybody, and turned into a lead by the requester's click
- * (app/get-quotes/verify/route.ts). The lead rules run here first, so a
+ * (app/get-quotes/verify/[token]/confirm/route.ts). The lead rules run here first, so a
  * repeat requester or a number nobody can ring is told now rather than
  * silently dropped after the click (D11); the click runs them again.
  */

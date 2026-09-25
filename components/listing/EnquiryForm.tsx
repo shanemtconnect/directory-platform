@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { submitEnquiry, type EnquiryState } from "@/lib/actions/enquiry";
 import { siteConfig } from "@/config/site.config";
 import { TurnstileWidget } from "@/components/submit/TurnstileWidget";
+import { leadSharingNotice } from "@/lib/leads/consent";
 
 const initial: EnquiryState = { status: "idle" };
 
@@ -12,16 +13,31 @@ export interface EnquiryFormProps {
   listingName: string;
   /** Null outside production; the server-side check skips in the same case. */
   turnstileSiteKey: string | null;
+  /**
+   * `features.leadMarketplace`, from the server: with it on, "we don't sell
+   * your details" is no longer true, so the shared notice replaces it.
+   */
+  leadMarketplace?: boolean;
 }
 
-export function EnquiryForm({ listingId, listingName, turnstileSiteKey }: EnquiryFormProps) {
+export function EnquiryForm({ listingId, listingName, turnstileSiteKey, leadMarketplace = false }: EnquiryFormProps) {
   const [state, action, pending] = useActionState(submitEnquiry, initial);
 
   if (state.status === "sent") {
     return (
       <div id="enquire" data-testid="enquiry-sent" role="status" className="card bg-raised">
         <h2 className="mt-0">Enquiry sent</h2>
-        <p>Your message has gone to {listingName}. They&rsquo;ll reply to you directly.</p>
+        {state.confirmByEmail ? (
+          // An unclaimed listing with no address: nobody can read it until
+          // the enquirer confirms and it is passed to a business that can.
+          <p data-testid="enquiry-confirm-email">
+            Check your email to confirm it. {listingName} hasn&rsquo;t given us an address yet, so
+            once you click the link we&rsquo;ll pass your enquiry to a local {siteConfig.entity.singular} that
+            can help. Nothing is sent until you do.
+          </p>
+        ) : (
+          <p>Your message has gone to {listingName}. They&rsquo;ll reply to you directly.</p>
+        )}
       </div>
     );
   }
@@ -77,7 +93,8 @@ export function EnquiryForm({ listingId, listingName, turnstileSiteKey }: Enquir
 
       <p className="mt-3 mb-0">
         <small>
-          Your message goes straight to the {siteConfig.entity.ownerNoun}. We don&rsquo;t sell your details.
+          Your message goes straight to the {siteConfig.entity.ownerNoun}.{" "}
+          {leadMarketplace ? leadSharingNotice() : <>We don&rsquo;t sell your details.</>}
         </small>
       </p>
     </form>
