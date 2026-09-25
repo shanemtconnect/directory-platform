@@ -67,6 +67,17 @@ export const SUBMIT_LISTING_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as co
 export const SHORTLIST_RATE_LIMIT = { limit: 120, windowSeconds: 3600 } as const;
 
 /**
+ * Ten an hour, and deliberately not behind Turnstile.
+ *
+ * The add-listing URL import (lib/actions/import-listing.ts) writes nothing:
+ * it fetches one page and hands the fields back to the person's own form, which
+ * still has to pass Turnstile to submit. What it can be abused for is making us
+ * fetch pages for someone, so the budget is sized for a person who tries their
+ * site, their Facebook page and a typo — not for a crawler.
+ */
+export const IMPORT_URL_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as const;
+
+/**
  * Five an hour, like the enquiry form.
  *
  * A visitor who spots three wrong phone numbers in a row is doing us a favour,
