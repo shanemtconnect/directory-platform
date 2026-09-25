@@ -89,7 +89,7 @@ beforeEach(async () => {
   }));
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.resetModules();
-  process.env.REDIS_URL = "redis://localhost:6380/12";
+  process.env.REDIS_URL = "redis://localhost:6380/15";
   mod = await import("./redis");
 });
 afterEach(() => {

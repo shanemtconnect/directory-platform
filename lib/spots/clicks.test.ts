@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-process.env.REDIS_URL = "redis://localhost:6380/12";
+process.env.REDIS_URL = "redis://localhost:6380/13";
 
 const { closeStatsRedis, statsRedis } = await import("@/lib/stats/redis");
 const {
@@ -17,7 +17,7 @@ const DAY = dayKey(AT);
 
 async function flush(): Promise<void> {
   const c = await statsRedis();
-  if (!c) throw new Error("redis db 12 is not reachable — start docker compose");
+  if (!c) throw new Error("redis db 13 is not reachable — start docker compose");
   await c.flushDb();
 }
 beforeEach(flush);
