@@ -38,6 +38,12 @@ test("pasting a website prefills the form, and the prefilled form submits", asyn
     name: NAME, phone, city: city.name, region: city.region ?? "", postcode,
   }).toString();
 
+  // The fixture page is served only by a server booted with E2E_IMPORT_FIXTURE=1
+  // and demo mode on (playwright.config.ts and scripts/verify-clone.sh both do).
+  // Anywhere else there is nothing to import from, so say so rather than fail.
+  const probe = await page.request.get(fixture.toString());
+  test.skip(probe.status() !== 200, `no import fixture at ${fixture.pathname} (status ${probe.status()}) — E2E_IMPORT_FIXTURE=1 + NEXT_PUBLIC_DEMO_MODE=true needed`);
+
   await page.goto("/add-listing");
   const importer = page.getByTestId("import-from-url");
   await importer.getByLabel(/Have a website\?/).fill(fixture.toString());
