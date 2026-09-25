@@ -7,7 +7,7 @@ import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 import { writeAudit } from "@/lib/db/queries/audit";
 import { search, SEARCH_PER_PAGE, type SearchParams } from "@/lib/db/queries/search";
-import { JOBS_PER_PAGE, listOpenJobs, type JobFilters } from "@/lib/db/queries/job-board";
+import { JOBS_PER_PAGE, countOpenJobs, listOpenJobs, type JobFilters } from "@/lib/db/queries/job-board";
 import { NOTIFY_SAVED_SEARCH } from "@/lib/email/notify";
 
 /**
@@ -16,7 +16,7 @@ import { NOTIFY_SAVED_SEARCH } from "@/lib/email/notify";
  *
  * `params` is OPAQUE here. It is whatever the page handed the query —
  * `SearchParams` for /search, `JobFilters` for /jobs — canonicalised and
- * stored, then passed straight back to that same query with `createdAfter`
+ * stored, then passed straight back to that same query with `publishedAfter`
  * added. Nothing in this file names a filter, so the search can grow one
  * (Task 53's `verified`) without a saved search noticing.
  *
@@ -32,6 +32,14 @@ export const MAX_MATCHES_SCANNED = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HOUR_MS = 3_600_000;
 const DUE_AFTER_MS = { daily: 24 * HOUR_MS, weekly: 7 * 24 * HOUR_MS } as const;
+/**
+ * Slack on the period. The dispatch runs once an hour and the digest is
+ * stamped when it is dispatched — but a stamp even a second after this
+ * hour's tick would otherwise make the search due only at the NEXT tick, and
+ * "daily" would become every 25 h, wandering round the clock. Anything under
+ * the cron period works; half of it leaves room either side.
+ */
+export const DUE_TOLERANCE_MS = 30 * 60_000;
 
 export type SavedSearchKind = (typeof savedSearches.$inferSelect)["kind"];
 export type SavedSearchFrequency = (typeof savedSearches.$inferSelect)["frequency"];
@@ -111,10 +119,21 @@ export async function createSavedSearch(
     eq(savedSearches.paramsHash, hash),
   );
 
+  // One save at a time per person, for the rest of this transaction: the cap
+  // is count-then-insert, and two tabs saving at nine would otherwise make eleven.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`saved_searches:${profileId}`}))`);
+
   const reactivate = async (): Promise<CreateSavedSearchResult | null> => {
+    const at = now();
     const [existing] = await tx
       .update(savedSearches)
-      .set({ isActive: true, updatedAt: now() })
+      .set({
+        isActive: true,
+        // Switched off from an email and saved again: alerts resume from now,
+        // not with everything that went live while they were off.
+        lastSeenPublishedAt: sql`case when ${savedSearches.isActive} then ${savedSearches.lastSeenPublishedAt} else ${at.toISOString()}::timestamptz end`,
+        updatedAt: at,
+      })
       .where(key)
       .returning({ id: savedSearches.id });
     return existing ? { outcome: "existing", id: existing.id } : null;
@@ -138,8 +157,8 @@ export async function createSavedSearch(
       paramsHash: hash,
       label: input.label,
       frequency: input.frequency ?? "weekly",
-      // The first digest is what arrives after this moment, not the back catalogue.
-      lastSeenCreatedAt: now(),
+      // The first digest is what goes live after this moment, not the back catalogue.
+      lastSeenPublishedAt: now(),
     })
     .onConflictDoNothing()
     .returning({ id: savedSearches.id });
@@ -178,14 +197,15 @@ export async function setSavedSearchFrequency(
 
 /**
  * Active searches whose digest is due at `at`: never sent, or a daily one
- * last sent 24 h ago or more, or a weekly one 7 d ago or more. Only for an
+ * last sent 24 h ago or more, or a weekly one 7 d ago or more — each less
+ * DUE_TOLERANCE_MS, so the hourly dispatch does not drift. Only for an
  * owner whose address is verified — an unverified sign-up must not be a way
  * to point digests at somebody else's inbox — and never one that already
  * has a digest waiting in the queue, so a slow queue cannot double up.
  */
 export async function dueSavedSearches(tx: TestDb, at: Date): Promise<SavedSearch[]> {
-  const dailyBefore = new Date(at.getTime() - DUE_AFTER_MS.daily);
-  const weeklyBefore = new Date(at.getTime() - DUE_AFTER_MS.weekly);
+  const dailyBefore = new Date(at.getTime() - DUE_AFTER_MS.daily + DUE_TOLERANCE_MS);
+  const weeklyBefore = new Date(at.getTime() - DUE_AFTER_MS.weekly + DUE_TOLERANCE_MS);
   const rows = await tx
     .select({ search: savedSearches })
     .from(savedSearches)
@@ -218,51 +238,58 @@ export interface Match {
   path: string;
   /** The town, when there is one. */
   place: string | null;
-  createdAt: Date;
+  /** When it went live: `coalesce(published_at, created_at)` — what "new" and the watermark are judged on. */
+  liveAt: Date;
 }
 
+/** The matches a digest shows (at most MAX_MATCHES_SCANNED), and how many there are in all. */
+export type Matches = Match[] & { readonly total: number };
+
 /**
- * What is NEW for a search: rows created strictly after `since`, through
- * the very query the page runs — the public viewer's, so a pending, removed
- * or expired row can never appear. Newest first, at most
- * MAX_MATCHES_SCANNED.
+ * What is NEW for a search: rows that went live strictly after `since`,
+ * through the very query the page runs — the public viewer's, so a pending,
+ * removed or expired row can never appear. "Went live", not "created": a
+ * submitted listing and every job are created pending and published on
+ * approval. Newest first, at most MAX_MATCHES_SCANNED; `total` is the full
+ * count, for the digest's "and N more".
  */
 export async function newMatchesFor(
   tx: TestDb,
   saved: Pick<SavedSearch, "kind" | "params">,
   since: Date,
-): Promise<Match[]> {
+): Promise<Matches> {
   const out: Match[] = [];
+  let total = 0;
 
   if (saved.kind === "listings") {
     for (let page = 1; out.length < MAX_MATCHES_SCANNED; page++) {
       const result = await search(tx, PUBLIC_VIEWER, {
         ...(saved.params as SearchParams),
         page,
-        createdAfter: since,
+        publishedAfter: since,
       });
+      total = result.total;
       for (const r of result.rows) {
-        out.push({ id: r.id, title: r.name, path: `/${r.citySlug}/${r.slug}`, place: r.cityName, createdAt: r.createdAt });
+        out.push({ id: r.id, title: r.name, path: `/${r.citySlug}/${r.slug}`, place: r.cityName, liveAt: r.liveAt });
       }
       if (result.rows.length < SEARCH_PER_PAGE || page >= result.totalPages) break;
     }
   } else {
-    for (let page = 1; out.length < MAX_MATCHES_SCANNED; page++) {
-      const rows = await listOpenJobs(tx, PUBLIC_VIEWER, {
-        ...(saved.params as JobFilters),
-        page,
-        createdAfter: since,
-      });
+    const filters: JobFilters = { ...(saved.params as JobFilters), publishedAfter: since };
+    total = await countOpenJobs(tx, PUBLIC_VIEWER, filters);
+    for (let page = 1; out.length < Math.min(total, MAX_MATCHES_SCANNED); page++) {
+      const rows = await listOpenJobs(tx, PUBLIC_VIEWER, { ...filters, page });
       for (const j of rows) {
-        out.push({ id: j.id, title: j.title, path: j.path, place: j.cityName, createdAt: j.createdAt });
+        out.push({ id: j.id, title: j.title, path: j.path, place: j.cityName, liveAt: j.liveAt });
       }
       if (rows.length < JOBS_PER_PAGE) break;
     }
   }
 
-  return out
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || a.id.localeCompare(b.id))
+  const matches = out
+    .sort((a, b) => b.liveAt.getTime() - a.liveAt.getTime() || a.id.localeCompare(b.id))
     .slice(0, MAX_MATCHES_SCANNED);
+  return Object.assign(matches, { total: Math.max(total, matches.length) });
 }
 
 /* ------------------------------------------------------------ the worker */
@@ -293,37 +320,52 @@ export async function savedSearchForDigest(
   return row ?? null;
 }
 
-/** After a digest: when it went, and the newest `created_at` it covered. */
+/**
+ * After a digest: when it was dispatched (the cadence runs from there, not
+ * from whenever the queue drained it), and the newest go-live it covered.
+ */
 export async function markSavedSearchSent(
   tx: TestDb,
   viewer: Viewer,
   id: string,
-  input: { sentAt: Date; lastSeenCreatedAt: Date },
+  input: { sentAt: Date; lastSeenPublishedAt: Date },
 ): Promise<void> {
   assertWorker(viewer);
   await tx
     .update(savedSearches)
-    .set({ lastSentAt: input.sentAt, lastSeenCreatedAt: input.lastSeenCreatedAt, updatedAt: now() })
+    .set({ lastSentAt: input.sentAt, lastSeenPublishedAt: input.lastSeenPublishedAt, updatedAt: now() })
     .where(eq(savedSearches.id, id));
 }
 
 /**
  * The one-click unsubscribe. The signed token (lib/email/unsubscribe.ts) is
- * the proof, so the public viewer may do this; the row is turned off, not
- * deleted, and saving the search again turns it back on. True only when
- * this call changed something.
+ * the proof, so the public viewer may do this — but only while the address
+ * the token was minted for is still the owner's: after an email change the
+ * old address's links stop working. The row is turned off, not deleted, and
+ * saving the search again turns it back on. True only when this call changed
+ * something.
  */
 export async function deactivateSavedSearch(
   tx: TestDb,
   viewer: Viewer,
   id: string,
+  email: string,
   ip: string | null,
 ): Promise<boolean> {
   if (!UUID.test(id)) return false;
+  const owner = tx
+    .select({ id: profiles.id })
+    .from(profiles)
+    .innerJoin(user, eq(user.id, profiles.userId))
+    .where(sql`lower(trim(${user.email})) = ${email.trim().toLowerCase()}`);
   const rows = await tx
     .update(savedSearches)
     .set({ isActive: false, updatedAt: now() })
-    .where(and(eq(savedSearches.id, id), eq(savedSearches.isActive, true)))
+    .where(and(
+      eq(savedSearches.id, id),
+      eq(savedSearches.isActive, true),
+      sql`${savedSearches.userId} in ${owner}`,
+    ))
     .returning({ id: savedSearches.id });
   if (rows.length === 0) return false;
   await writeAudit(tx, viewer, {

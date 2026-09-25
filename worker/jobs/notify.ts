@@ -905,8 +905,10 @@ const SUBSCRIBER = "subscriber";
  * between never reaches the email. Nothing new by now: nothing sent, and
  * the watermark stays where it was.
  *
- * The watermark moves to the newest `created_at` the digest covered — not
- * to "now" — so a row committed while this ran is still new next time.
+ * The watermark moves to the newest go-live (`coalesce(published_at,
+ * created_at)`) the digest covered — not to "now" — so a row published while
+ * this ran is still new next time. `last_sent_at` is the dispatch tick from
+ * the payload, so the cadence does not slip by however long the job waited.
  */
 async function runSavedSearch(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
   // Flag off since the job was queued: the module is gone, and so is the mail.
@@ -918,7 +920,7 @@ async function runSavedSearch(db: Db, d: Delivery, payload: Record<string, unkno
   if (data === null) return;
   if (data.search.kind === "jobs" && !features.jobBoard) return;
 
-  const matches = await newMatchesFor(db, data.search, data.search.lastSeenCreatedAt);
+  const matches = await newMatchesFor(db, data.search, data.search.lastSeenPublishedAt);
   if (matches.length === 0) return;
 
   // Every digest carries its unsubscribe link; one that cannot is not sent.
@@ -931,13 +933,16 @@ async function runSavedSearch(db: Db, d: Delivery, payload: Record<string, unkno
       kind: data.search.kind,
       label: data.search.label,
       matches: matches.map((m) => ({ title: m.title, url: siteUrl(m.path), place: m.place })),
+      total: matches.total,
       searchUrl: siteUrl(savedSearchPath(data.search.kind, data.search.params)),
       manageUrl: siteUrl("/account/alerts"),
       unsubscribeToken: token,
     }),
   });
 
-  const newest = matches.reduce((max, m) => (m.createdAt > max ? m.createdAt : max), matches[0]!.createdAt);
-  await markSavedSearchSent(db, ADMIN_VIEWER, savedSearchId, { sentAt: now(), lastSeenCreatedAt: newest });
+  const newest = matches.reduce((max, m) => (m.liveAt > max ? m.liveAt : max), matches[0]!.liveAt);
+  const dispatched = typeof payload.dispatchedAt === "string" ? new Date(payload.dispatchedAt) : null;
+  const sentAt = dispatched !== null && !Number.isNaN(dispatched.getTime()) ? dispatched : now();
+  await markSavedSearchSent(db, ADMIN_VIEWER, savedSearchId, { sentAt, lastSeenPublishedAt: newest });
 }
 

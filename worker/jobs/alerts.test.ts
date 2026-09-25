@@ -42,6 +42,11 @@ describe("dispatchAlerts", () => {
       await dispatchAlerts(tx, AT, ON);
       expect(await queuedFor(tx, withNew)).toBe(1);
       expect(await queuedFor(tx, nothingNew)).toBe(0);
+      // The tick's own time rides in the payload, to stamp last_sent_at with.
+      const [job] = await tx.select({ payload: jobQueue.payload }).from(jobQueue).where(and(
+        eq(jobQueue.kind, NOTIFY_SAVED_SEARCH), sql`${jobQueue.payload} ->> 'savedSearchId' = ${withNew}`,
+      ));
+      expect(job!.payload).toEqual({ savedSearchId: withNew, dispatchedAt: AT.toISOString() });
 
       // A second tick before the worker drains it does not double up.
       await dispatchAlerts(tx, AT, ON);

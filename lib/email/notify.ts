@@ -519,13 +519,22 @@ export async function notifySpotClosed(
 export const NOTIFY_SAVED_SEARCH = "notify.saved_search";
 NOTIFY_KINDS.push(NOTIFY_SAVED_SEARCH);
 
-export type SavedSearchJobPayload = { savedSearchId: string };
+export type SavedSearchJobPayload = {
+  savedSearchId: string;
+  /**
+   * The dispatch tick that queued it, ISO. `last_sent_at` is stamped with this
+   * rather than the moment the drain got to it, so the daily/weekly cadence
+   * runs from the tick and does not slip by the queue's lag.
+   */
+  dispatchedAt: string;
+};
 
 export async function notifySavedSearch(
   tx: TestDb,
   viewer: Viewer,
   savedSearchId: string,
+  dispatchedAt: Date,
 ): Promise<void> {
-  const payload: SavedSearchJobPayload = { savedSearchId };
+  const payload: SavedSearchJobPayload = { savedSearchId, dispatchedAt: dispatchedAt.toISOString() };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SAVED_SEARCH, payload });
 }

@@ -21,6 +21,7 @@ function data(n: number, patch: Partial<SavedSearchDigestData> = {}): SavedSearc
     kind: "listings",
     label: "Barns in Leeds",
     matches: Array.from({ length: n }, (_, i) => match(i + 1)),
+    total: n,
     searchUrl: "https://example.co.uk/search?q=barn&city=leeds",
     manageUrl: "https://example.co.uk/account/alerts",
     unsubscribeToken: "payload.signature",
@@ -48,6 +49,13 @@ describe("savedSearchDigest", () => {
     expect(email.text).toContain("And 4 more");
     expect(email.text).toContain("https://example.co.uk/search?q=barn&city=leeds");
     expect(email.html).toContain('href="https://example.co.uk/search?q=barn&amp;city=leeds"');
+  });
+
+  it("counts 'more' from the total, not from the matches it was handed", () => {
+    // The worker scans at most 200; the search itself knows there are 450.
+    const email = savedSearchDigest(data(200, { total: 450 }));
+    expect(email.subject).toBe(`450 new ${siteConfig.entity.plural} for "Barns in Leeds"`);
+    expect(email.text).toContain("And 440 more");
   });
 
   it("carries the unsubscribe link and the manage link in every digest", () => {

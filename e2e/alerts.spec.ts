@@ -135,7 +135,8 @@ test.describe("saved searches", () => {
       values (${listingId}, ${`${TAG} Hall`}, ${`e2e-alert-${listingId.slice(0, 8)}`},
         ${scaffold!.city_id}, ${scaffold!.vertical_id}, ${scaffold!.category_id},
         'published', 'free', 'unclaimed', 'seed')`;
-    const [listing] = await sql<{ created_at: Date }[]>`select created_at from listings where id = ${listingId}`;
+    const [listing] = await sql<{ live_at: Date }[]>`
+      select coalesce(published_at, created_at) as live_at from listings where id = ${listingId}`;
 
     // The hourly dispatch queues exactly one digest for it.
     const { dispatchAlerts } = await import("@/worker/jobs/alerts");
@@ -154,10 +155,11 @@ test.describe("saved searches", () => {
     const [done] = await sql<{ status: string; attempts: number; last_error: string | null }[]>`
       select status, attempts, last_error from job_queue where id = ${jobs[0]!.id}`;
     expect(done?.status, `the digest job must complete (attempts ${done?.attempts}: ${done?.last_error ?? ""})`).toBe("done");
-    const [after] = await sql<{ last_sent_at: Date | null; last_seen_created_at: Date; is_active: boolean }[]>`
-      select last_sent_at, last_seen_created_at, is_active from saved_searches where id = ${savedSearchId!}`;
+    const [after] = await sql<{ last_sent_at: Date | null; last_seen_published_at: Date; is_active: boolean }[]>`
+      select last_sent_at, last_seen_published_at, is_active from saved_searches where id = ${savedSearchId!}`;
     expect(after?.last_sent_at).not.toBeNull();
-    expect(after?.last_seen_created_at.getTime()).toBe(listing!.created_at.getTime());
+    // Postgres keeps microseconds; the watermark is the millisecond a JS Date carries.
+    expect(after?.last_seen_published_at.getTime()).toBe(listing!.live_at.getTime());
 
     // Nothing new since: the next dispatch queues nothing more.
     await asWorker((tx) => dispatchAlerts(tx, new Date(Date.now() + 8 * 86_400_000)));

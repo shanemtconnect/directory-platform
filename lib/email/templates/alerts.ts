@@ -14,8 +14,10 @@ export interface SavedSearchDigestData {
   kind: "listings" | "jobs";
   /** What the person saved it as. */
   label: string;
-  /** Newest first, every new match (the template shows the first ten). */
+  /** Newest first; the template shows the first ten. */
   matches: { title: string; url: string; place: string | null }[];
+  /** How many new matches there are in all — may exceed `matches` (the worker scans a bounded number). */
+  total: number;
   /** Absolute URL of the saved search on the site — where "and N more" goes. */
   searchUrl: string;
   /** Absolute URL of /account/alerts. */
@@ -26,7 +28,7 @@ export interface SavedSearchDigestData {
 
 export function savedSearchDigest(data: SavedSearchDigestData): EmailContent {
   const e = siteConfig.entity;
-  const n = data.matches.length;
+  const n = Math.max(data.total, data.matches.length);
   const noun = data.kind === "jobs" ? (n === 1 ? "job" : "jobs") : n === 1 ? e.singular : e.plural;
   const subject = `${n} new ${noun} for "${data.label}"`;
 

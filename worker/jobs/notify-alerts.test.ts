@@ -4,7 +4,7 @@ import { withTestDb, type TestDb } from "@/test/db";
 import { makeListing, makeScaffold } from "@/test/factories";
 import { makeViewer } from "@/test/admin-fixtures";
 import { FEATURE_FLAGS } from "@/config/types";
-import { jobQueue, savedSearches, user } from "@/lib/db/schema";
+import { jobQueue, listings, savedSearches, user } from "@/lib/db/schema";
 import { resetClock, setClock } from "@/lib/clock";
 import type { SendResult } from "@/lib/email/sender";
 
@@ -47,16 +47,22 @@ async function setup(tx: TestDb, savedAt: Date) {
   return { viewer, tag, id: created.id, email: `${viewer.userId}@example.test` };
 }
 
-async function run(tx: TestDb, id: string) {
+/** Queue as the dispatch would at `dispatchedAt`, drain, and hand back the job row. */
+async function run(tx: TestDb, id: string, dispatchedAt = new Date("2026-09-25T09:23:00Z")) {
+  await tx.delete(jobQueue).where(eq(jobQueue.kind, NOTIFY_SAVED_SEARCH));
   // Due from the epoch: the claim compares run_after with the (frozen) test clock.
-  await enqueueJob(tx, ADMIN_VIEWER, { kind: NOTIFY_SAVED_SEARCH, payload: { savedSearchId: id }, runAfter: new Date(0) });
+  await enqueueJob(tx, ADMIN_VIEWER, {
+    kind: NOTIFY_SAVED_SEARCH,
+    payload: { savedSearchId: id, dispatchedAt: dispatchedAt.toISOString() },
+    runAfter: new Date(0),
+  });
   await processNotifications(tx);
-  const [job] = await tx.select().from(jobQueue).where(eq(jobQueue.kind, "notify.saved_search"));
+  const [job] = await tx.select().from(jobQueue).where(eq(jobQueue.kind, NOTIFY_SAVED_SEARCH));
   return job!;
 }
 
 describe("notify.saved_search", () => {
-  it("sends the new matches with an unsubscribe link, then moves the watermark and stamps last_sent_at", async () => {
+  it("sends the new matches with an unsubscribe link, then moves the watermark and stamps last_sent_at with the dispatch time", async () => {
     await withTestDb(async (tx) => {
       const s = await setup(tx, new Date("2026-09-20T00:00:00Z"));
       const ctx = await makeScaffold(tx);
@@ -65,8 +71,9 @@ describe("notify.saved_search", () => {
       await makeListing(tx, ctx, { name: `${s.tag} two`, createdAt: new Date("2026-09-22T00:00:00Z") });
       await makeListing(tx, ctx, { name: `${s.tag} unpublished`, status: "pending", createdAt: new Date("2026-09-22T00:00:00Z") });
 
+      // Drained well after the tick that queued it.
       setClock(new Date("2026-09-25T10:00:00Z"));
-      const job = await run(tx, s.id);
+      const job = await run(tx, s.id, new Date("2026-09-25T09:23:00Z"));
       expect(job.status).toBe("done");
 
       expect(sendEmail).toHaveBeenCalledTimes(1);
@@ -81,8 +88,39 @@ describe("notify.saved_search", () => {
       expect(verifyUnsubscribe(decodeURIComponent(token!))).toEqual({ savedSearchId: s.id, email: s.email });
 
       const [row] = await tx.select().from(savedSearches).where(eq(savedSearches.id, s.id));
-      expect(row!.lastSentAt).toEqual(new Date("2026-09-25T10:00:00Z"));
-      expect(row!.lastSeenCreatedAt).toEqual(new Date("2026-09-22T00:00:00Z"));
+      // The dispatch tick, not the drain: the cadence must not slip by the queue's lag.
+      expect(row!.lastSentAt).toEqual(new Date("2026-09-25T09:23:00Z"));
+      expect(row!.lastSeenPublishedAt).toEqual(new Date("2026-09-22T00:00:00Z"));
+    });
+  });
+
+  it("a row created before the watermark and published after it appears in the next digest", async () => {
+    await withTestDb(async (tx) => {
+      const s = await setup(tx, new Date("2026-09-20T00:00:00Z"));
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { name: `${s.tag} first`, createdAt: new Date("2026-09-22T00:00:00Z") });
+      // Submitted on the 21st and still waiting for a moderator when the first digest goes.
+      const late = await makeListing(tx, ctx, {
+        name: `${s.tag} moderated`, status: "pending", createdAt: new Date("2026-09-21T00:00:00Z"),
+      });
+
+      setClock(new Date("2026-09-23T10:00:00Z"));
+      expect((await run(tx, s.id, new Date("2026-09-23T09:23:00Z"))).status).toBe("done");
+      expect((sendEmail.mock.calls[0]![0] as { text: string }).text).not.toContain(`${s.tag} moderated`);
+
+      // Approved on the 24th — after the watermark (the 22nd) had moved past its creation.
+      await tx.update(listings).set({ status: "published", publishedAt: new Date("2026-09-24T08:00:00Z") })
+        .where(eq(listings.id, late));
+
+      setClock(new Date("2026-09-24T10:00:00Z"));
+      expect((await run(tx, s.id, new Date("2026-09-24T09:23:00Z"))).status).toBe("done");
+      expect(sendEmail).toHaveBeenCalledTimes(2);
+      const second = sendEmail.mock.calls[1]![0] as { subject: string; text: string };
+      expect(second.subject).toMatch(/^1 new /);
+      expect(second.text).toContain(`${s.tag} moderated`);
+      expect(second.text).not.toContain(`${s.tag} first`);
+      const [row] = await tx.select().from(savedSearches).where(eq(savedSearches.id, s.id));
+      expect(row!.lastSeenPublishedAt).toEqual(new Date("2026-09-24T08:00:00Z"));
     });
   });
 
@@ -93,7 +131,6 @@ describe("notify.saved_search", () => {
       await makeListing(tx, ctx, { name: `${s.tag} withdrawn`, status: "removed", createdAt: new Date("2026-09-21T00:00:00Z") });
 
       expect((await run(tx, s.id)).status).toBe("done");
-      await tx.delete(jobQueue).where(eq(jobQueue.kind, "notify.saved_search"));
 
       await makeListing(tx, ctx, { name: `${s.tag} live`, createdAt: new Date("2026-09-21T00:00:00Z") });
       await tx.update(savedSearches).set({ isActive: false }).where(eq(savedSearches.id, s.id));

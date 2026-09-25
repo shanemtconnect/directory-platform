@@ -37,9 +37,9 @@ export async function dispatchAlerts(
   for (const search of await dueSavedSearches(tx, at)) {
     if (search.kind === "jobs" && !flags.jobBoard) continue;
     checked++;
-    const matches = await newMatchesFor(tx, search, search.lastSeenCreatedAt);
+    const matches = await newMatchesFor(tx, search, search.lastSeenPublishedAt);
     if (matches.length === 0) continue;
-    await notifySavedSearch(tx, ADMIN_VIEWER, search.id);
+    await notifySavedSearch(tx, ADMIN_VIEWER, search.id, at);
     queued++;
   }
   return { checked, queued };

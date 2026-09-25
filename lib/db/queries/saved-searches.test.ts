@@ -72,7 +72,7 @@ describe("createSavedSearch", () => {
       expect(r.frequency).toBe("weekly");
       expect(r.isActive).toBe(true);
       expect(r.lastSentAt).toBeNull();
-      expect(r.lastSeenCreatedAt).toEqual(new Date("2026-09-20T12:00:00Z"));
+      expect(r.lastSeenPublishedAt).toEqual(new Date("2026-09-20T12:00:00Z"));
     });
   });
 
@@ -86,9 +86,18 @@ describe("createSavedSearch", () => {
       if (first.outcome !== "created" || again.outcome !== "existing") return;
       expect(again.id).toBe(first.id);
 
+      // Saving an ACTIVE search again leaves its watermark alone…
+      const mark = new Date("2026-09-01T00:00:00Z");
+      await tx.update(savedSearches).set({ lastSeenPublishedAt: mark }).where(eq(savedSearches.id, first.id));
+      setClock(new Date("2026-09-25T10:00:00Z"));
+      await save(tx, p.viewer, { q: "barn", city: "leeds" });
+      expect((await row(tx, first.id)).lastSeenPublishedAt).toEqual(mark);
+      // …but one switched off from an email starts again from now, not from months ago.
       await tx.update(savedSearches).set({ isActive: false }).where(eq(savedSearches.id, first.id));
       await save(tx, p.viewer, { q: "barn", city: "leeds" });
-      expect((await row(tx, first.id)).isActive).toBe(true);
+      const back = await row(tx, first.id);
+      expect(back.isActive).toBe(true);
+      expect(back.lastSeenPublishedAt).toEqual(new Date("2026-09-25T10:00:00Z"));
 
       // Same params, other kind: a different search.
       expect((await save(tx, p.viewer, { q: "barn", city: "leeds" }, "jobs")).outcome).toBe("created");
@@ -141,7 +150,7 @@ describe("list / delete / frequency", () => {
 });
 
 describe("dueSavedSearches", () => {
-  it("never sent is due; daily after 24 h, weekly after 7 d; inactive, unverified and already-queued are not", async () => {
+  it("never sent is due; daily after 24 h, weekly after 7 d, less half an hour's tolerance; inactive, unverified and already-queued are not", async () => {
     await withTestDb(async (tx) => {
       const nowAt = new Date("2026-09-25T10:00:00Z");
       const p = await person(tx);
@@ -154,17 +163,21 @@ describe("dueSavedSearches", () => {
       };
       const never = await id(p.viewer, "never", {});
       const dailyDue = await id(p.viewer, "daily due", { frequency: "daily", lastSentAt: new Date(nowAt.getTime() - DAY) });
+      // A minute short of the period is due: the dispatch runs hourly, and a
+      // digest stamped a few seconds after last :23 must not slip to :23 an hour later.
+      const dailyAlmost = await id(p.viewer, "daily 23h59", { frequency: "daily", lastSentAt: new Date(nowAt.getTime() - DAY + 60_000) });
       await id(p.viewer, "daily early", { frequency: "daily", lastSentAt: new Date(nowAt.getTime() - DAY + HOUR) });
       const weeklyDue = await id(p.viewer, "weekly due", { frequency: "weekly", lastSentAt: new Date(nowAt.getTime() - 7 * DAY) });
-      await id(p.viewer, "weekly early", { frequency: "weekly", lastSentAt: new Date(nowAt.getTime() - 6 * DAY) });
+      const weeklyAlmost = await id(p.viewer, "weekly 6d23h59", { frequency: "weekly", lastSentAt: new Date(nowAt.getTime() - 7 * DAY + 60_000) });
+      await id(p.viewer, "weekly early", { frequency: "weekly", lastSentAt: new Date(nowAt.getTime() - 7 * DAY + HOUR) });
       await id(p.viewer, "inactive", { isActive: false });
       await id(unverified.viewer, "unverified", {});
       const queued = await id(p.viewer, "queued", {});
       await enqueueJob(tx, ADMIN, { kind: NOTIFY_SAVED_SEARCH, payload: { savedSearchId: queued } });
 
       const due = (await dueSavedSearches(tx, nowAt)).map((s) => s.id);
-      const mine = new Set([never, dailyDue, weeklyDue, queued]);
-      expect(due.filter((d) => mine.has(d)).sort()).toEqual([never, dailyDue, weeklyDue].sort());
+      const mine = new Set([never, dailyDue, dailyAlmost, weeklyDue, weeklyAlmost, queued]);
+      expect(due.filter((d) => mine.has(d)).sort()).toEqual([never, dailyDue, dailyAlmost, weeklyDue, weeklyAlmost].sort());
       // Nothing else of this person's, whoever else shares the database.
       const all = await tx.select({ id: savedSearches.id }).from(savedSearches).where(eq(savedSearches.userId, p.profileId));
       const others = all.map((r) => r.id).filter((x) => !mine.has(x));
@@ -192,14 +205,20 @@ describe("newMatchesFor", () => {
       const since = new Date("2026-09-20T00:00:00Z");
       const tag = `zqx${randomUUID().slice(0, 6)}`;
       await makeListing(tx, ctx, { name: `${tag} old`, createdAt: new Date("2026-09-19T00:00:00Z") });
+      // Submitted before the watermark, approved after it: new.
+      const approved = await makeListing(tx, ctx, {
+        name: `${tag} approved`, createdAt: new Date("2026-09-10T00:00:00Z"), publishedAt: new Date("2026-09-21T00:00:00Z"),
+      });
       const a = await makeListing(tx, ctx, { name: `${tag} newer`, createdAt: new Date("2026-09-22T00:00:00Z") });
       const b = await makeListing(tx, ctx, { name: `${tag} newest`, createdAt: new Date("2026-09-23T00:00:00Z") });
       await makeListing(tx, ctx, { name: `${tag} pending`, status: "pending", createdAt: new Date("2026-09-23T00:00:00Z") });
       await makeListing(tx, ctx, { name: `${tag} removed`, status: "removed", createdAt: new Date("2026-09-23T00:00:00Z") });
 
       const matches = await newMatchesFor(tx, { kind: "listings", params: { q: tag } }, since);
-      expect(matches.map((m) => m.id)).toEqual([b, a]);
-      expect(matches[0]).toMatchObject({ title: `${tag} newest`, createdAt: new Date("2026-09-23T00:00:00Z") });
+      expect(matches.map((m) => m.id)).toEqual([b, a, approved]);
+      expect(matches.total).toBe(3);
+      expect(matches[0]).toMatchObject({ title: `${tag} newest`, liveAt: new Date("2026-09-23T00:00:00Z") });
+      expect(matches[2]).toMatchObject({ liveAt: new Date("2026-09-21T00:00:00Z") });
       expect(matches[0]!.path).toMatch(/^\/[a-z0-9-]+\/[a-z0-9-]+$/);
     });
   });
@@ -210,12 +229,15 @@ describe("newMatchesFor", () => {
       const ctx = await makeScaffold(tx);
       const since = new Date("2026-09-20T00:00:00Z");
       const [city] = await tx.select({ slug: cities.slug }).from(cities).where(eq(cities.id, ctx.cityId));
-      await makeJob(tx, ctx, { title: "Old", createdAt: new Date("2026-09-19T00:00:00Z") });
-      const fresh = await makeJob(tx, ctx, { title: "Fresh", createdAt: new Date("2026-09-22T00:00:00Z") });
-      await makeJob(tx, ctx, { title: "Pending", status: "pending", createdAt: new Date("2026-09-22T00:00:00Z") });
+      const d = (day: number) => new Date(`2026-09-${day}T00:00:00Z`);
+      await makeJob(tx, ctx, { title: "Old", createdAt: d(18), publishedAt: d(19) });
+      // Posted before the watermark, approved after it — the usual path for a job.
+      const fresh = await makeJob(tx, ctx, { title: "Fresh", createdAt: d(18), publishedAt: d(22) });
+      await makeJob(tx, ctx, { title: "Pending", status: "pending", createdAt: d(22), publishedAt: null });
 
       const matches = await newMatchesFor(tx, { kind: "jobs", params: { citySlug: city!.slug } }, since);
       expect(matches.map((m) => m.id)).toEqual([fresh]);
+      expect(matches.total).toBe(1);
       expect(matches[0]).toMatchObject({ title: "Fresh", path: `/jobs/${fresh}` });
     });
   });
@@ -235,10 +257,10 @@ describe("the worker's reads and writes", () => {
 
       const sentAt = new Date("2026-09-25T10:00:00Z");
       const watermark = new Date("2026-09-24T09:00:00Z");
-      await markSavedSearchSent(tx, ADMIN, created.id, { sentAt, lastSeenCreatedAt: watermark });
+      await markSavedSearchSent(tx, ADMIN, created.id, { sentAt, lastSeenPublishedAt: watermark });
       const r = await row(tx, created.id);
       expect(r.lastSentAt).toEqual(sentAt);
-      expect(r.lastSeenCreatedAt).toEqual(watermark);
+      expect(r.lastSeenPublishedAt).toEqual(watermark);
 
       await tx.update(user).set({ emailVerified: false }).where(eq(user.id, p.viewer.userId));
       expect(await savedSearchForDigest(tx, ADMIN, created.id)).toBeNull();
@@ -251,10 +273,13 @@ describe("the worker's reads and writes", () => {
       const created = await save(tx, p.viewer, { q: "barn" });
       if (created.outcome !== "created") throw new Error("expected a row");
 
-      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, created.id, "203.0.113.9")).toBe(true);
+      // The token's address must still be the owner's: an old address after an email change cannot.
+      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, created.id, "someone-else@example.test", null)).toBe(false);
+      expect((await row(tx, created.id)).isActive).toBe(true);
+      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, created.id, ` ${p.email.toUpperCase()} `, "203.0.113.9")).toBe(true);
       expect((await row(tx, created.id)).isActive).toBe(false);
-      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, created.id, "203.0.113.9")).toBe(false);
-      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, "not-a-uuid", null)).toBe(false);
+      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, created.id, p.email, "203.0.113.9")).toBe(false);
+      expect(await deactivateSavedSearch(tx, PUBLIC_VIEWER, "not-a-uuid", p.email, null)).toBe(false);
       expect(await savedSearchForDigest(tx, ADMIN, created.id)).toBeNull();
 
       const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, created.id));

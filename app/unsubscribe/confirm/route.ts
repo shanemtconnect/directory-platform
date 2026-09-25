@@ -34,11 +34,13 @@ export async function POST(request: Request): Promise<Response> {
 
   const ip = clientIp(request.headers);
 
-  // A saved-search digest (Task 54): that one search stops, nothing else.
-  // Not behind the savedSearches flag — a link already sent keeps working.
+  // A saved-search digest (Task 54): that one search stops, nothing else —
+  // and only while the token's address is still the owner's (an old address
+  // after an email change cannot). Not behind the savedSearches flag: a link
+  // already sent keeps working.
   if (isSavedSearchClaim(claim)) {
     await db.transaction(async (tx) =>
-      deactivateSavedSearch(tx as unknown as Db, PUBLIC_VIEWER, claim.savedSearchId, ip),
+      deactivateSavedSearch(tx as unknown as Db, PUBLIC_VIEWER, claim.savedSearchId, claim.email, ip),
     );
     return Response.redirect(new URL("/unsubscribe?done=alerts", request.url), 303);
   }

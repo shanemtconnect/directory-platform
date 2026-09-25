@@ -59,7 +59,8 @@ describe("POST /unsubscribe/confirm", () => {
 
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("https://example.co.uk/unsubscribe?done=alerts");
-    expect(deactivateSavedSearch).toHaveBeenCalledWith(HANDLE, { role: "public" }, searchId, "203.0.113.9");
+    // The token's address goes to the query, which only acts while it is still the owner's.
+    expect(deactivateSavedSearch).toHaveBeenCalledWith(HANDLE, { role: "public" }, searchId, "alerts@example.com", "203.0.113.9");
     expect(recordUnsubscribe).not.toHaveBeenCalled();
   });
 
