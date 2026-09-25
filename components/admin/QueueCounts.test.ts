@@ -16,6 +16,7 @@ const COUNTS: AdminQueueCounts = {
   openReports: 1,
   openRemovals: 0,
   reviewsAwaitingModeration: 5,
+  pendingLeadRefunds: 2,
 };
 
 describe("QueueCounts", () => {

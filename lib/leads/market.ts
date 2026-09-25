@@ -124,3 +124,10 @@ export function orderCovers(
   if (order.categoryIds === null) return true;
   return lead.categoryId !== null && order.categoryIds.includes(lead.categoryId);
 }
+
+/** A board row's age: "today", "1 day ago", "6 days ago". */
+export function leadAge(createdAt: Date, at: Date): string {
+  const days = Math.floor((at.getTime() - createdAt.getTime()) / DAY_MS);
+  if (days <= 0) return "today";
+  return days === 1 ? "1 day ago" : `${days} days ago`;
+}

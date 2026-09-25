@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { siteConfig } from "@/config/site.config";
 import {
   MAX_STANDING_ORDERS_PER_LISTING, REFUND_FLAG_RATE, REFUND_REASONS, currentPriceCents, decodeTerritory,
-  encodeTerritory, floorCents, isRefundRateFlagged, noRefundReasons, orderCovers, refundRate, refundWindowOpen,
+  encodeTerritory, floorCents, isRefundRateFlagged, leadAge, noRefundReasons, orderCovers, refundRate, refundWindowOpen,
 } from "./market";
 
 const DAY = 86_400_000;
@@ -78,5 +78,13 @@ describe("orderCovers", () => {
     expect(orderCovers({ territories: [{ kind: "city", id: "c2" }], categoryIds: null }, lead)).toBe(false);
     expect(orderCovers({ territories: [{ kind: "region", id: "cornwall" }], categoryIds: null }, { ...lead, regionSlug: null })).toBe(false);
     expect(orderCovers({ territories: [{ kind: "national" }], categoryIds: ["k1"] }, { ...lead, categoryId: null })).toBe(false);
+  });
+});
+
+describe("leadAge", () => {
+  it("reads as today, yesterday, or n days ago", () => {
+    expect(leadAge(T0, new Date(T0.getTime() + 5 * 3_600_000))).toBe("today");
+    expect(leadAge(T0, new Date(T0.getTime() + DAY + 1))).toBe("1 day ago");
+    expect(leadAge(T0, new Date(T0.getTime() + 6 * DAY + 1))).toBe("6 days ago");
   });
 });

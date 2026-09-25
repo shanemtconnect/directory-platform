@@ -35,6 +35,8 @@ const LINKS: { href: string; label: string }[] = [
   ...(features.jobBoard ? [{ href: "/admin/jobs", label: "Jobs" }] : []),
   // Lead credit (Task 57): flag-off sites have no /admin/credit page.
   ...(features.leadMarketplace ? [{ href: "/admin/credit", label: "Credit" }] : []),
+  // Lead market (Task 58): the refund queue and buyer rates.
+  ...(features.leadMarketplace ? [{ href: "/admin/leads", label: "Leads" }] : []),
 ];
 
 /**

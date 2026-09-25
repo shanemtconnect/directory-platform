@@ -94,6 +94,8 @@ export default async function AccountPage({ searchParams }: Props) {
             <>
               {" · "}
               <a href="/account/credit">Lead credit</a> — top up and see your balance.
+              {" · "}
+              <a href="/account/leads" data-testid="account-leads-link">Leads</a> — what you bought and your standing orders.
             </>
           )}
         </p>

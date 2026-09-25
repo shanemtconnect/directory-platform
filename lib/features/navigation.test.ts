@@ -105,6 +105,12 @@ describe("buildRoutes", () => {
     expect(off).not.toContain("/post-a-job");
   });
 
+  it("puts the lead board in the header only, and only when leadMarketplace is on", () => {
+    const leads = buildRoutes({ ...allOff, leadMarketplace: true }, "niche-national").find((r) => r.href === "/leads");
+    expect(leads).toMatchObject({ label: "Leads", inNav: true, inFooter: false, inSitemap: false });
+    expect(buildRoutes(allOff, "niche-national").map((r) => r.href)).not.toContain("/leads");
+  });
+
   it("emits the shortlist route when its flag is on", () => {
     const hrefs = buildRoutes(allOn, "niche-national").map((r) => r.href);
     expect(hrefs).toContain("/shortlist");

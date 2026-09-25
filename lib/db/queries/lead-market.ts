@@ -184,6 +184,8 @@ export interface BuyerContext {
   readonly balanceCents: number;
   /** The viewer's published listings: what a lead can be bought for. */
   readonly listings: { id: string; name: string }[];
+  /** Whether the weekly board digest is off for this account. */
+  readonly digestOptOut: boolean;
 }
 
 export async function buyerContext(tx: TestDb, viewer: Viewer): Promise<BuyerContext> {
@@ -194,7 +196,8 @@ export async function buyerContext(tx: TestDb, viewer: Viewer): Promise<BuyerCon
     .from(listings)
     .where(and(eq(listings.ownerId, profile.id), eq(listings.status, "published")))
     .orderBy(asc(listings.name));
-  return { profileId: profile.id, balanceCents: await creditBalance(tx, profile.id), listings: owned };
+  const [prefs] = await tx.select({ off: profiles.leadDigestOptOut }).from(profiles).where(eq(profiles.id, profile.id));
+  return { profileId: profile.id, balanceCents: await creditBalance(tx, profile.id), listings: owned, digestOptOut: prefs?.off ?? false };
 }
 
 export type BuyResult =
