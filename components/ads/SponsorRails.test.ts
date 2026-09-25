@@ -7,6 +7,16 @@ vi.mock("@/lib/db/queries/ads", () => ({
   activeSponsorCampaigns: (...args: unknown[]) => activeSponsorCampaigns(...args),
 }));
 vi.mock("@/lib/observability/build-id", () => ({ currentBuildId: () => "build-x" }));
+// The box reads the database itself (and is tested in its own file); here it
+// only has to be mounted, so a stand-in that renders nothing.
+vi.mock("@/components/leads/LeadCaptureBox", () => ({ LeadCaptureBox: async () => null }));
+let leadMarketplace = false;
+vi.mock("@/lib/features/flags", () => ({
+  get features() {
+    return { leadMarketplace };
+  },
+  isEnabled: (flag: string) => flag === "leadMarketplace" && leadMarketplace,
+}));
 
 const { elements, text } = await import("@/test/elements");
 
@@ -32,6 +42,7 @@ beforeEach(() => {
   activeSponsorCampaigns.mockReset().mockResolvedValue([campaign(1), campaign(2)]);
   delete process.env.ADS_ENABLED;
   delete process.env.SITE_ENV;
+  leadMarketplace = false;
 });
 
 describe("SponsorRails", () => {
@@ -70,5 +81,35 @@ describe("SponsorRails", () => {
     process.env.SITE_ENV = "production";
     const { SponsorRails } = await import("./SponsorRails");
     expect(await SponsorRails({ placement: "listingDetail", listing: { tier: "premium", claimStatus: "verified" } })).toBeNull();
+  });
+});
+
+describe("SponsorRails — the lead-capture house slot", () => {
+  async function captureIn(el: unknown) {
+    const { LeadCaptureBox } = await import("@/components/leads/LeadCaptureBox");
+    return [...elements(el as never)].filter((e) => e.type === LeadCaptureBox);
+  }
+
+  it("heads the left rail with the capture box when the lead marketplace is on", async () => {
+    leadMarketplace = true;
+    process.env.ADS_ENABLED = "true";
+    process.env.SITE_ENV = "production";
+    const { SponsorRails } = await import("./SponsorRails");
+
+    const el = await SponsorRails({ placement: "cityPillar" });
+    const found = await captureIn(el);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.props).toEqual({ variant: "rail" });
+
+    // Staging's placeholder rails carry it too: it is the site's own card, not an ad.
+    delete process.env.SITE_ENV;
+    expect(await captureIn(await SponsorRails({ placement: "cityPillar" }))).toHaveLength(1);
+  });
+
+  it("carries no capture box with the flag off", async () => {
+    process.env.ADS_ENABLED = "true";
+    process.env.SITE_ENV = "production";
+    const { SponsorRails } = await import("./SponsorRails");
+    expect(await captureIn(await SponsorRails({ placement: "cityPillar" }))).toHaveLength(0);
   });
 });
