@@ -537,6 +537,8 @@ export async function notifySavedSearch(
 ): Promise<void> {
   const payload: SavedSearchJobPayload = { savedSearchId, dispatchedAt: dispatchedAt.toISOString() };
   await enqueueJob(tx, viewer, { kind: NOTIFY_SAVED_SEARCH, payload });
+}
+
 /* ------------------------------------------------- lead credit (Task 57) */
 
 /**

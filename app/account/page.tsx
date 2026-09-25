@@ -15,7 +15,6 @@ import { SPARKLINE_BOX, sparkline } from "@/components/stats/sparkline";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { features } from "@/lib/features/flags";
 
 export const metadata: Metadata = {
   title: "Your account",
