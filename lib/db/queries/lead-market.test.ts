@@ -452,7 +452,9 @@ describe("buyLead concurrency", () => {
       const ctx = { cityId, verticalId, primaryCategoryId: await makeCategoryInCity(tx, verticalId, cityId, `Race Things ${tag}`) };
       const a = await makeBuyer(tx, ctx, 5000);
       const b = await makeBuyer(tx, ctx, 5000);
-      const leadId = await makeLead(tx, ctx);
+      // A normalised phone no rule-checked test can draw, so this committed
+      // row is never another file's "duplicate".
+      const leadId = await makeLead(tx, ctx, { phoneNormalised: `race-${tag}` });
       return { ctx, a, b, leadId };
     });
     Object.assign(made, {
