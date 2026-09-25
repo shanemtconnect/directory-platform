@@ -49,3 +49,21 @@ export const campaignChannel = pgEnum("campaign_channel", ["email", "sms"]);
 
 /** What became of a broadcast quote request at one recipient. Owner-set. */
 export const quoteOutcome = pgEnum("quote_outcome", ["open", "won", "lost"]);
+
+/**
+ * Where a quote request stands on the requester's verification link (Task 56).
+ * Nobody is emailed and no lead is created until it is `verified`; `expired`
+ * is set by the worker 48 hours after an unclicked link; `spam` is reserved
+ * for moderation and is never set by the verification flow.
+ */
+export const quoteStatus = pgEnum("quote_status", ["pending", "verified", "expired", "spam"]);
+
+/**
+ * Pay-per-lead (Task 56). Declared here rather than in leads.ts because
+ * `quote_requests.source` uses `lead_source` too, and modules.ts importing
+ * from leads.ts (which imports modules.ts) would be a cycle evaluated before
+ * the enum exists.
+ */
+export const leadSource = pgEnum("lead_source", ["quote", "capture", "enquiry"]);
+export const leadStatus = pgEnum("lead_status", ["open", "sold", "expired", "deleted"]);
+export const blocklistKind = pgEnum("blocklist_kind", ["phone", "email"]);
