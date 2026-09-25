@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { db } from "@/lib/db/client";
 import { siteConfig } from "@/config/site.config";
 import type { CustomField } from "@/config/types";
-import { search } from "@/lib/db/queries/search";
+import { search, searchCount } from "@/lib/db/queries/search";
 import { listCities, listCategories } from "@/lib/db/queries/indexes";
 import { listSwitcherCities } from "@/lib/db/queries/cities";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
@@ -58,17 +58,16 @@ export default async function SearchPage({ searchParams }: Props) {
   // current city itself and this query runs alongside the other three rather
   // than waiting on listCities to hand it an id. The verified count rides
   // along too: the toggle needs to know, before it renders, whether the
-  // CURRENT filters (minus verified) match anything verified at all.
-  const [results, cities, categories, switcherCities, verifiedScope] = await Promise.all([
+  // CURRENT filters (minus verified) match anything verified at all — a
+  // count, not a page of rows, since that's all the question needs.
+  const [results, cities, categories, switcherCities, verifiedCount] = await Promise.all([
     search(db as never, PUBLIC_VIEWER, params),
     listCities(db as never, PUBLIC_VIEWER),
     listCategories(db as never, PUBLIC_VIEWER),
     listSwitcherCities(db as never, PUBLIC_VIEWER, { currentCitySlug: params.city ?? null }),
-    verified
-      ? Promise.resolve(null)
-      : search(db as never, PUBLIC_VIEWER, { ...params, verified: true, page: 1 }),
+    verified ? Promise.resolve(null) : searchCount(db as never, PUBLIC_VIEWER, { ...params, verified: true }),
   ]);
-  const hasVerified = verified ? results.total > 0 : (verifiedScope?.total ?? 0) > 0;
+  const hasVerified = verified ? results.total > 0 : (verifiedCount ?? 0) > 0;
 
   // Preserve every active filter in pagination links.
   const qs = new URLSearchParams();

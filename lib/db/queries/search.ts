@@ -81,6 +81,27 @@ function buildWhere(viewer: Viewer, params: SearchParams): SQL {
   return clauses.length > 0 ? and(...clauses)! : sql`true`;
 }
 
+/**
+ * The count `search()` itself already runs, exposed on its own — for the
+ * verified toggle, which needs to know whether turning the filter on would
+ * find anything BEFORE it decides whether to render at all, and has no use
+ * for a page of rows to get that answer.
+ */
+export async function searchCount(
+  tx: Db,
+  viewer: Viewer,
+  params: Omit<SearchParams, "page">,
+): Promise<number> {
+  const where = buildWhere(viewer, params);
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(listings)
+    .innerJoin(cities, eq(cities.id, listings.cityId))
+    .leftJoin(categories, eq(categories.id, listings.primaryCategoryId))
+    .where(where);
+  return row?.n ?? 0;
+}
+
 export async function search(
   tx: Db,
   viewer: Viewer,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { withTestDb, type TestDb } from "@/test/db";
-import { search } from "./search";
+import { search, searchCount } from "./search";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeVertical, makeCity, makeCategoryInCity, makeListing } from "@/test/factories";
 
@@ -187,6 +187,34 @@ describe("search", () => {
 
         const r = await search(tx, PUBLIC_VIEWER, { q: "old barn", city: "leeds", verified: true });
         expect(r.rows.map((x) => x.name)).toEqual(["Old Barn Verified"]);
+      });
+    });
+  });
+
+  describe("searchCount", () => {
+    it("counts only, agreeing with search()'s own total — for the toggle, which has no use for a page of rows", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Verified one", claimStatus: "verified" });
+        await makeListing(tx, ctx, { name: "Unclaimed one", claimStatus: "unclaimed" });
+
+        expect(await searchCount(tx, PUBLIC_VIEWER, { verified: true })).toBe(1);
+        expect(await searchCount(tx, PUBLIC_VIEWER, {})).toBe(2);
+        expect(await searchCount(tx, PUBLIC_VIEWER, { verified: true })).toBe(
+          (await search(tx, PUBLIC_VIEWER, { verified: true })).total,
+        );
+      });
+    });
+
+    it("combines with q and city, same as search()", async () => {
+      await withTestDb(async (tx) => {
+        const s = await scaffold(tx);
+        const ctx = { cityId: s.leeds, verticalId: s.verticalId, primaryCategoryId: s.barns };
+        await makeListing(tx, ctx, { name: "Old Barn Verified", claimStatus: "verified" });
+        await makeListing(tx, { ...ctx, cityId: s.bristol }, { name: "Old Barn Elsewhere", claimStatus: "verified" });
+
+        expect(await searchCount(tx, PUBLIC_VIEWER, { q: "old barn", city: "leeds", verified: true })).toBe(1);
       });
     });
   });
