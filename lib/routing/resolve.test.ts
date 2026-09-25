@@ -120,6 +120,71 @@ describe("resolveRoute — local-multi-vertical", () => {
   });
 });
 
+describe("resolveRoute — neighbourhoods (Task 52)", () => {
+  const ON = { neighbourhoods: true };
+
+  async function leedsWithHeadingley(tx: Parameters<Parameters<typeof withTestDb>[0]>[0]) {
+    const cityId = randomUUID(), areaId = randomUUID();
+    await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+    await allocateSlug(tx, { parentScope: cityId, desired: "Headingley", kind: "area", entityId: areaId });
+    return { cityId, areaId };
+  }
+
+  it("resolves /leeds/headingley to a city-area pillar", async () => {
+    await withTestDb(async (tx) => {
+      const { cityId, areaId } = await leedsWithHeadingley(tx);
+      expect(await resolveRoute(tx, ["leeds", "headingley"], "niche-national", ON))
+        .toEqual({ kind: "pillar", page: 1, scope: { type: "city-area", cityId, areaId } });
+    });
+  });
+
+  it("paginates a neighbourhood like any other pillar", async () => {
+    await withTestDb(async (tx) => {
+      const { cityId, areaId } = await leedsWithHeadingley(tx);
+      expect(await resolveRoute(tx, ["leeds", "headingley", "page", "2"], "niche-national", ON))
+        .toEqual({ kind: "pillar", page: 2, scope: { type: "city-area", cityId, areaId } });
+    });
+  });
+
+  it("gives a slug that is a category in the city to the category, as before", async () => {
+    await withTestDb(async (tx) => {
+      const cityId = randomUUID(), categoryId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Leeds", kind: "city", entityId: cityId });
+      await allocateSlug(tx, { parentScope: cityId, desired: "Headingley", kind: "category", entityId: categoryId });
+      expect(await resolveRoute(tx, ["leeds", "headingley"], "niche-national", ON))
+        .toEqual({ kind: "pillar", page: 1, scope: { type: "city-category", cityId, categoryId } });
+    });
+  });
+
+  it("never produces a neighbourhood with the module off", async () => {
+    await withTestDb(async (tx) => {
+      await leedsWithHeadingley(tx);
+      expect(await resolveRoute(tx, ["leeds", "headingley"], "niche-national", { neighbourhoods: false }))
+        .toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("has no reviews page under a neighbourhood", async () => {
+    await withTestDb(async (tx) => {
+      await leedsWithHeadingley(tx);
+      expect(await resolveRoute(tx, ["leeds", "headingley", "reviews"], "niche-national", ON))
+        .toEqual({ kind: "not-found" });
+    });
+  });
+
+  it("leaves local-multi-vertical areas exactly as they were, switch or no switch", async () => {
+    await withTestDb(async (tx) => {
+      const verticalId = randomUUID(), areaId = randomUUID();
+      await allocateSlug(tx, { parentScope: ROOT_SCOPE, desired: "Plumbers", kind: "vertical", entityId: verticalId });
+      await allocateSlug(tx, { parentScope: verticalId, desired: "St Helier", kind: "area", entityId: areaId });
+      for (const neighbourhoods of [true, false]) {
+        expect(await resolveRoute(tx, ["plumbers", "st-helier"], "local-multi-vertical", { neighbourhoods }))
+          .toEqual({ kind: "pillar", page: 1, scope: { type: "vertical-area", verticalId, areaId } });
+      }
+    });
+  });
+});
+
 describe("path pagination", () => {
   it("reads /[city]/page/2 as page 2 of the city pillar", async () => {
     await withTestDb(async (tx) => {

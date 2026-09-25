@@ -49,6 +49,10 @@ describe("isReserved", () => {
     expect(isReserved("ADMIN")).toBe(true);
   });
 
+  it("reserves /neighbourhoods (Task 52) so no town can take it, flag on or off", () => {
+    expect(isReserved("neighbourhoods")).toBe(true);
+  });
+
   it("allows an ordinary city slug", () => {
     expect(isReserved("manchester")).toBe(false);
   });

@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { cities, listings, slugs } from "@/lib/db/schema";
+import { areas, cities, listings, slugs } from "@/lib/db/schema";
 import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 import { countListings, PER_PAGE } from "./listings";
@@ -37,12 +37,17 @@ import { regionPaths } from "./areas";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `/city/page/2` … `/city/page/N` for a city with `published` listings. Never page 1: that is `/city`. */
-export function paginatedCityPaths(citySlug: string, published: number): string[] {
+/** `<base>/page/2` … `<base>/page/N` for a pillar with `published` listings. Never page 1: that is `<base>`. */
+export function paginatedPaths(basePath: string, published: number): string[] {
   const pages = Math.ceil(published / PER_PAGE);
   const out: string[] = [];
-  for (let n = 2; n <= pages; n++) out.push(`/${citySlug}/page/${n}`);
+  for (let n = 2; n <= pages; n++) out.push(`${basePath}/page/${n}`);
   return out;
+}
+
+/** `/city/page/2` … `/city/page/N` for a city with `published` listings. Never page 1: that is `/city`. */
+export function paginatedCityPaths(citySlug: string, published: number): string[] {
+  return paginatedPaths(`/${citySlug}`, published);
 }
 
 export async function listingPaths(
@@ -83,9 +88,13 @@ export async function resolveListingPaths(tx: TestDb, listingId: string): Promis
       citySlug: cities.slug,
       region: cities.region,
       categorySlug: slugs.slug,
+      neighbourhoodSlug: areas.slug,
     })
     .from(listings)
     .innerJoin(cities, eq(cities.id, listings.cityId))
+    // A neighbourhood page under this town (Task 52). `city_id` in the join
+    // keeps a local-multi-vertical area, which has none, out of it.
+    .leftJoin(areas, and(eq(areas.id, listings.areaId), eq(areas.cityId, listings.cityId)))
     // Per-city category slug, the same join `submissionDetail` uses: left,
     // because a category not routed in this city has no pillar page to bust.
     .leftJoin(
@@ -115,6 +124,7 @@ export async function resolveListingPaths(tx: TestDb, listingId: string): Promis
     `/${row.citySlug}`,
     ...paginatedCityPaths(row.citySlug, published),
     ...(row.categorySlug === null ? [] : [`/${row.citySlug}/${row.categorySlug}`]),
+    ...(row.neighbourhoodSlug === null ? [] : [`/${row.citySlug}/${row.neighbourhoodSlug}`]),
     // The region pillar and its paginated pages: the listing is on them too,
     // in the same rank order, and the same shrink/grow rule applies.
     ...(await regionPaths(tx, row.region)),

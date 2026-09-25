@@ -87,6 +87,9 @@ export function decideSponsorRails(input: RailsInput): RailsDecision {
 export function placementForScope(scope: PillarScope): AdPlacement {
   switch (scope.type) {
     case "city":
+    // A neighbourhood (Task 52) is a smaller town pillar: every kind of
+    // business in one place, not one kind.
+    case "city-area":
       return "cityPillar";
     case "city-category":
     case "vertical":

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb } from "@/test/db";
 import { cities, listings } from "@/lib/db/schema";
-import { makeCategory, makeCity, makeListing, makeScaffold } from "@/test/factories";
+import { makeCategory, makeCity, makeListing, makeNeighbourhood, makeScaffold } from "@/test/factories";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { ADMIN_VIEWER } from "@/worker/viewer";
 import { PER_PAGE } from "./listings";
@@ -144,6 +144,16 @@ describe("listingPaths", () => {
       expect(ungated).toEqual(gated);
       expect(ungated.length).toBeGreaterThan(0);
       expect(await resolveListingPaths(tx, "not-a-uuid")).toEqual([]);
+    });
+  });
+
+  it("includes the neighbourhood page a listing is in (Task 52)", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const areaId = await makeNeighbourhood(tx, ctx.cityId, "Headingley");
+      const listingId = await makeListing(tx, ctx, { name: "The Old Mill", areaId });
+      const city = await citySlug(tx, ctx.cityId);
+      expect(await listingPaths(tx, ADMIN_VIEWER, listingId)).toContain(`/${city}/headingley`);
     });
   });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { elements, links } from "@/test/elements";
 import { AdminNav } from "./AdminNav";
 
@@ -52,3 +52,18 @@ describe("AdminNav counts", () => {
     ]);
   });
 });
+
+describe("AdminNav — neighbourhoods (Task 52)", () => {
+  const ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ENV };
+  });
+
+  it("links /admin/neighbourhoods only while the module is on", () => {
+    process.env.NEIGHBOURHOODS_ENABLED = "true";
+    expect(links(AdminNav({ current: "/admin" }))).toContainEqual({ href: "/admin/neighbourhoods", text: "Neighbourhoods" });
+    process.env.NEIGHBOURHOODS_ENABLED = "false";
+    expect(links(AdminNav({ current: "/admin" })).map((l) => l.href)).not.toContain("/admin/neighbourhoods");
+  });
+});
+

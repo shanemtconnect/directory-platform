@@ -124,6 +124,11 @@ const SERVER_ENV: Record<string, string> = {
   // Sponsor rails (Task 43): the template config has them off; e2e/sponsors.spec.ts
   // runs with ADS_ENABLED=true to prove the production shape.
   ...(process.env.ADS_ENABLED ? { ADS_ENABLED: process.env.ADS_ENABLED } : {}),
+  // Neighbourhoods (Task 52): off in the template config; e2e/neighbourhoods.spec.ts
+  // runs with NEIGHBOURHOODS_ENABLED=true and skips otherwise.
+  ...(process.env.NEIGHBOURHOODS_ENABLED
+    ? { NEIGHBOURHOODS_ENABLED: process.env.NEIGHBOURHOODS_ENABLED }
+    : {}),
 };
 
 // Specs run in this process, not the server's, so the one server setting a

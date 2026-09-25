@@ -9,6 +9,8 @@ import { FeaturedRow } from "./FeaturedRow";
 import { FeaturedUpsell } from "./FeaturedUpsell";
 import type { FeaturedListing } from "@/lib/db/queries/spots";
 import { ListingMap } from "@/components/map/ListingMap";
+import { NeighbourhoodList } from "./NeighbourhoodList";
+import type { NeighbourhoodLink } from "@/lib/db/queries/neighbourhoods";
 
 
 export interface FaqEntry { question: string; answer: string }
@@ -36,6 +38,8 @@ interface Props {
   awardYears?: ReadonlyMap<string, readonly number[]>;
   /** The page's featured spot as `areaKind:areaId:categoryId|-` (Task 45): mounts the owner upsell strip. */
   spotKey?: string;
+  /** The town's neighbourhood links (Task 52) — the town pillar only; empty hides the block. */
+  neighbourhoods?: readonly NeighbourhoodLink[];
 }
 
 /**
@@ -50,7 +54,7 @@ interface Props {
  */
 export function PillarPage({
   heading, featured, featuredBids = [], listings, categories, nearby, faq,
-  total, page, totalPages, basePath, cityPath, awardYears, spotKey,
+  total, page, totalPages, basePath, cityPath, awardYears, spotKey, neighbourhoods = [],
 }: Props) {
   const e = siteConfig.entity;
   const isFirstPage = page === 1;
@@ -58,7 +62,14 @@ export function PillarPage({
   return (
     <main>
       <nav aria-label="Breadcrumb" className="mb-4 text-sm text-muted">
-        <a href="/">Home</a> › <span>{heading.place}</span>
+        <a href="/">Home</a> ›{" "}
+        {/* A neighbourhood sits under its town (Task 52): Home › Town › Neighbourhood. */}
+        {heading.parent && (
+          <>
+            <a href={`/${heading.parent.slug}`}>{heading.parent.name}</a> ›{" "}
+          </>
+        )}
+        <span>{heading.place}</span>
       </nav>
 
       <h1>{heading.title}</h1>
@@ -145,7 +156,10 @@ export function PillarPage({
 
       <Pagination basePath={basePath} page={page} totalPages={totalPages} />
 
-      {categories.length > 0 && (
+      {/* The TOWN's category pages and counts: never under a neighbourhood
+          (Task 52), where they would read as the neighbourhood's own and
+          repeat the town page's link block on every neighbourhood. */}
+      {categories.length > 0 && !heading.parent && (
         <section aria-labelledby="by-type" data-testid="category-links">
           <h2 id="by-type">{e.Plural} in {heading.place} by type</h2>
           <ul className="link-grid">
@@ -158,6 +172,8 @@ export function PillarPage({
           </ul>
         </section>
       )}
+
+      <NeighbourhoodList neighbourhoods={neighbourhoods} cityPath={cityPath} place={heading.place} />
 
       {nearby.length > 0 && (
         <section aria-labelledby="nearby" data-testid="nearby-cities">

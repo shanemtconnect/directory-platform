@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { areas, categories, cities, verticals } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import { isAdmin, PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { countListings } from "@/lib/db/queries/listings";
 import type { PillarScope } from "@/lib/routing/scope";
+import { decideNeighbourhoodIndexability } from "@/lib/geo/neighbourhoods";
 import type { Db } from "@/lib/db/client";
 
 /**
@@ -92,9 +93,36 @@ export async function scopeIndexability(
   viewer: Viewer,
   scope: PillarScope,
 ): Promise<Indexability | null> {
+  if (scope.type === "city-area") {
+    // A neighbourhood (Task 52) is judged on its own count against its own
+    // threshold, `geo.neighbourhoods.minListings` — see
+    // decideNeighbourhoodIndexability for why intro copy is not part of it.
+    if (!(await neighbourhoodVisible(tx, viewer, scope.cityId, scope.areaId))) return null;
+    return decideNeighbourhoodIndexability(await countListings(tx, PUBLIC_VIEWER, scope));
+  }
   const introHtml = await scopeIntro(tx, viewer, scope);
   if (introHtml === undefined) return null;
   return decideIndexability(await countListings(tx, PUBLIC_VIEWER, scope), introHtml);
+}
+
+/**
+ * A neighbourhood page exists when the neighbourhood belongs to THIS town and
+ * both are published. The town check is not redundant with the slug registry:
+ * a scope can be built by hand, and /leeds/<york's neighbourhood> must not be
+ * a page. Admins see unpublished ones, as they do towns.
+ */
+async function neighbourhoodVisible(
+  tx: Db, viewer: Viewer, cityId: string, areaId: string,
+): Promise<boolean> {
+  const admin = isAdmin(viewer);
+  const [row] = await tx
+    .select({ areaPublished: areas.isPublished, cityPublished: cities.isPublished })
+    .from(areas)
+    .innerJoin(cities, eq(cities.id, areas.cityId))
+    .where(and(eq(areas.id, areaId), eq(areas.cityId, cityId)))
+    .limit(1);
+  if (!row) return false;
+  return admin || (row.areaPublished && row.cityPublished);
 }
 
 /**
@@ -107,7 +135,7 @@ export async function scopeIndexability(
 async function scopeIntro(
   tx: Db,
   viewer: Viewer,
-  scope: PillarScope,
+  scope: Exclude<PillarScope, { type: "city-area" }>,
 ): Promise<string | null | undefined> {
   const admin = isAdmin(viewer);
 

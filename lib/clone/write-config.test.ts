@@ -203,6 +203,14 @@ describe("renderSiteConfig — sponsor rails (Task 43)", () => {
   });
 });
 
+describe("renderSiteConfig — neighbourhoods (Task 52)", () => {
+  it("renders the geo.neighbourhoods block, off by default at the shipped numbers", () => {
+    expect(renderSiteConfig(answers())).toContain(
+      "  geo: {\n    neighbourhoods: {\n      enabled: false,\n      minListings: 5,\n      defaultRadiusKm: 2,\n    },\n  },",
+    );
+  });
+});
+
 describe("renderSiteConfig — URL import (Task 55)", () => {
   it("ships the add-listing URL import switched on", () => {
     expect(renderSiteConfig(answers())).toMatch(/listing: \{[^}]*importFromUrl: true,/);

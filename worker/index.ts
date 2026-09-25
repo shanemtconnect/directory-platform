@@ -11,6 +11,7 @@ import { revalidatePaths } from "@/lib/revalidate/client";
 import { features } from "@/lib/features/flags";
 import { AWARDS_CRON, awardsCronOptions } from "./jobs/awards";
 import { SPOTS_DIGEST_CRON, spotsDigestCronOptions } from "./jobs/spots-digest";
+import { NEIGHBOURHOODS_CRON, NEIGHBOURHOODS_LOCK } from "./jobs/neighbourhoods";
 import { ALERTS_DISPATCH_CRON } from "./jobs/alerts";
 
 // The worker has no health check and no requests to fail loudly, so a missing
@@ -46,17 +47,22 @@ type JobOutcome = void | { readonly revalidate?: readonly string[] };
  * endpoints: that way they get logging, retries and no public attack surface.
  */
 /**
- * `options` goes straight to node-cron. The one that matters is `timezone`:
+ * `options.timezone` goes straight to node-cron, and it matters:
  * an expression is read in the server's clock unless told otherwise, and a
  * job whose meaning is "on 1 January" has to fire on the site's 1 January,
  * not the container's.
+ *
+ * `options.lock` defaults to `name`. Two schedules that run the same work pass the
+ * same lock so they can never overlap (the neighbourhood nightly run and its
+ * "assign now" queue drain); a run that finds it held reports "skipped".
  */
 function schedule(
   name: string,
   expr: string,
   fn: (tx: Db) => Promise<JobOutcome>,
-  options: { timezone?: string } = {},
+  options: { timezone?: string; lock?: string } = {},
 ): void {
+  const lock = options.lock ?? name;
   cron.schedule(expr, async () => {
     const startedAt = now();
     try {
@@ -64,14 +70,14 @@ function schedule(
       // assigned inside a closure to its initialiser, and `never` has no
       // `.revalidate`.
       let paths: readonly string[] = [];
-      const ran = await withAdvisoryLock(db, name, async (tx) => {
+      const ran = await withAdvisoryLock(db, lock, async (tx) => {
         paths = (await fn(tx))?.revalidate ?? [];
       });
       const ms = Date.now() - startedAt.getTime();
       console.log(`[worker] ${name} ${ran ? "ok" : "skipped (lock held elsewhere)"} in ${ms}ms`);
       if (ran) {
         await db.insert(jobRuns).values({
-          jobName: name, startedAt, finishedAt: now(), status: "ok", lockKey: name,
+          jobName: name, startedAt, finishedAt: now(), status: "ok", lockKey: lock,
         });
         // Committed now. Never throws: a failed cache nudge is a stale page,
         // not a failed job.
@@ -84,10 +90,10 @@ function schedule(
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[worker] ${name} FAILED:`, message);
       await db.insert(jobRuns).values({
-        jobName: name, startedAt, finishedAt: now(), status: "failed", error: message, lockKey: name,
+        jobName: name, startedAt, finishedAt: now(), status: "failed", error: message, lockKey: lock,
       }).catch(() => {});
     }
-  }, options);
+  }, { timezone: options.timezone });
   console.log(`[worker] scheduled ${name} (${expr}${options.timezone ? ` ${options.timezone}` : ""})`);
 }
 
@@ -262,6 +268,23 @@ schedule("flush-featured-clicks", "*/5 * * * *", async (tx) => {
   const { flushFeaturedClicks } = await import("./jobs/flush-featured-clicks");
   await flushFeaturedClicks(tx);
 });
+
+// Neighbourhoods (Task 52). Nightly: every listing in a town with
+// neighbourhoods goes to the nearest centroid within its radius, and the
+// counts behind each page's noindex are refreshed. Every minute: the admin's
+// "assign now" presses, collapsed into one run. One advisory lock for both,
+// so they never run at the same time. Both are no-ops with
+// geo.neighbourhoods off (config or NEIGHBOURHOODS_ENABLED), and both hand
+// back the town and neighbourhood pages a move left stale.
+schedule("neighbourhoods.assign", NEIGHBOURHOODS_CRON, async (tx) => {
+  const { runNeighbourhoodAssign } = await import("./jobs/neighbourhoods");
+  return runNeighbourhoodAssign(tx);
+}, { lock: NEIGHBOURHOODS_LOCK });
+
+schedule("neighbourhoods.assign-queue", "*/1 * * * *", async (tx) => {
+  const { drainNeighbourhoodQueue } = await import("./jobs/neighbourhoods");
+  return drainNeighbourhoodQueue(tx);
+}, { lock: NEIGHBOURHOODS_LOCK });
 
 // Saved-search alerts (Task 54). Hourly, off the hour like the billing jobs:
 // queue a digest for each daily search last sent 24 h ago or more, each

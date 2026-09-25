@@ -23,6 +23,8 @@ import {
   sitemapJobs,
 } from "@/lib/db/queries/sitemap";
 import { sitemapRegions } from "@/lib/db/queries/areas";
+import { sitemapNeighbourhoods } from "@/lib/db/queries/neighbourhoods";
+import { neighbourhoodsEnabled } from "@/lib/geo/neighbourhoods";
 import { sitemapRoutes } from "@/lib/features/navigation";
 import { features } from "@/lib/features/flags";
 
@@ -68,9 +70,15 @@ export default async function sitemap({ id }: { id: Promise<string> }): Promise<
   const shard = await id;
 
   if (shard === STATIC_SHARD_ID) {
-    const [cities, posts] = await Promise.all([
+    const [cities, posts, neighbourhoods] = await Promise.all([
       sitemapCities(db as never, PUBLIC_VIEWER),
       Promise.resolve(getAllPosts()),
+      // Neighbourhoods (Task 52) ride with the towns they sit under, and only
+      // those that have cleared geo.neighbourhoods.minListings — the same rule
+      // that decides the page's noindex. Module off: none, as the pages 404.
+      neighbourhoodsEnabled()
+        ? sitemapNeighbourhoods(db as never, PUBLIC_VIEWER)
+        : Promise.resolve([]),
     ]);
 
     return [
@@ -99,6 +107,12 @@ export default async function sitemap({ id }: { id: Promise<string> }): Promise<
         lastModified: c.lastModified,
         changeFrequency: "daily" as const,
         priority: 0.9,
+      })),
+      ...neighbourhoods.map((n) => ({
+        url: siteUrl(n.path),
+        lastModified: n.lastModified,
+        changeFrequency: "weekly" as const,
+        priority: 0.7,
       })),
     ];
   }

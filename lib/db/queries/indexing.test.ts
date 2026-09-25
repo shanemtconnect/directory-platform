@@ -7,7 +7,7 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { cities, areas, verticals, categories } from "@/lib/db/schema";
 import { siteConfig } from "@/config/site.config";
 import {
-  makeCity, makeVertical, makeCategoryInCity, makeListing, makeScaffold,
+  makeCity, makeVertical, makeCategoryInCity, makeListing, makeScaffold, makeNeighbourhood,
   type ListingCtx,
 } from "@/test/factories";
 
@@ -250,3 +250,49 @@ describe("scopeIndexability", () => {
     });
   });
 });
+
+describe("scopeIndexability — neighbourhoods (Task 52)", () => {
+  const NMIN = siteConfig.geo.neighbourhoods.minListings;
+
+  it("keeps a neighbourhood noindexed one listing below geo.neighbourhoods.minListings", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const areaId = await makeNeighbourhood(tx, ctx.cityId);
+      for (let i = 0; i < NMIN - 1; i++) await makeListing(tx, ctx, { name: `N ${i}`, areaId });
+      expect(await scopeIndexability(tx, PUBLIC_VIEWER, { type: "city-area", cityId: ctx.cityId, areaId }))
+        .toEqual({ listingCount: NMIN - 1, isIndexable: false });
+    });
+  });
+
+  it("indexes it at the threshold, with no intro copy of its own", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const areaId = await makeNeighbourhood(tx, ctx.cityId);
+      for (let i = 0; i < NMIN; i++) await makeListing(tx, ctx, { name: `N ${i}`, areaId });
+      // Listings in the town but not the neighbourhood do not count.
+      await makeListing(tx, ctx, { name: "Elsewhere" });
+      expect(await scopeIndexability(tx, PUBLIC_VIEWER, { type: "city-area", cityId: ctx.cityId, areaId }))
+        .toEqual({ listingCount: NMIN, isIndexable: true });
+    });
+  });
+
+  it("returns null for an unpublished neighbourhood, one in another town, or an unpublished town", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const hidden = await makeNeighbourhood(tx, ctx.cityId, "Hidden", { isPublished: false });
+      expect(await scopeIndexability(tx, PUBLIC_VIEWER, { type: "city-area", cityId: ctx.cityId, areaId: hidden }))
+        .toBeNull();
+
+      const otherCity = await makeCity(tx, "York", "North Yorkshire");
+      const theirs = await makeNeighbourhood(tx, otherCity, "Clifton");
+      expect(await scopeIndexability(tx, PUBLIC_VIEWER, { type: "city-area", cityId: ctx.cityId, areaId: theirs }))
+        .toBeNull();
+
+      const areaId = await makeNeighbourhood(tx, ctx.cityId, "Headingley");
+      await tx.update(cities).set({ isPublished: false }).where(eq(cities.id, ctx.cityId));
+      expect(await scopeIndexability(tx, PUBLIC_VIEWER, { type: "city-area", cityId: ctx.cityId, areaId }))
+        .toBeNull();
+    });
+  });
+});
+

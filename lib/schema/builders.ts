@@ -311,3 +311,29 @@ export function regionPillarSchema(input: {
     },
   });
 }
+
+/**
+ * A neighbourhood page (Task 52): exactly the CollectionPage + ItemList a
+ * town × category pillar emits, plus `about` naming the neighbourhood as a
+ * Place `containedInPlace` its town. Both names and the town link are on the
+ * page (the H1 and the breadcrumb), so nothing here is asserted unseen.
+ */
+export function neighbourhoodPillarSchema(input: {
+  title: string;
+  neighbourhood: string;
+  city: { name: string; path: string };
+  path: string;
+  description?: string | null;
+  items: { name: string; path: string }[];
+}): JsonLd {
+  const base = pillarSchema(input);
+  return prune({
+    ...base,
+    about: {
+      "@type": "Place",
+      name: input.neighbourhood,
+      containedInPlace: { "@type": "City", name: input.city.name, url: siteUrl(input.city.path) },
+    },
+  });
+}
+

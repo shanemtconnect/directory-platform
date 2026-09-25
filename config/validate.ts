@@ -324,6 +324,44 @@ export function validateStatsRetention(config: {
 }
 
 /**
+ * The largest radius a neighbourhood may have (Task 52). A neighbourhood is
+ * part of a town; 25 km is already most of a large one, and a mistyped 200
+ * would otherwise swallow every listing in it. Here rather than in
+ * lib/geo/neighbourhoods.ts because next.config.ts loads this file, and it
+ * only takes relative imports; the CSV reader re-exports it.
+ */
+export const MAX_NEIGHBOURHOOD_RADIUS_KM = 25;
+
+/**
+ * `geo.neighbourhoods` (Task 52). Neighbourhoods hang off towns, which only a
+ * niche-national site has — a local-multi-vertical site's `areas` rows are its
+ * own top-level places and must keep `city_id` null. A threshold of zero would
+ * index an empty page; a radius of zero or less assigns nothing, silently.
+ */
+export function validateNeighbourhoods(config: {
+  siteMode: string;
+  geo: { neighbourhoods: { enabled: boolean; minListings: number; defaultRadiusKm: number } };
+}): void {
+  const n = config.geo.neighbourhoods;
+  const problems: string[] = [];
+  if (n.enabled && config.siteMode !== "niche-national") {
+    problems.push(`geo.neighbourhoods is on, but neighbourhoods exist on niche-national sites only (siteMode is ${config.siteMode})`);
+  }
+  if (!Number.isInteger(n.minListings) || n.minListings < 1) {
+    problems.push(`geo.neighbourhoods.minListings must be a whole number of at least 1, got ${String(n.minListings)}`);
+  }
+  if (!Number.isFinite(n.defaultRadiusKm) || n.defaultRadiusKm <= 0 || n.defaultRadiusKm > MAX_NEIGHBOURHOOD_RADIUS_KM) {
+    problems.push(
+      `geo.neighbourhoods.defaultRadiusKm must be a positive distance of at most ${MAX_NEIGHBOURHOOD_RADIUS_KM} km, got ${String(n.defaultRadiusKm)}`,
+    );
+  }
+  if (problems.length > 0) {
+    throw new ConfigError(
+      `Neighbourhood configuration is wrong in config/site.config.ts:\n  - ${problems.join("\n  - ")}`,
+    );
+  }
+}
+
  * The lead marketplace's money (flag `leadMarketplace`). A floor below 1 would
  * give leads away; a pack list out of order or with a fractional or zero
  * amount is a top-up page whose buttons do not mean what they say, and the

@@ -6,6 +6,7 @@ import {
   validateCountry,
   validateProductionConfig,
   validateStatsRetention,
+  validateNeighbourhoods,
   validateLeads,
 } from "./config/validate";
 import { siteConfig } from "./config/site.config";
@@ -16,6 +17,7 @@ validateFeatureDependencies(resolveFeatures(siteConfig.features));
 validateEnv(process.env, { phase: "build" });
 validateCountry(siteConfig);
 validateStatsRetention(siteConfig);
+validateNeighbourhoods(siteConfig);
 validateLeads(siteConfig);
 validateProductionConfig(
   { ...siteConfig, dataController: siteConfig.legal.dataController },

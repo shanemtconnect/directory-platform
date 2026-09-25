@@ -290,6 +290,26 @@ export interface SiteConfig {
   };
 
   /**
+   * Geography below the town (Task 52). niche-national only.
+   */
+  readonly geo: {
+    /**
+     * Neighbourhoods: `areas` rows with a `city_id`, routed at /<city>/<area>.
+     * Listings join one by nearest centroid within its radius (a nightly
+     * worker job and an admin "assign now"), never by hand-typed text.
+     *
+     * Off: no admin page, the resolver never produces a neighbourhood page,
+     * and the job does nothing. `NEIGHBOURHOODS_ENABLED=true|false` in the
+     * environment overrides this (staging review and the e2e suite).
+     */
+    readonly neighbourhoods: {
+      readonly enabled: boolean;
+      /** Published listings a neighbourhood page needs before it is indexable and in the sitemap. */
+      readonly minListings: number;
+      /** The radius an imported row gets when its `radius_km` cell is empty. */
+      readonly defaultRadiusKm: number;
+    };
+  };
    * The pay-per-lead marketplace (flag `leadMarketplace`). Money is in major
    * units of `currency`; the ledger stores minor units (x100).
    */

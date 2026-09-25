@@ -5,6 +5,7 @@ import {
   validateCountry,
   validateProductionConfig,
   validateStatsRetention,
+  validateNeighbourhoods,
   validateLeads,
   MIN_STATS_RETENTION_DAYS,
   ConfigError,
@@ -371,6 +372,42 @@ describe("validateStatsRetention", () => {
 
   it("accepts exactly the longest tier window", () => {
     expect(() => validateStatsRetention({ stats: { retentionDays: 365 }, tiers })).not.toThrow();
+  });
+});
+
+describe("validateNeighbourhoods (Task 52)", () => {
+  const geo = (patch: Partial<{ enabled: boolean; minListings: number; defaultRadiusKm: number }> = {}) => ({
+    neighbourhoods: { enabled: true, minListings: 5, defaultRadiusKm: 2, ...patch },
+  });
+
+  it("passes for the shipped config", () => {
+    expect(() => validateNeighbourhoods(siteConfig)).not.toThrow();
+  });
+
+  it("ships off, at five listings and a two-kilometre radius", () => {
+    expect(siteConfig.geo.neighbourhoods).toEqual({ enabled: false, minListings: 5, defaultRadiusKm: 2 });
+  });
+
+  it("refuses neighbourhoods on a local-multi-vertical site, whose areas are something else", () => {
+    expect(() => validateNeighbourhoods({ siteMode: "local-multi-vertical", geo: geo() }))
+      .toThrow(/niche-national/);
+    // Off, the mode does not matter: the section is inert.
+    expect(() => validateNeighbourhoods({ siteMode: "local-multi-vertical", geo: geo({ enabled: false }) }))
+      .not.toThrow();
+  });
+
+  it("refuses a listing threshold that is not a whole number of at least one", () => {
+    for (const minListings of [0, -1, 2.5, Number.NaN]) {
+      expect(() => validateNeighbourhoods({ siteMode: "niche-national", geo: geo({ minListings }) }))
+        .toThrow(/minListings/);
+    }
+  });
+
+  it("refuses a default radius that is not a positive, finite distance", () => {
+    for (const defaultRadiusKm of [0, -2, 26, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => validateNeighbourhoods({ siteMode: "niche-national", geo: geo({ defaultRadiusKm }) }))
+        .toThrow(ConfigError);
+    }
   });
 });
 
