@@ -5,6 +5,7 @@ import {
   validateCountry,
   validateProductionConfig,
   validateStatsRetention,
+  validateLeads,
   MIN_STATS_RETENTION_DAYS,
   ConfigError,
   RUNTIME_ENV,
@@ -370,6 +371,35 @@ describe("validateStatsRetention", () => {
 
   it("accepts exactly the longest tier window", () => {
     expect(() => validateStatsRetention({ stats: { retentionDays: 365 }, tiers })).not.toThrow();
+  });
+});
+
+describe("validateLeads", () => {
+  const leads = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7 };
+
+  it("passes for the shipped config", () => {
+    expect(() => validateLeads(siteConfig)).not.toThrow();
+    expect(siteConfig.leads).toEqual(leads);
+  });
+
+  it("refuses a floor below 1", () => {
+    expect(() => validateLeads({ leads: { ...leads, floor: 0 } })).toThrow(/leads\.floor/);
+    expect(() => validateLeads({ leads: { ...leads, floor: Number.NaN } })).toThrow(ConfigError);
+  });
+
+  it("refuses packs that are empty, not ascending, or not a whole positive amount", () => {
+    expect(() => validateLeads({ leads: { ...leads, packs: [] } })).toThrow(/leads\.packs/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [100, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [50, 50] } })).toThrow(/ascending/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [0, 50] } })).toThrow(/leads\.packs/);
+    expect(() => validateLeads({ leads: { ...leads, packs: [49.5] } })).toThrow(/leads\.packs/);
+  });
+});
+
+describe("leadMarketplace", () => {
+  it("requires quoteBroadcast", () => {
+    expect(() => validateFeatureDependencies(on("leadMarketplace", "shortlist"))).toThrow(/leadMarketplace requires quoteBroadcast/);
+    expect(() => validateFeatureDependencies(on("leadMarketplace", "quoteBroadcast", "shortlist"))).not.toThrow();
   });
 });
 
