@@ -368,6 +368,14 @@ export interface SafeFetchDeps {
    * undici Agent, closed when the fetch ends.
    */
   agentFactory?: (lookup: LookupFunction) => Dispatcher;
+  /**
+   * The per-hop guard. Defaults to `resolvePublicUrl`, and there is exactly
+   * one caller that replaces it: the add-listing URL import, and only while
+   * the e2e suite runs (see `e2eFixtureApproval` in lib/import/e2e-fixture.ts).
+   * Whatever it returns is what the socket is pinned to, so a replacement
+   * decides exactly what can be reached — it is not an option to pass lightly.
+   */
+  approve?: (raw: string, resolve: Resolver) => Promise<ApprovedUrl>;
 }
 
 export interface FetchedPage {
@@ -407,6 +415,7 @@ export async function fetchPublicHtml(
   deps: SafeFetchDeps = {},
 ): Promise<FetchedPage> {
   const resolve = deps.resolve ?? defaultResolver;
+  const approve = deps.approve ?? resolvePublicUrl;
   const fetchImpl = deps.fetchImpl ?? defaultFetch;
   const maxRedirects = deps.maxRedirects ?? MAX_REDIRECTS;
   const userAgent = deps.userAgent ?? defaultUserAgent();
@@ -429,7 +438,7 @@ export async function fetchPublicHtml(
     for (let hop = 0; ; hop++) {
       let target: URL;
       try {
-        const approved = await resolvePublicUrl(current, resolve);
+        const approved = await approve(current, resolve);
         target = approved.url;
         // Re-pinned per hop, and ONLY this hop's host: the previous host's
         // pooled socket (if any) is already open to an approved address, and a
