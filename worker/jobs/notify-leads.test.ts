@@ -101,21 +101,19 @@ describe("lead-market notifications", () => {
     });
   });
 
-  it("board digest: the count and a working unsubscribe link, and nothing for an account with nothing open", async () => {
+  it("board digest: the dispatched count and a working unsubscribe link; nothing to an account that opted out since", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       const buyer = await makeBuyer(tx, ctx, 0);
-      await makeStandingOrder(tx, buyer, { territories: [{ kind: "city", id: ctx.cityId }] });
-      await makeLead(tx, ctx);
-      const idle = await makeBuyer(tx, ctx, 0);
-      await makeStandingOrder(tx, idle, { territories: [{ kind: "region", id: "nowhere-at-all" }] });
-      await notifyLeadBoardDigest(tx, SYSTEM, buyer.profileId);
-      await notifyLeadBoardDigest(tx, SYSTEM, idle.profileId);
+      const quitter = await makeBuyer(tx, ctx, 0);
+      await notifyLeadBoardDigest(tx, SYSTEM, buyer.profileId, 1);
+      await notifyLeadBoardDigest(tx, SYSTEM, quitter.profileId, 3);
+      await tx.update(profiles).set({ leadDigestOptOut: true }).where(eq(profiles.id, quitter.profileId));
       await processNotifications(tx);
       const [mail] = to(buyer.email);
       expect(String(mail!.subject)).toMatch(/^1 open lead/);
       expect(String(mail!.text)).toContain("https://example.co.uk/unsubscribe?t=");
-      expect(to(idle.email)).toHaveLength(0);
+      expect(to(quitter.email)).toHaveLength(0);
     });
   });
 });

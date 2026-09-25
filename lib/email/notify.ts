@@ -608,7 +608,8 @@ NOTIFY_KINDS.push(NOTIFY_LEAD_WON, NOTIFY_LEAD_TOPUP, NOTIFY_LEAD_REFUND_DECIDED
 export type LeadWonJobPayload = { purchaseId: string };
 export type LeadTopupJobPayload = { standingOrderId: string };
 export type LeadRefundDecidedJobPayload = { refundId: string };
-export type LeadBoardDigestJobPayload = { profileId: string };
+/** `openCount` is worked out at dispatch from one read of the open leads. */
+export type LeadBoardDigestJobPayload = { profileId: string; openCount: number };
 
 export async function notifyLeadWon(tx: TestDb, viewer: Viewer, purchaseId: string): Promise<void> {
   const payload: LeadWonJobPayload = { purchaseId };
@@ -625,7 +626,7 @@ export async function notifyLeadRefundDecided(tx: TestDb, viewer: Viewer, refund
   await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_REFUND_DECIDED, payload });
 }
 
-export async function notifyLeadBoardDigest(tx: TestDb, viewer: Viewer, profileId: string): Promise<void> {
-  const payload: LeadBoardDigestJobPayload = { profileId };
+export async function notifyLeadBoardDigest(tx: TestDb, viewer: Viewer, profileId: string, openCount: number): Promise<void> {
+  const payload: LeadBoardDigestJobPayload = { profileId, openCount };
   await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_BOARD_DIGEST, payload });
 }

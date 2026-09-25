@@ -3,11 +3,11 @@ import { siteConfig } from "@/config/site.config";
 import { now } from "@/lib/clock";
 import { auditLog } from "@/lib/db/schema";
 import { writeAuditAs } from "@/lib/db/queries/audit";
-import { boardDigestRecipients, sweepLeads } from "@/lib/db/queries/lead-market";
+import { boardDigestFor, boardDigestRecipients, openLeadPlaces, sweepLeads } from "@/lib/db/queries/lead-market";
 import { retryAllocation } from "@/lib/leads/allocate";
 import { notifyLeadBoardDigest } from "@/lib/email/notify";
 import { ADMIN_VIEWER } from "@/worker/viewer";
-import type { Db } from "@/lib/db/client";
+import { db as client, type Db } from "@/lib/db/client";
 import type { TestDb } from "@/lib/db/types";
 
 /**
@@ -46,8 +46,17 @@ export async function runLeadsSweep(
   return out;
 }
 
+/**
+ * The leads are found on the job's transaction (which holds only the job's
+ * own lock), then each is allocated in a transaction of its own on the
+ * shared client and committed before the next — see `retryAllocation`.
+ */
 export async function runLeadsRetryAllocate(db: Db | TestDb, at: Date = now()): Promise<{ checked: number; sold: number }> {
-  const out = await retryAllocation(db as TestDb, ADMIN_VIEWER, { since: new Date(at.getTime() - RETRY_LOOKBACK_MS), at });
+  const out = await retryAllocation(db as TestDb, ADMIN_VIEWER, {
+    since: new Date(at.getTime() - RETRY_LOOKBACK_MS),
+    at,
+    each: (fn) => client.transaction(async (t) => fn(t as unknown as TestDb)),
+  });
   if (out.checked > 0) console.log(`[worker] leads.retry_allocate checked ${out.checked}, sold ${out.sold}`);
   return out;
 }
@@ -75,9 +84,15 @@ export async function dispatchBoardDigest(
     .limit(1);
   if (sent) return { skipped: "already-sent", queued: 0 };
 
+  // One read of the open leads for the whole run; each recipient's count is
+  // worked out from it here and carried in the job, and an account with
+  // nothing open in its places is not queued at all.
+  const open = await openLeadPlaces(tx, at);
   let queued = 0;
   for (const profileId of await boardDigestRecipients(tx, ADMIN_VIEWER, at)) {
-    await notifyLeadBoardDigest(tx, ADMIN_VIEWER, profileId);
+    const digest = await boardDigestFor(tx, ADMIN_VIEWER, profileId, at, open);
+    if (digest === null) continue;
+    await notifyLeadBoardDigest(tx, ADMIN_VIEWER, profileId, digest.openCount);
     queued++;
   }
   await writeAuditAs(tx, null, { action: DIGEST_SENT_ACTION, entityType: "lead", meta: { week, queued } });

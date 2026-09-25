@@ -978,7 +978,14 @@ export interface BoardDigest {
  * One account's digest, computed at send time. Null when the account has
  * opted out, has no address, or has nothing to be told about.
  */
-export async function boardDigestFor(tx: TestDb, viewer: Viewer, profileId: string, at: Date = now()): Promise<BoardDigest | null> {
+export async function boardDigestFor(
+  tx: TestDb,
+  viewer: Viewer,
+  profileId: string,
+  at: Date = now(),
+  /** The run's one read of `openLeadPlaces`; read here when not given. */
+  open?: readonly (LeadPlace & { id: string })[],
+): Promise<BoardDigest | null> {
   assertAdmin(viewer);
   if (!UUID.test(profileId)) return null;
   const [account] = await tx
@@ -1002,10 +1009,28 @@ export async function boardDigestFor(tx: TestDb, viewer: Viewer, profileId: stri
         .map((l) => ({ territories: [{ kind: "city", id: l.cityId }] as Territory[], categoryIds: null }));
   if (territories.length === 0) return null;
 
-  const open = await openLeadPlaces(tx, at);
-  const openCount = open.filter((lead) => territories.some((o) => orderCovers(o, lead))).length;
+  const places = open ?? (await openLeadPlaces(tx, at));
+  const openCount = places.filter((lead) => territories.some((o) => orderCovers(o, lead))).length;
   if (openCount === 0) return null;
   return { email: account.email, name: account.name, openCount };
+}
+
+/**
+ * Where a queued digest goes, re-read at send time: null when the account
+ * has opted out since the dispatch or has no address. Admin (worker) only.
+ */
+export async function boardDigestAccount(
+  tx: TestDb, viewer: Viewer, profileId: string,
+): Promise<{ email: string; name: string | null } | null> {
+  assertAdmin(viewer);
+  if (!UUID.test(profileId)) return null;
+  const [row] = await tx
+    .select({ email: user.email, name: user.name, optOut: profiles.leadDigestOptOut })
+    .from(profiles)
+    .innerJoin(user, eq(user.id, profiles.userId))
+    .where(eq(profiles.id, profileId))
+    .limit(1);
+  return !row || row.optOut || !row.email ? null : { email: row.email, name: row.name };
 }
 
 /**

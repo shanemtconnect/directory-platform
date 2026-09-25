@@ -837,9 +837,11 @@ Pending reports are counted on the dashboard and beside the nav link.
 `expires_at` expired and deletes unsold expired or deleted rows seven days
 after that; sold leads are kept, since their purchase and any refund point at
 them, but their contact details are purged `retainSoldDays` after the sale. `leads.retry_allocate` (hourly :43) offers open leads to orders created,
-edited or resumed in the last 70 minutes. `leads.board_digest` (Mondays 09:00,
+edited or resumed in the last 70 minutes, each lead in its own committed
+transaction so a run cannot deadlock against a buyer on the board. `leads.board_digest` (Mondays 09:00,
 site time) queues one email per account with an active order or a purchase
-in 90 days — how many open leads are in its places — with a one-click
+in 90 days and something open in its places — the count worked out once per
+run from one read of the open leads — with a one-click
 unsubscribe (`{ userId }` token) and a checkbox on `/account/leads`.
 
 ### Testing gotchas

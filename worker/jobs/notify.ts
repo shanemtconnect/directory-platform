@@ -89,7 +89,7 @@ import { now } from "@/lib/clock";
 import { topupNotification } from "@/lib/db/queries/credits";
 import { topupReceipt } from "@/lib/email/templates/credits";
 import {
-  boardDigestFor, leadRefundNotification, leadTopupNotification, leadWonNotification,
+  boardDigestAccount, leadRefundNotification, leadTopupNotification, leadWonNotification,
 } from "@/lib/db/queries/lead-market";
 import { boardDigest, leadRefundDecided, leadTopup, leadWon } from "@/lib/email/templates/leads";
 import { REFUND_REASON_LABELS } from "@/lib/leads/market";
@@ -1107,16 +1107,20 @@ async function runLeadRefundDecided(db: Db, d: Delivery, payload: Record<string,
 }
 
 /**
- * The weekly board digest, recomputed now: an account that has opted out,
- * or whose territories hold no open lead any more, is sent nothing. Every
- * digest carries its one-click unsubscribe; one that cannot is not sent.
+ * The weekly board digest. The count was worked out at dispatch from one
+ * read of the open leads (worker/jobs/leads.ts); the account is re-read now,
+ * so one that has opted out since, or lost its address, is sent nothing.
+ * Every digest carries its one-click unsubscribe; one that cannot is not sent.
  */
 async function runLeadBoardDigest(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
   if (!features.leadMarketplace) return;
   const profileId = readId(payload, "profileId");
   if (profileId === null) throw new Retryable("The job carries no profileId");
-  const data = await boardDigestFor(db, ADMIN_VIEWER, profileId);
-  if (data === null) return;
+  const openCount = typeof payload.openCount === "number" && Number.isInteger(payload.openCount) ? payload.openCount : 0;
+  if (openCount <= 0) return;
+  const account = await boardDigestAccount(db, ADMIN_VIEWER, profileId);
+  if (account === null) return;
+  const data = { ...account, openCount };
   const token = signUnsubscribe({ userId: profileId, email: data.email });
   if (token === null) throw new Retryable("No unsubscribe key (EMAIL_UNSUBSCRIBE_SECRET / BETTER_AUTH_SECRET)");
   await deliver(d, BUYER, {

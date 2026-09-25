@@ -121,15 +121,22 @@ async function pauseForCredit(tx: TestDb, viewer: Viewer, standingOrderId: strin
 /**
  * `leads.retry_allocate` (hourly): a lead that found no buyer when it was
  * made is offered again once a standing order that covers it appears — one
- * created, edited or resumed since `since` (its `updated_at`). Each lead is
- * allocated in its own savepoint, so one failure costs that lead a retry,
- * not the run. The allocation itself still ranks every candidate, so the
- * new order is not favoured over an older, better-paying one.
+ * created, edited or resumed since `since` (its `updated_at`). The leads are
+ * collected first (reads only); then each is allocated through `each`,
+ * which the worker makes a TOP-LEVEL transaction per lead: a win's row lock
+ * and the buyer's advisory lock are released before the next lead is
+ * locked, so the run cannot deadlock against that buyer pressing "buy" on
+ * the board. (A savepoint would not do: it releases neither.) One failure
+ * costs that lead a retry, not the run. The allocation itself still ranks
+ * every candidate, so the new order is not favoured over an older,
+ * better-paying one.
  */
+export type RunEach = <T>(fn: (tx: TestDb) => Promise<T>) => Promise<T>;
+
 export async function retryAllocation(
   tx: TestDb,
   viewer: Viewer,
-  opts: { since: Date; at?: Date },
+  opts: { since: Date; at?: Date; each?: RunEach },
 ): Promise<{ checked: number; sold: number }> {
   const at = opts.at ?? now();
   const fresh = await tx
@@ -139,17 +146,18 @@ export async function retryAllocation(
   if (fresh.length === 0) return { checked: 0, sold: 0 };
   const orders = fresh.map((o) => ({ territories: o.territories, categoryIds: o.categoryIds ?? null }));
 
-  let checked = 0;
+  // Test default: a savepoint of the caller's transaction.
+  const each: RunEach = opts.each ?? ((fn) => tx.transaction(async (sp) => fn(sp as unknown as TestDb)));
+  const ids = (await openLeadPlaces(tx, at)).filter((lead) => orders.some((o) => orderCovers(o, lead))).map((l) => l.id);
+
   let sold = 0;
-  for (const lead of await openLeadPlaces(tx, at)) {
-    if (!orders.some((o) => orderCovers(o, lead))) continue;
-    checked++;
+  for (const id of ids) {
     try {
-      const out = await tx.transaction(async (sp) => allocateLead(sp as unknown as TestDb, viewer, lead.id, at));
+      const out = await each((t) => allocateLead(t, viewer, id, at));
       if (out.outcome === "sold") sold++;
     } catch (e) {
-      console.error(`[leads] retry allocation failed for ${lead.id}: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`[leads] retry allocation failed for ${id}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  return { checked, sold };
+  return { checked: ids.length, sold };
 }
