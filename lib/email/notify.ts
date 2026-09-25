@@ -517,6 +517,7 @@ export async function notifySpotClosed(
  * time, so a listing unpublished in between never reaches the email.
  */
 export const NOTIFY_SAVED_SEARCH = "notify.saved_search";
+NOTIFY_KINDS.push(NOTIFY_SAVED_SEARCH);
 
 export type SavedSearchJobPayload = { savedSearchId: string };
 
