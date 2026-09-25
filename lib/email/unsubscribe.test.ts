@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { normaliseAddress, signUnsubscribe, unsubscribeUrl, verifyUnsubscribe } from "./unsubscribe";
+import {
+  isLeadDigestClaim, isSavedSearchClaim, normaliseAddress, signUnsubscribe, unsubscribeUrl, verifyUnsubscribe,
+} from "./unsubscribe";
 
 const ENV = { ...process.env };
 
@@ -74,5 +76,23 @@ describe("unsubscribe tokens — the saved-search variant", () => {
     const forged = signUnsubscribe({ ...searchClaim, savedSearchId: "55555555-5555-4555-8555-555555555555" })!.split(".")[0]!;
     expect(verifyUnsubscribe(`${forged}.${sig}`)).toBeNull();
     expect(verifyUnsubscribe(`${payload}.${sig}`)).toEqual(searchClaim);
+  });
+});
+
+describe("unsubscribe tokens — the lead-board digest variant (Task 58)", () => {
+  const digestClaim = { userId: "66666666-6666-4666-8666-666666666666", email: "Buyer@Example.com" };
+
+  it("round-trips the account and address, and never reads as a listing or saved-search claim", () => {
+    const back = verifyUnsubscribe(signUnsubscribe(digestClaim));
+    expect(back).toEqual(digestClaim);
+    expect(back && isLeadDigestClaim(back)).toBe(true);
+    expect(back && isSavedSearchClaim(back)).toBe(false);
+    expect(back && "listingId" in back).toBe(false);
+  });
+
+  it("refuses a forged account id", () => {
+    const [, sig] = signUnsubscribe(digestClaim)!.split(".") as [string, string];
+    const forged = signUnsubscribe({ ...digestClaim, userId: "77777777-7777-4777-8777-777777777777" })!.split(".")[0]!;
+    expect(verifyUnsubscribe(`${forged}.${sig}`)).toBeNull();
   });
 });
