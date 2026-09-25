@@ -269,7 +269,10 @@ export default async function CatchAllPage({ params }: Props) {
       const [rows, total, categories, nearby, featuredBids, neighbourhoods] = await Promise.all([
         listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
         countListings(db as never, PUBLIC_VIEWER, result.scope),
-        cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+        // Town-wide, so not on a neighbourhood page (see PillarPage).
+        cityId && result.scope.type !== "city-area"
+          ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId)
+          : Promise.resolve([]),
         cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         // Page 1 only: the paid row sits above the grid and nowhere else.
         result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),

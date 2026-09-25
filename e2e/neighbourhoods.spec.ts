@@ -164,6 +164,8 @@ test.describe("neighbourhoods", () => {
     await expect(page.locator("h1")).toContainText(A.name);
     const grid = page.locator('[data-testid="listing-grid"]');
     for (const l of moved) await expect(grid).toContainText(l.name);
+    // The town's by-type block (town-wide links and counts) is not repeated here.
+    await expect(page.locator('[data-testid="category-links"]')).toHaveCount(0);
     // Below geo.neighbourhoods.minListings: noindex, and not in the sitemap.
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
 
@@ -175,6 +177,9 @@ test.describe("neighbourhoods", () => {
     });
 
     const sitemap = await (await page.request.get("/sitemaps/sitemap/static+cities.xml")).text();
+    // A real shard, so the negative below is not vacuous.
+    expect(sitemap).toContain("<urlset");
+    expect(sitemap).toContain("<loc>");
     expect(sitemap).not.toContain(`/${TOWN.slug}/${A.slug}`);
 
     // --- the town page lists A (it has listings) and not B (it has none) --

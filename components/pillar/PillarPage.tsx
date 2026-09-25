@@ -156,7 +156,10 @@ export function PillarPage({
 
       <Pagination basePath={basePath} page={page} totalPages={totalPages} />
 
-      {categories.length > 0 && (
+      {/* The TOWN's category pages and counts: never under a neighbourhood
+          (Task 52), where they would read as the neighbourhood's own and
+          repeat the town page's link block on every neighbourhood. */}
+      {categories.length > 0 && !heading.parent && (
         <section aria-labelledby="by-type" data-testid="category-links">
           <h2 id="by-type">{e.Plural} in {heading.place} by type</h2>
           <ul className="link-grid">
