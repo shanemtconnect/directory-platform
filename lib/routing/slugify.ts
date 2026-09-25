@@ -30,6 +30,9 @@ export const RESERVED_SLUGS = [
   "verify-email", "remove", "report", "review", "reviews", "billing",
   // Task 45: the public featured-spot leaderboard lives at /spots/<id>.
   "spots",
+  // Task 52: held for a future neighbourhood index; neighbourhoods themselves
+  // live under their town at /<city>/<area>.
+  "neighbourhoods",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);
