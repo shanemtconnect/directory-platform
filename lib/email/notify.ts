@@ -507,3 +507,24 @@ export async function notifySpotClosed(
 ): Promise<void> {
   await enqueueJob(tx, viewer, { kind: NOTIFY_SPOT_CLOSED, payload });
 }
+
+/* ------------------------------------------------ saved searches (Task 54) */
+
+/**
+ * One saved search's digest of new matches. Queued by the hourly
+ * `alerts.dispatch` cron (worker/jobs/alerts.ts) only when there is something
+ * new; the worker re-reads the search and recomputes the matches at send
+ * time, so a listing unpublished in between never reaches the email.
+ */
+export const NOTIFY_SAVED_SEARCH = "notify.saved_search";
+
+export type SavedSearchJobPayload = { savedSearchId: string };
+
+export async function notifySavedSearch(
+  tx: TestDb,
+  viewer: Viewer,
+  savedSearchId: string,
+): Promise<void> {
+  const payload: SavedSearchJobPayload = { savedSearchId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_SAVED_SEARCH, payload });
+}
