@@ -23,7 +23,22 @@ export async function limitPublicWrite(
   opts: { limit: number; windowSeconds: number },
 ): Promise<RateLimitResult> {
   const subject = rateLimitSubject(clientIp(requestHeaders));
-  return rateLimit(subject && `${feature}:${subject}`, opts);
+  return rateLimit(subject && `${feature}:${subject}`, { ...opts, limit: opts.limit * writeLimitMultiplier() });
+}
+
+/**
+ * `PUBLIC_WRITE_LIMIT_MULTIPLIER` scales every budget below, and exists for
+ * one reason: the Playwright suite sends every public write from 127.0.0.1,
+ * and the quote-request specs alone make more submissions in a minute than a
+ * person is allowed in an hour. `playwright.config.ts` and
+ * `scripts/verify-clone.sh` set it for the server they boot; nothing else
+ * does, and an unset, empty or malformed value is 1 — the budgets as written.
+ */
+export function writeLimitMultiplier(env: Record<string, string | undefined> = process.env): number {
+  const raw = env["PUBLIC_WRITE_LIMIT_MULTIPLIER"];
+  if (raw === undefined || raw === "") return 1;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : 1;
 }
 
 /*

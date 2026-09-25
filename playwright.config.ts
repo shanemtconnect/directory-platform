@@ -74,6 +74,12 @@ const SERVER_ENV: Record<string, string> = {
    */
   BETTER_AUTH_RATE_LIMIT: "off",
   /**
+   * Every public write here comes from 127.0.0.1, and the quote specs alone
+   * submit more requests per run than the hourly budget allows one address.
+   * Scales the budgets in lib/spam/write-limit.ts for this server only.
+   */
+  PUBLIC_WRITE_LIMIT_MULTIPLIER: "20",
+  /**
    * Cloudflare's published testing keys: the widget always passes and
    * siteverify always accepts. They are needed because this suite runs a
    * production build, and in production a missing secret now fails closed
