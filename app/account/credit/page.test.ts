@@ -9,6 +9,9 @@ import type { Viewer } from "@/lib/db/viewer";
 class NotFound extends Error {}
 
 const currentViewer = vi.fn<() => Promise<Viewer>>();
+const redirect = vi.fn((url: string) => {
+  throw new Error(`NEXT_REDIRECT ${url}`);
+});
 const settleTopupOrder = vi.fn();
 const creditBalance = vi.fn();
 let flagOn = false;
@@ -17,11 +20,13 @@ vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new NotFound("NEXT_NOT_FOUND");
   },
-  redirect: () => {
-    throw new Error("NEXT_REDIRECT");
-  },
+  redirect: (url: string) => redirect(url),
 }));
-vi.mock("@/lib/db/client", () => ({ db: { transaction: vi.fn() } }));
+vi.mock("@/lib/db/client", () => ({ db: { transaction: async (fn: (tx: unknown) => unknown) => fn({}) } }));
+vi.mock("@/lib/billing/orders", async (orig) => ({
+  ...(await orig<typeof import("@/lib/billing/orders")>()),
+  getPayPalOrdersClient: () => ({ marker: "client" }),
+}));
 vi.mock("@/lib/features/flags", () => ({
   get features() {
     return { leadMarketplace: flagOn };
@@ -71,5 +76,28 @@ describe("lead credit pages with the flag off", () => {
     const form = new FormData();
     form.set("packCents", "5000");
     await expect(startTopupAction(form)).rejects.toThrow("NOT_FOUND");
+  });
+});
+
+describe("/account/credit/return with the flag on", () => {
+  it("captures the order before the sign-in check, so a lapsed session still gets its credit", async () => {
+    flagOn = true;
+    currentViewer.mockResolvedValue({ role: "public" });
+    settleTopupOrder.mockResolvedValue({ outcome: "credited", creditOrderId: "o1", userId: "p1", cents: 5000 });
+    const { default: page } = await import("./return/page");
+    await expect(page({ searchParams: Promise.resolve({ token: "8TOPUP0127TN3647" }) })).rejects.toThrow(
+      "NEXT_REDIRECT /login?next=/account/credit",
+    );
+    expect(settleTopupOrder).toHaveBeenCalledTimes(1);
+    expect(settleTopupOrder.mock.calls[0]![1]).toMatchObject({ orderId: "8TOPUP0127TN3647" });
+    expect(creditBalance).not.toHaveBeenCalled();
+  });
+
+  it("does not try to settle a token that is not an order id", async () => {
+    flagOn = true;
+    currentViewer.mockResolvedValue({ role: "public" });
+    const { default: page } = await import("./return/page");
+    await expect(page({ searchParams: Promise.resolve({ token: "<script>" }) })).rejects.toThrow("NEXT_REDIRECT");
+    expect(settleTopupOrder).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,9 @@ import { PageHeader } from "@/components/ui/PageHeader";
  * settle the webhook uses — whichever lands second finds it done. The order
  * id is PayPal's `token`; anyone can put one on the query string, and all it
  * lets them do is capture an order its buyer already approved, credited to
- * the account that started it. Only that account is told the amount.
+ * the account that started it. Only that account is told the amount. The
+ * capture happens before the sign-in check, so a lapsed session costs the
+ * buyer a login, never the payment.
  */
 export const dynamic = "force-dynamic";
 
@@ -42,8 +44,6 @@ export default async function CreditReturnPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   guardFeature("leadMarketplace");
-  const viewer = await currentViewer();
-  if (viewer.role === "public") redirect("/login?next=/account/credit");
   const orderId = first((await searchParams).token);
 
   let outcome: TopupSettleOutcome = { outcome: "unknown-order" };
@@ -56,6 +56,13 @@ export default async function CreditReturnPage({
       }),
     );
   }
+
+  // AFTER the settle, not before: settling needs no viewer (the order row
+  // names its account), and a buyer whose session lapsed while they were at
+  // PayPal would otherwise be sent to log in with the token dropped and the
+  // approved order never captured. They are credited, then asked to sign in.
+  const viewer = await currentViewer();
+  if (viewer.role === "public") redirect("/login?next=/account/credit");
 
   const profile = await ensureProfile(db, viewer);
   const mine = "userId" in outcome && outcome.userId === profile.id;
