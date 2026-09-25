@@ -362,6 +362,7 @@ export function validateNeighbourhoods(config: {
   }
 }
 
+/**
  * The lead marketplace's money (flag `leadMarketplace`). A floor below 1 would
  * give leads away; a pack list out of order or with a fractional or zero
  * amount is a top-up page whose buttons do not mean what they say, and the

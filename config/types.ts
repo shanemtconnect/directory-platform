@@ -310,6 +310,8 @@ export interface SiteConfig {
       readonly defaultRadiusKm: number;
     };
   };
+
+  /**
    * The pay-per-lead marketplace (flag `leadMarketplace`). Money is in major
    * units of `currency`; the ledger stores minor units (x100).
    */
