@@ -3,6 +3,7 @@ import {
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
   NOTIFY_AWARD_WON,
+  NOTIFY_CREDIT_TOPUP,
   NOTIFY_CLAIM_DECIDED,
   NOTIFY_CLAIM_LINK,
   NOTIFY_CLAIM_SUBMITTED,
@@ -74,6 +75,8 @@ import { availabilityForListing, emptySpotsReport } from "@/lib/spots/availabili
 import { minimumToEnter, minimumToTakeFirst, UNIT_CENTS } from "@/lib/spots/rank";
 import { leaderboardPath, prefilledBidPath } from "@/lib/spots/notify";
 import { spotClosedToOwner, spotDigestToAdmin, spotDigestToOwner, spotOutbid } from "@/lib/email/templates/spots";
+import { topupNotification } from "@/lib/db/queries/credits";
+import { topupReceipt } from "@/lib/email/templates/credits";
 
 /**
  * Drains the notification queue.
@@ -448,6 +451,9 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
       return runSpotDigest(db, d, job.payload);
     case NOTIFY_SPOT_CLOSED:
       return runSpotClosed(db, d, job.payload);
+    // Appended by the lead-credit module (Task 57); the handler is at the foot.
+    case NOTIFY_CREDIT_TOPUP:
+      return runCreditTopup(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -879,6 +885,33 @@ async function runSpotDigest(db: Db, d: Delivery, payload: Record<string, unknow
       fromAmount: spotMoney(a.fromCents),
       bidUrl: siteUrl(`/account/listings/${listingId}/featured`),
       unsubscribeToken: token,
+    }),
+  });
+}
+
+/* ------------------------------------------------- lead credit (Task 57) */
+
+const BUYER = "buyer";
+
+const creditMoney = (cents: number) => formatMoney(cents / 100, siteConfig.locale, siteConfig.currency);
+
+/**
+ * The top-up receipt, with the balance as it stands when the job runs. An
+ * order that is gone or not captured, or an account with no address, sends
+ * nothing and completes.
+ */
+async function runCreditTopup(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const creditOrderId = readId(payload, "creditOrderId");
+  if (creditOrderId === null) throw new Retryable("The job carries no creditOrderId");
+  const data = await topupNotification(db, ADMIN_VIEWER, creditOrderId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...topupReceipt({
+      name: data.name,
+      amount: creditMoney(data.packCents),
+      balance: creditMoney(data.balanceCents),
+      creditUrl: siteUrl("/account/credit"),
     }),
   });
 }

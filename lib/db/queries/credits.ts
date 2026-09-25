@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { creditLedger, profiles, user } from "@/lib/db/schema";
+import { creditLedger, creditOrders, profiles, user } from "@/lib/db/schema";
 import { ensureProfile } from "@/lib/auth/profile";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
@@ -259,4 +259,30 @@ export async function creditBalances(tx: TestDb, viewer: Viewer): Promise<Accoun
     .orderBy(desc(sql`sum(${creditLedger.deltaCents})`))
     .limit(500);
   return rows.map((r) => ({ profileId: r.profileId, name: r.name, email: r.email, balanceCents: Number(r.balance), lastEntryAt: r.lastEntryAt }));
+}
+
+export interface TopupNotification {
+  readonly email: string;
+  readonly name: string | null;
+  readonly packCents: number;
+  readonly balanceCents: number;
+}
+
+/**
+ * What the receipt worker needs for one settled top-up, read at send time.
+ * Null when the order is gone, not captured, or its account has no address.
+ * Admin-gated: it turns an id into somebody's email address.
+ */
+export async function topupNotification(tx: TestDb, viewer: Viewer, creditOrderId: string): Promise<TopupNotification | null> {
+  assertAdmin(viewer);
+  if (!/^[0-9a-f-]{36}$/i.test(creditOrderId)) return null;
+  const [row] = await tx
+    .select({ userId: creditOrders.userId, packCents: creditOrders.packCents, status: creditOrders.status, email: user.email, name: user.name })
+    .from(creditOrders)
+    .innerJoin(profiles, eq(profiles.id, creditOrders.userId))
+    .innerJoin(user, eq(user.id, profiles.userId))
+    .where(eq(creditOrders.id, creditOrderId))
+    .limit(1);
+  if (!row || row.status !== "captured") return null;
+  return { email: row.email, name: row.name, packCents: row.packCents, balanceCents: await creditBalance(tx, row.userId) };
 }
