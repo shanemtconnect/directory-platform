@@ -30,6 +30,10 @@ export const RESERVED_SLUGS = [
   "verify-email", "remove", "report", "review", "reviews", "billing",
   // Task 45: the public featured-spot leaderboard lives at /spots/<id>.
   "spots",
+  // Task 53: `/verified/<segments>` is the internal, always-dynamic route
+  // next.config.ts rewrites `?verified=1` pillar requests to — a city or
+  // vertical named "Verified" would otherwise shadow it.
+  "verified",
 ] as const;
 
 const reservedSet = new Set<string>(RESERVED_SLUGS);

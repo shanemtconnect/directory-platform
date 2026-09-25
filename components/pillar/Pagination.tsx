@@ -7,10 +7,21 @@ interface Props {
   /**
    * Search keeps its filters in the query string, so its pagination must too.
    * Pillar pages use path pagination (/city/page/2) because reading
-   * searchParams would force the route dynamic and kill their ISR cache —
-   * search is already dynamic and noindexed, so the trade-off does not apply.
+   * searchParams on the MAIN route would force it dynamic and kill its ISR
+   * cache — search is already dynamic and noindexed, so the trade-off does
+   * not apply there. `verified` (below) is the one pillar filter that IS a
+   * query param, and it only works because /verified/[...segments] is a
+   * second, separate, genuinely-dynamic route reached via a next.config.ts
+   * rewrite — the ISR route itself still never reads searchParams.
    */
   searchStyle?: boolean;
+  /**
+   * Pillar pages: append `verified=1` to every page link so paging through a
+   * filtered grid keeps the filter on. Search already carries it as part of
+   * `basePath` (it keeps every filter in the query string), so this is a
+   * no-op there — never pass both.
+   */
+  verified?: boolean;
 }
 
 /* Split so the current page can swap the background without two `bg-*`
@@ -32,14 +43,15 @@ const CURRENT = `${SLOT} border-primary bg-primary font-semibold text-on-primary
  * that a reader or a crawler needs, and prev/next carry rel so the sequence is
  * still declared.
  */
-export function Pagination({ basePath, page, totalPages, searchStyle = false }: Props) {
+export function Pagination({ basePath, page, totalPages, searchStyle = false, verified = false }: Props) {
   if (totalPages <= 1) return null;
+  const withVerified = (h: string) => (verified ? `${h}${h.includes("?") ? "&" : "?"}verified=1` : h);
   const href = (n: number) => {
-    if (n === 1) return basePath;
+    if (n === 1) return withVerified(basePath);
     if (searchStyle) {
-      return basePath.includes("?") ? `${basePath}&page=${n}` : `${basePath}?page=${n}`;
+      return withVerified(basePath.includes("?") ? `${basePath}&page=${n}` : `${basePath}?page=${n}`);
     }
-    return `${basePath}/page/${n}`;
+    return withVerified(`${basePath}/page/${n}`);
   };
 
   return (

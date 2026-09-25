@@ -106,7 +106,20 @@ function pillarBasePath(segments: string[]): string {
   return `/${rest.join("/")}`;
 }
 
-export default async function CatchAllPage({ params }: Props) {
+/**
+ * Task 53: the verified-only filter. `opts.verified` is ALWAYS false here —
+ * Next calls this component with one argument, so the default applies on
+ * every request this route itself renders. It is only ever `true` when
+ * `app/verified/[...segments]/page.tsx` imports this same function and calls
+ * it directly with a second argument, which is what keeps this route (the
+ * ISR-cached one, generateStaticParams above) from ever reading searchParams
+ * — see the note on generateStaticParams and Pagination's `verified` prop.
+ */
+export default async function CatchAllPage(
+  { params }: Props,
+  opts: { verified?: boolean } = {},
+) {
+  const verified = opts.verified ?? false;
   const { segments } = await params;
 
   const result = await resolveRoute(db as never, segments, siteConfig.siteMode);
@@ -260,14 +273,19 @@ export default async function CatchAllPage({ params }: Props) {
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
 
-      const [rows, total, categories, nearby, featuredBids] = await Promise.all([
-        listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
-        countListings(db as never, PUBLIC_VIEWER, result.scope),
+      const [rows, total, categories, nearby, featuredBids, verifiedCount] = await Promise.all([
+        listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page, verified }),
+        countListings(db as never, PUBLIC_VIEWER, result.scope, { verified }),
         cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         // Page 1 only: the paid row sits above the grid and nowhere else.
         result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
+        // Task 53: gates the toggle. Run alongside the grid rather than only
+        // when unfiltered, so the filtered view can still offer a way back
+        // even if a race emptied it since the toggle was rendered.
+        countListings(db as never, PUBLIC_VIEWER, result.scope, { verified: true }),
       ]);
+      const hasVerified = verifiedCount > 0;
 
       // A featured listing is not listed twice, and the page has ONE
       // Featured section: the paid row when any bid holds a position, the
@@ -342,6 +360,8 @@ export default async function CatchAllPage({ params }: Props) {
                 ? undefined
                 : `city:${cityId}:${result.scope.type === "city-category" ? result.scope.categoryId : "-"}`
             }
+            verified={verified}
+            hasVerified={hasVerified}
           />
         </>
       );
@@ -367,7 +387,11 @@ function metaDescription(text: string, max = 155): string {
  * and stays out of the sitemap. This is the single most important SEO rule in
  * the build — thin one-listing city pages drag the whole domain down.
  */
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
+export async function generateMetadata(
+  { params }: Props,
+  opts: { verified?: boolean } = {},
+): Promise<Metadata> {
+  const verified = opts.verified ?? false;
   const { segments } = await params;
   const result = await resolveRoute(db as never, segments, siteConfig.siteMode);
 
@@ -440,8 +464,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title,
     description,
+    // Never the filtered URL: `path` is built from segments alone, never a
+    // query string, so this is already the unfiltered canonical on both
+    // routes — the verified view points at the exact page it is a view of.
     alternates: { canonical: path },
     openGraph: pageOpenGraph({ title, url: path }),
-    robots: heading.isIndexable ? undefined : { index: false, follow: true },
+    // Task 53: a `?verified=1` view is a filtered subset of its own
+    // canonical and must never compete with it in the index, regardless of
+    // whether the unfiltered page itself is indexable.
+    robots: heading.isIndexable && !verified ? undefined : { index: false, follow: true },
   };
 }
