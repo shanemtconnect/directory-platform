@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { siteConfig } from "@/config/site.config";
 import { submitCaptureLead, type LeadCaptureState } from "@/lib/actions/lead-capture";
 import { QUOTE_MESSAGE_MAX, QUOTE_MESSAGE_MIN } from "@/lib/actions/quotes-validation";
@@ -32,6 +32,11 @@ export interface LeadCaptureFormProps {
  */
 export function LeadCaptureForm({ categories, towns, turnstileSiteKey, idPrefix }: LeadCaptureFormProps) {
   const [state, action, pending] = useActionState(submitCaptureLead, initial);
+  // The challenge script is Cloudflare's, so it is not fetched until the
+  // visitor starts on the form. The box sits on the home page and on every
+  // railed page, and most visitors never touch it: they should not load a
+  // third-party script for it (e2e/stats.spec.ts holds pages to that).
+  const [engaged, setEngaged] = useState(false);
   const e = siteConfig.entity;
   const id = (name: string) => `${idPrefix}-${name}`;
 
@@ -49,7 +54,13 @@ export function LeadCaptureForm({ categories, towns, turnstileSiteKey, idPrefix 
   const err = state.fieldErrors ?? {};
 
   return (
-    <form action={action} data-testid="lead-capture-form">
+    <form
+      action={action}
+      data-testid="lead-capture-form"
+      onFocusCapture={() => setEngaged(true)}
+      onInputCapture={() => setEngaged(true)}
+      onPointerDownCapture={() => setEngaged(true)}
+    >
       <div aria-hidden="true" style={{ position: "absolute", left: "-9999px" }}>
         <label htmlFor={id("company_website")}>Leave this field empty</label>
         <input id={id("company_website")} name="company_website" type="text" tabIndex={-1} autoComplete="off" />
@@ -111,7 +122,7 @@ export function LeadCaptureForm({ categories, towns, turnstileSiteKey, idPrefix 
         {err.consent && <span role="alert">{err.consent}</span>}
       </p>
 
-      <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />
+      {engaged && <TurnstileWidget siteKey={turnstileSiteKey} resetOn={state} />}
 
       {state.status === "error" && state.message && (
         <Notice variant="error" testId="lead-capture-error">{state.message}</Notice>

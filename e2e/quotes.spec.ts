@@ -8,8 +8,10 @@ import { E2E_DATABASE_URL } from "./database";
 /**
  * The quote broadcast, end to end against a production build.
  *
- * A visitor describes a job on /get-quotes; the request is written with its
- * recipients and one `notify.quote` job; the worker (run here in-process,
+ * A visitor describes a job on /get-quotes; the request is written PENDING
+ * with its recipients and one `notify.quote-verify` job to the requester and
+ * nothing else; the requester follows the link in that email; only then is
+ * the `notify.quote` job queued; the worker (run here in-process,
  * against the same database — Playwright starts no worker) drains that job;
  * and the owner of a paid recipient sees the job and the requester on the
  * leads page, while the same listing on the free tier sees only that a
@@ -96,6 +98,8 @@ test.afterAll(async () => {
     await sql`delete from job_queue where payload->>'quoteRequestId' = ${quoteRequestId}`;
     await sql`delete from audit_log where entity_id = ${quoteRequestId}`;
   }
+  // A lead, if this build has the marketplace on and the request made one.
+  await sql`delete from leads where email = ${REQUESTER_EMAIL}`;
   // Cascades to quote_recipients.
   await sql`delete from quote_requests where email = ${REQUESTER_EMAIL}`;
   // Deleting the user cascades to its profile and session rows.
@@ -147,24 +151,57 @@ test.describe("the quote broadcast", () => {
 
     const sent = page.locator('[data-testid="quote-sent"]');
     await expect(sent, "confirmation must replace the form").toBeVisible({ timeout: 15_000 });
-    await expect(sent).toContainText(/Sent to \d+ /);
+    await expect(sent).toContainText("Check your email");
+    await expect(sent).toContainText(/send it to \d+ /);
     await expect(form).toHaveCount(0);
 
-    // Written with both lent listings as recipients, and one queued job.
-    const [request] = await sql<{ id: string }[]>`
-      select id from quote_requests where email = ${REQUESTER_EMAIL} order by created_at desc limit 1
+    // Written PENDING with both lent listings as recipients — and the only
+    // job queued is the verification email to the requester.
+    const [request] = await sql<{ id: string; status: string; verify_token_hash: string | null }[]>`
+      select id, status, verify_token_hash from quote_requests
+      where email = ${REQUESTER_EMAIL} order by created_at desc limit 1
     `;
     expect(request?.id, "the request must be stored").toBeTruthy();
     quoteRequestId = request!.id;
+    expect(request!.status).toBe("pending");
     const recipients = await sql<{ listing_id: string }[]>`
       select listing_id from quote_recipients where quote_request_id = ${quoteRequestId}
     `;
     expect(recipients.map((r) => r.listing_id)).toEqual(expect.arrayContaining([owned.id, other.id]));
+    const [verifyJob] = await sql<{ status: string; token: string | null }[]>`
+      select status, payload->>'token' as token from job_queue
+      where kind = 'notify.quote-verify' and payload->>'quoteRequestId' = ${quoteRequestId}
+    `;
+    expect(verifyJob?.status, "one verification email must be queued").toBe("pending");
+    expect(verifyJob!.token, "the job carries the link's token").toBeTruthy();
+    expect(request!.verify_token_hash, "the row holds a digest, never the token").not.toBe(verifyJob!.token);
+    const early = await sql`
+      select 1 from job_queue where kind = 'notify.quote' and payload->>'quoteRequestId' = ${quoteRequestId}
+    `;
+    expect(early, "no business may be emailed before the requester confirms").toHaveLength(0);
+
+    // The requester follows the link in the email.
+    await page.goto(`/get-quotes/verify?token=${encodeURIComponent(verifyJob!.token!)}`);
+    await page.waitForURL(/\/get-quotes\/confirmed\?state=verified$/);
+    await expect(page.locator('[data-testid="quote-confirmed"]')).toBeVisible();
+    const [verified] = await sql<{ status: string; verified_at: Date | null }[]>`
+      select status, verified_at from quote_requests where id = ${quoteRequestId}
+    `;
+    expect(verified).toMatchObject({ status: "verified" });
+    expect(verified!.verified_at).not.toBeNull();
+
+    // Now, and only now, the delivery is queued. A second click changes nothing.
     const [job] = await sql<{ id: string; status: string }[]>`
       select id, status from job_queue
       where kind = 'notify.quote' and payload->>'quoteRequestId' = ${quoteRequestId}
     `;
-    expect(job?.status, "one notify.quote job must be queued").toBe("pending");
+    expect(job?.status, "one notify.quote job must be queued by the click").toBe("pending");
+    await page.goto(`/get-quotes/verify?token=${encodeURIComponent(verifyJob!.token!)}`);
+    await page.waitForURL(/\/get-quotes\/confirmed\?state=already$/);
+    const jobs = await sql`
+      select 1 from job_queue where kind = 'notify.quote' and payload->>'quoteRequestId' = ${quoteRequestId}
+    `;
+    expect(jobs, "a reused link must not queue a second delivery").toHaveLength(1);
 
     // The worker, in-process against the same database. No mail provider is
     // configured here, so each delivery resolves `not-configured` and the
