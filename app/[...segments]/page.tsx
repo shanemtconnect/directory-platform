@@ -13,8 +13,10 @@ import { getListingDetail, relatedListings } from "@/lib/db/queries/listing-deta
 import { awardText, awardYearsForListings, listingAwards } from "@/lib/db/queries/awards";
 import {
   listingSchema, pillarSchema, breadcrumbSchema, faqSchema, reviewsPageSchema,
-  type RenderedReview,
+  neighbourhoodPillarSchema, type RenderedReview,
 } from "@/lib/schema/builders";
+import { cityNeighbourhoods } from "@/lib/db/queries/neighbourhoods";
+import { neighbourhoodsEnabled } from "@/lib/geo/neighbourhoods";
 import { features } from "@/lib/features/flags";
 import { guardFeature } from "@/lib/features/guard";
 import {
@@ -260,13 +262,20 @@ export default async function CatchAllPage({ params }: Props) {
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
 
-      const [rows, total, categories, nearby, featuredBids] = await Promise.all([
+      // The town pillar lists its neighbourhoods (Task 52); nothing else does,
+      // and nothing does with the module off.
+      const withNeighbourhoods = result.scope.type === "city" && neighbourhoodsEnabled();
+
+      const [rows, total, categories, nearby, featuredBids, neighbourhoods] = await Promise.all([
         listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page }),
         countListings(db as never, PUBLIC_VIEWER, result.scope),
         cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
         // Page 1 only: the paid row sits above the grid and nowhere else.
         result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
+        withNeighbourhoods && cityId
+          ? cityNeighbourhoods(db as never, PUBLIC_VIEWER, cityId)
+          : Promise.resolve([]),
       ]);
 
       // A featured listing is not listed twice, and the page has ONE
@@ -300,24 +309,34 @@ export default async function CatchAllPage({ params }: Props) {
       // page 1 tells Google both pages are the same document.
       const pagePath = result.page === 1 ? basePath : `${basePath}/page/${result.page}`;
 
+      const collection = {
+        title: heading.title,
+        path: pagePath,
+        // The intro renders on page 1 only, so only page 1 describes
+        // itself with it.
+        description:
+          result.page === 1 && heading.introHtml ? stripTags(heading.introHtml) : null,
+        // A listing lives at /city/slug, never under the category or
+        // neighbourhood segment — /leeds/{category}/{listing} is a 404.
+        items: rows.map((l) => ({ name: l.name, path: `${cityPath}/${l.slug}` })),
+      };
+      // A neighbourhood (Task 52) names its town in the breadcrumb and in
+      // `containedInPlace`, both from the same row the visible crumb uses.
+      const town = heading.parent ? { name: heading.parent.name, path: `/${heading.parent.slug}` } : null;
+
       return (
         <>
           <JsonLd
-            data={pillarSchema({
-              title: heading.title,
-              path: pagePath,
-              // The intro renders on page 1 only, so only page 1 describes
-              // itself with it.
-              description:
-                result.page === 1 && heading.introHtml ? stripTags(heading.introHtml) : null,
-              // A listing lives at /city/slug, never under the category
-              // segment — /leeds/{category}/{listing} is a 404.
-              items: rows.map((l) => ({ name: l.name, path: `${cityPath}/${l.slug}` })),
-            })}
+            data={
+              town
+                ? neighbourhoodPillarSchema({ ...collection, neighbourhood: heading.place, city: town })
+                : pillarSchema(collection)
+            }
           />
           <JsonLd
             data={breadcrumbSchema([
               { name: "Home", path: "/" },
+              ...(town ? [town] : []),
               { name: heading.place, path: basePath },
             ])}
           />
@@ -337,8 +356,11 @@ export default async function CatchAllPage({ params }: Props) {
             basePath={basePath}
             cityPath={cityPath}
             awardYears={awardYears}
+            neighbourhoods={neighbourhoods}
             spotKey={
-              cityId === null
+              // A neighbourhood has no featured spot of its own; offering the
+              // town's there would sell a position the page does not show.
+              cityId === null || result.scope.type === "city-area"
                 ? undefined
                 : `city:${cityId}:${result.scope.type === "city-category" ? result.scope.categoryId : "-"}`
             }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import {
   organisationSchema, websiteSchema, breadcrumbSchema,
   listingSchema, pillarSchema, faqSchema, siteUrl, reviewsPageSchema, regionPillarSchema,
+  neighbourhoodPillarSchema,
 } from "./builders";
 import type { listings, cities, categories } from "@/lib/db/schema";
 
@@ -289,6 +290,26 @@ describe("regionPillarSchema", () => {
       title: "T", region: "R", path: "/areas/r", items: [],
     }) as Record<string, unknown>;
     expect(out["mainEntity"]).toBeUndefined();
+  });
+});
+
+describe("neighbourhoodPillarSchema (Task 52)", () => {
+  it("is the pillar's CollectionPage + ItemList, about the neighbourhood, containedInPlace its town", () => {
+    const input = {
+      title: "Venues in Headingley, Leeds", path: "/leeds/headingley",
+      items: [{ name: "The Old Barn", path: "/leeds/the-old-barn" }],
+    };
+    const out = neighbourhoodPillarSchema({
+      ...input, neighbourhood: "Headingley", city: { name: "Leeds", path: "/leeds" },
+    }) as Record<string, unknown>;
+    // Everything the town × category page emits, unchanged.
+    const base = pillarSchema(input) as Record<string, unknown>;
+    for (const key of Object.keys(base)) expect(out[key]).toEqual(base[key]);
+    expect(out["about"]).toEqual({
+      "@type": "Place",
+      name: "Headingley",
+      containedInPlace: { "@type": "City", name: "Leeds", url: "https://example.test/leeds" },
+    });
   });
 });
 
