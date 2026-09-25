@@ -148,6 +148,13 @@
       "when": 1790600003000,
       "tag": "0021_lead_credits",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790600004000,
+      "tag": "0022_lead_market",
+      "breakpoints": true
     }
   ]
 }

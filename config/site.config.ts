@@ -271,12 +271,14 @@ export const siteConfig = {
   // Pay-per-lead (flag leadMarketplace). A lead sells at the floor, halves
   // after a week on the board and is deleted after a month. Credit is bought
   // in these packs; a bad lead can be reported for a week after purchase.
+  // A sold lead's contact details are purged 90 days after the sale.
   leads: {
     floor: 25,
     packs: [50, 100, 300],
     halfPriceAfterDays: 7,
     deleteAfterDays: 30,
     refundWindowDays: 7,
+    retainSoldDays: 90,
   },
 } as const satisfies SiteConfig;
 

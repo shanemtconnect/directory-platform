@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { siteConfig } from "@/config/site.config";
-import { isSavedSearchClaim, verifyUnsubscribe } from "@/lib/email/unsubscribe";
+import { isLeadDigestClaim, isSavedSearchClaim, verifyUnsubscribe } from "@/lib/email/unsubscribe";
 import { UNSUBSCRIBE_RATE_LIMIT, limitPublicWrite } from "@/lib/spam/write-limit";
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -15,7 +15,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
  * flag: a link already sent has to keep working whatever the site does now.
  *
  * `?done=1` is where the POST lands: a page a person can be pointed at again.
- * `?done=alerts` is the same for a saved-search digest's link (Task 54).
+ * `?done=alerts` is the same for a saved-search digest's link (Task 54), and
+ * `?done=leads` for the weekly lead-board digest's (Task 58).
  */
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,19 @@ export default async function UnsubscribePage({ searchParams }: Props) {
       </main>
     );
   }
+  if (done === "leads") {
+    return (
+      <main>
+        <div className="mx-auto max-w-2xl">
+          <PageHeader title="Lead emails turned off" />
+          <Notice variant="success" testId="unsubscribe-done">
+            We won&rsquo;t send you the weekly count of open leads again. Leads your standing orders buy are
+            still emailed to you — manage those under <a href="/account/leads">your leads</a>.
+          </Notice>
+        </div>
+      </main>
+    );
+  }
   if (done === "1") {
     return (
       <main>
@@ -89,7 +103,9 @@ export default async function UnsubscribePage({ searchParams }: Props) {
 
   const lede = isSavedSearchClaim(claim)
     ? `Press the button and ${siteConfig.name} will stop emailing ${claim.email} the alerts for this saved search.`
-    : `Press the button and ${siteConfig.name} will stop emailing ${claim.email} about quote requests and similar messages.`;
+    : isLeadDigestClaim(claim)
+      ? `Press the button and ${siteConfig.name} will stop emailing ${claim.email} the weekly count of open leads.`
+      : `Press the button and ${siteConfig.name} will stop emailing ${claim.email} about quote requests and similar messages.`;
 
   return (
     <main>

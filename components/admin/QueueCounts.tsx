@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { AdminQueueCounts } from "@/lib/db/queries/admin/dashboard";
+import { features } from "@/lib/features/flags";
 
 /**
  * The dashboard's tiles: where the work is.
@@ -59,6 +60,10 @@ function tiles(counts: AdminQueueCounts): Tile[] {
       href: "/admin/removals",
       quiet: "Nothing is waiting to come down.",
     },
+    // Lead market (Task 58): only where /admin/leads exists.
+    ...(features.leadMarketplace
+      ? [{ label: "Bad-lead reports", value: counts.pendingLeadRefunds, href: "/admin/leads", quiet: "No reports to decide." }]
+      : []),
   ];
 }
 

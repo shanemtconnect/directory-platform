@@ -98,6 +98,13 @@ export function buildRoutes(f: FeatureMap, mode: SiteMode): NavEntry[] {
     routes.push({ href: "/post-a-job", label: "Post a job", inNav: false, inFooter: true, inSitemap: true });
   }
 
+  // Lead board (Task 58): app/leads/page.tsx ships in the same commit. In the
+  // header for everyone — the page sends a signed-out visitor to sign in and
+  // back — but never in the footer or sitemap: it is a signed-in page.
+  if (f.leadMarketplace) {
+    routes.push({ href: "/leads", label: "Leads", inNav: true, inFooter: false, inSitemap: false });
+  }
+
   // Saved searches (Task 54) advertise nothing here on purpose: there is no
   // public route. The save button sits on /search and /jobs, and
   // /account/alerts is linked from /account — a signed-in page that no nav,

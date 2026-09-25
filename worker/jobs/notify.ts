@@ -10,6 +10,10 @@ import {
   NOTIFY_DECISION,
   NOTIFY_ENQUIRY,
   NOTIFY_KINDS,
+  NOTIFY_LEAD_BOARD_DIGEST,
+  NOTIFY_LEAD_REFUND_DECIDED,
+  NOTIFY_LEAD_TOPUP,
+  NOTIFY_LEAD_WON,
   NOTIFY_QUOTE,
   NOTIFY_QUOTE_VERIFY,
   NOTIFY_REMOVAL,
@@ -84,6 +88,11 @@ import { features } from "@/lib/features/flags";
 import { now } from "@/lib/clock";
 import { topupNotification } from "@/lib/db/queries/credits";
 import { topupReceipt } from "@/lib/email/templates/credits";
+import {
+  boardDigestAccount, leadRefundNotification, leadTopupNotification, leadWonNotification,
+} from "@/lib/db/queries/lead-market";
+import { boardDigest, leadRefundDecided, leadTopup, leadWon } from "@/lib/email/templates/leads";
+import { REFUND_REASON_LABELS } from "@/lib/leads/market";
 
 /**
  * Drains the notification queue.
@@ -466,6 +475,15 @@ async function run(db: Db, d: Delivery, job: QueuedJob): Promise<void> {
     // Appended by the lead-credit module (Task 57); the handler is at the foot.
     case NOTIFY_CREDIT_TOPUP:
       return runCreditTopup(db, d, job.payload);
+    // Appended by the lead market (Task 58); the handlers are at the foot.
+    case NOTIFY_LEAD_WON:
+      return runLeadWon(db, d, job.payload);
+    case NOTIFY_LEAD_TOPUP:
+      return runLeadTopup(db, d, job.payload);
+    case NOTIFY_LEAD_REFUND_DECIDED:
+      return runLeadRefundDecided(db, d, job.payload);
+    case NOTIFY_LEAD_BOARD_DIGEST:
+      return runLeadBoardDigest(db, d, job.payload);
     default:
       // claimNextJob is given NOTIFY_KINDS, so this is unreachable unless a
       // kind is added to that list without a case here.
@@ -1014,6 +1032,105 @@ async function runCreditTopup(db: Db, d: Delivery, payload: Record<string, unkno
       amount: creditMoney(data.packCents),
       balance: creditMoney(data.balanceCents),
       creditUrl: siteUrl("/account/credit"),
+    }),
+  });
+}
+
+/* ------------------------------------------------- lead market (Task 58) */
+
+/**
+ * The won email: the full contact details, re-read now. A lead deleted since
+ * the sale (or a buyer with no address) sends nothing and completes. Sent
+ * whatever the flag says now — the buyer has paid for it.
+ */
+async function runLeadWon(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const purchaseId = readId(payload, "purchaseId");
+  if (purchaseId === null) throw new Retryable("The job carries no purchaseId");
+  const data = await leadWonNotification(db, ADMIN_VIEWER, purchaseId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...leadWon({
+      buyerName: data.buyerName,
+      listingName: data.listingName,
+      viaStandingOrder: data.viaStandingOrder,
+      price: creditMoney(data.priceCents),
+      name: data.name,
+      email: data.leadEmail,
+      phone: data.phone,
+      message: data.message,
+      town: data.cityName,
+      category: data.categoryName,
+      leadUrl: siteUrl(`/leads/${data.leadId}`),
+    }),
+  });
+}
+
+/** The order is still paused for credit, or nothing is sent (the owner has already resumed it). */
+async function runLeadTopup(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const standingOrderId = readId(payload, "standingOrderId");
+  if (standingOrderId === null) throw new Retryable("The job carries no standingOrderId");
+  const data = await leadTopupNotification(db, ADMIN_VIEWER, standingOrderId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...leadTopup({
+      name: data.name,
+      listingName: data.listingName,
+      price: creditMoney(data.priceCents),
+      balance: creditMoney(data.balanceCents),
+      creditUrl: siteUrl("/account/credit"),
+      ordersUrl: siteUrl("/account/leads"),
+    }),
+  });
+}
+
+async function runLeadRefundDecided(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  const refundId = readId(payload, "refundId");
+  if (refundId === null) throw new Retryable("The job carries no refundId");
+  const data = await leadRefundNotification(db, ADMIN_VIEWER, refundId);
+  if (data === null) return;
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...leadRefundDecided({
+      name: data.name,
+      approved: data.status === "approved",
+      blocklisted: data.blocklisted,
+      price: creditMoney(data.priceCents),
+      reason: REFUND_REASON_LABELS[data.reason],
+      firstName: data.firstName,
+      brief: data.brief,
+      note: data.decisionNote,
+      leadsUrl: siteUrl("/account/leads"),
+    }),
+  });
+}
+
+/**
+ * The weekly board digest. The count was worked out at dispatch from one
+ * read of the open leads (worker/jobs/leads.ts); the account is re-read now,
+ * so one that has opted out since, or lost its address, is sent nothing.
+ * Every digest carries its one-click unsubscribe; one that cannot is not sent.
+ */
+async function runLeadBoardDigest(db: Db, d: Delivery, payload: Record<string, unknown>): Promise<void> {
+  if (!features.leadMarketplace) return;
+  const profileId = readId(payload, "profileId");
+  if (profileId === null) throw new Retryable("The job carries no profileId");
+  const openCount = typeof payload.openCount === "number" && Number.isInteger(payload.openCount) ? payload.openCount : 0;
+  if (openCount <= 0) return;
+  const account = await boardDigestAccount(db, ADMIN_VIEWER, profileId);
+  if (account === null) return;
+  const data = { ...account, openCount };
+  const token = signUnsubscribe({ userId: profileId, email: data.email });
+  if (token === null) throw new Retryable("No unsubscribe key (EMAIL_UNSUBSCRIBE_SECRET / BETTER_AUTH_SECRET)");
+  await deliver(d, BUYER, {
+    to: data.email,
+    ...boardDigest({
+      name: data.name,
+      openCount: data.openCount,
+      boardUrl: siteUrl("/leads"),
+      ordersUrl: siteUrl("/account/leads"),
+      unsubscribeToken: token,
     }),
   });
 }

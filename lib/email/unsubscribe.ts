@@ -35,10 +35,24 @@ export interface SavedSearchUnsubscribeClaim {
   email: string;
 }
 
-export type UnsubscribeClaim = ListingUnsubscribeClaim | SavedSearchUnsubscribeClaim;
+/**
+ * The weekly lead-board digest (Task 58). `userId` is the account's
+ * `profiles.id`; the link turns that account's digest off
+ * (`profiles.lead_digest_opt_out`) and nothing else.
+ */
+export interface LeadDigestUnsubscribeClaim {
+  userId: string;
+  /** The address the digest went to — the page shows it back. */
+  email: string;
+}
+
+export type UnsubscribeClaim = ListingUnsubscribeClaim | SavedSearchUnsubscribeClaim | LeadDigestUnsubscribeClaim;
 
 export const isSavedSearchClaim = (claim: UnsubscribeClaim): claim is SavedSearchUnsubscribeClaim =>
   "savedSearchId" in claim;
+
+export const isLeadDigestClaim = (claim: UnsubscribeClaim): claim is LeadDigestUnsubscribeClaim =>
+  "userId" in claim;
 
 function secret(): string | null {
   const s = process.env.EMAIL_UNSUBSCRIBE_SECRET?.trim() || process.env.BETTER_AUTH_SECRET?.trim() || "";
@@ -56,11 +70,13 @@ function sign(payload: string, key: string): string {
 export function signUnsubscribe(claim: UnsubscribeClaim): string | null {
   const key = secret();
   if (key === null) return null;
-  // `l` for a listing, `s` for a saved search: the key IS the variant, so a
-  // token minted for one can never be read as the other.
+  // `l` for a listing, `s` for a saved search, `u` for a lead digest: the key
+  // IS the variant, so a token minted for one can never be read as another.
   const body = isSavedSearchClaim(claim)
     ? { e: claim.email, s: claim.savedSearchId }
-    : { e: claim.email, l: claim.listingId };
+    : isLeadDigestClaim(claim)
+      ? { e: claim.email, u: claim.userId }
+      : { e: claim.email, l: claim.listingId };
   const payload = b64(JSON.stringify(body));
   return `${payload}.${sign(payload, key)}`;
 }
@@ -79,11 +95,14 @@ export function verifyUnsubscribe(token: string | null | undefined): Unsubscribe
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
 
   try {
-    const parsed = JSON.parse(unb64(payload)) as { e?: unknown; l?: unknown; s?: unknown };
+    const parsed = JSON.parse(unb64(payload)) as { e?: unknown; l?: unknown; s?: unknown; u?: unknown };
     const filled = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
     if (!filled(parsed.e)) return null;
-    if (filled(parsed.l) && parsed.s === undefined) return { email: parsed.e, listingId: parsed.l };
-    if (filled(parsed.s) && parsed.l === undefined) return { savedSearchId: parsed.s, email: parsed.e };
+    const keys = [parsed.l, parsed.s, parsed.u].filter((v) => v !== undefined).length;
+    if (keys !== 1) return null;
+    if (filled(parsed.l)) return { email: parsed.e, listingId: parsed.l };
+    if (filled(parsed.s)) return { savedSearchId: parsed.s, email: parsed.e };
+    if (filled(parsed.u)) return { userId: parsed.u, email: parsed.e };
     return null;
   } catch {
     return null;

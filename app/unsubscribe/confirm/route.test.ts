@@ -3,6 +3,7 @@ import type { RateLimitResult } from "@/lib/spam/rate-limit";
 
 const recordUnsubscribe = vi.fn<(...a: unknown[]) => Promise<{ written: boolean }>>();
 const deactivateSavedSearch = vi.fn<(...a: unknown[]) => Promise<boolean>>();
+const setLeadDigestOptOut = vi.fn<(...a: unknown[]) => Promise<boolean>>();
 const limitPublicWrite = vi.fn<(...a: unknown[]) => Promise<RateLimitResult>>();
 const HANDLE = { marker: "the transaction" };
 
@@ -14,6 +15,9 @@ vi.mock("@/lib/db/queries/unsubscribes", () => ({
 }));
 vi.mock("@/lib/db/queries/saved-searches", () => ({
   deactivateSavedSearch: (...args: unknown[]) => deactivateSavedSearch(...args),
+}));
+vi.mock("@/lib/db/queries/lead-market", () => ({
+  setLeadDigestOptOut: (...args: unknown[]) => setLeadDigestOptOut(...args),
 }));
 vi.mock("@/lib/spam/write-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/spam/write-limit")>()),
@@ -37,6 +41,7 @@ beforeEach(() => {
   process.env.EMAIL_UNSUBSCRIBE_SECRET = "unit-test-secret";
   recordUnsubscribe.mockReset().mockResolvedValue({ written: true });
   deactivateSavedSearch.mockReset().mockResolvedValue(true);
+  setLeadDigestOptOut.mockReset().mockResolvedValue(true);
   limitPublicWrite.mockReset().mockResolvedValue(allowed);
 });
 
@@ -62,6 +67,18 @@ describe("POST /unsubscribe/confirm", () => {
     // The token's address goes to the query, which only acts while it is still the owner's.
     expect(deactivateSavedSearch).toHaveBeenCalledWith(HANDLE, { role: "public" }, searchId, "alerts@example.com", "203.0.113.9");
     expect(recordUnsubscribe).not.toHaveBeenCalled();
+  });
+
+  it("turns off the lead-board digest a digest token names, and nothing else", async () => {
+    const { signUnsubscribe } = await import("@/lib/email/unsubscribe");
+    const userId = "66666666-6666-4666-8666-666666666666";
+    const res = await post(signUnsubscribe({ userId, email: "buyer@example.com" })!);
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("https://example.co.uk/unsubscribe?done=leads");
+    expect(setLeadDigestOptOut).toHaveBeenCalledWith(HANDLE, { role: "public" }, { profileId: userId, email: "buyer@example.com", optOut: true });
+    expect(recordUnsubscribe).not.toHaveBeenCalled();
+    expect(deactivateSavedSearch).not.toHaveBeenCalled();
   });
 
   it("refuses a tampered or missing token without writing", async () => {

@@ -587,3 +587,46 @@ export async function notifyCreditTopup(tx: TestDb, viewer: Viewer, creditOrderI
   const payload: CreditTopupJobPayload = { creditOrderId };
   await enqueueJob(tx, viewer, { kind: NOTIFY_CREDIT_TOPUP, payload });
 }
+
+/* ------------------------------------------------- lead market (Task 58) */
+
+/**
+ * A standing order won a lead: the buyer gets the full contact details —
+ * one of the only two places they exist after a sale (the other is the
+ * buyer's /leads/<id> page). The payload is the purchase id; the worker
+ * re-reads the lead, so a lead deleted in between sends nothing.
+ */
+export const NOTIFY_LEAD_WON = "notify.lead.won";
+/** A standing order was paused because its balance no longer covers its price. Once per pause. */
+export const NOTIFY_LEAD_TOPUP = "notify.lead.topup";
+/** An admin approved or rejected a bad-lead report. */
+export const NOTIFY_LEAD_REFUND_DECIDED = "notify.lead.refund-decided";
+/** The weekly board digest to one account: how many open leads sit in its territories. */
+export const NOTIFY_LEAD_BOARD_DIGEST = "notify.lead.board-digest";
+NOTIFY_KINDS.push(NOTIFY_LEAD_WON, NOTIFY_LEAD_TOPUP, NOTIFY_LEAD_REFUND_DECIDED, NOTIFY_LEAD_BOARD_DIGEST);
+
+export type LeadWonJobPayload = { purchaseId: string };
+export type LeadTopupJobPayload = { standingOrderId: string };
+export type LeadRefundDecidedJobPayload = { refundId: string };
+/** `openCount` is worked out at dispatch from one read of the open leads. */
+export type LeadBoardDigestJobPayload = { profileId: string; openCount: number };
+
+export async function notifyLeadWon(tx: TestDb, viewer: Viewer, purchaseId: string): Promise<void> {
+  const payload: LeadWonJobPayload = { purchaseId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_WON, payload });
+}
+
+export async function notifyLeadTopup(tx: TestDb, viewer: Viewer, standingOrderId: string): Promise<void> {
+  const payload: LeadTopupJobPayload = { standingOrderId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_TOPUP, payload });
+}
+
+export async function notifyLeadRefundDecided(tx: TestDb, viewer: Viewer, refundId: string): Promise<void> {
+  const payload: LeadRefundDecidedJobPayload = { refundId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_REFUND_DECIDED, payload });
+}
+
+export async function notifyLeadBoardDigest(tx: TestDb, viewer: Viewer, profileId: string, openCount: number): Promise<void> {
+  const payload: LeadBoardDigestJobPayload = { profileId, openCount };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_LEAD_BOARD_DIGEST, payload });
+}

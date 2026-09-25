@@ -417,7 +417,7 @@ describe("validateNeighbourhoods (Task 52)", () => {
 });
 
 describe("validateLeads", () => {
-  const leads = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7 };
+  const leads = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7, retainSoldDays: 90 };
 
   it("passes for the shipped config", () => {
     expect(() => validateLeads(siteConfig)).not.toThrow();
@@ -457,7 +457,7 @@ describe("isPlaceholderLegalEntity", () => {
 });
 
 describe("validateLeads", () => {
-  const good = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7 };
+  const good = { floor: 25, packs: [50, 100, 300], halfPriceAfterDays: 7, deleteAfterDays: 30, refundWindowDays: 7, retainSoldDays: 90 };
 
   it("passes the shipped config and the documented defaults", () => {
     expect(() => validateLeads(siteConfig)).not.toThrow();
@@ -480,5 +480,11 @@ describe("validateLeads", () => {
     expect(() => validateLeads({ leads: { ...good, halfPriceAfterDays: 0 } })).toThrow(/halfPriceAfterDays/);
     expect(() => validateLeads({ leads: { ...good, deleteAfterDays: 1.5 } })).toThrow(/deleteAfterDays/);
     expect(() => validateLeads({ leads: { ...good, refundWindowDays: -1 } })).toThrow(/refundWindowDays/);
+    expect(() => validateLeads({ leads: { ...good, retainSoldDays: 0 } })).toThrow(/retainSoldDays/);
+  });
+
+  it("keeps a sold lead's contact details at least as long as it can be reported", () => {
+    expect(() => validateLeads({ leads: { ...good, refundWindowDays: 14, retainSoldDays: 13 } })).toThrow(/retainSoldDays must be at least refundWindowDays/);
+    expect(() => validateLeads({ leads: { ...good, refundWindowDays: 14, retainSoldDays: 14 } })).not.toThrow();
   });
 });

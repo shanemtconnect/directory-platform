@@ -121,7 +121,7 @@ describe("createLeadFromQuote", () => {
         priceCents: siteConfig.leads.floor * 100, soldAt: null, buyerUserId: null,
       });
       expect(lead!.phoneNormalised).toMatch(/^\+44163297\d{4}$/);
-      expect(lead!.emailNormalised).toBe(lead!.email.toLowerCase());
+      expect(lead!.emailNormalised).toBe(lead!.email!.toLowerCase());
       expect(lead!.halfPriceAt.getTime()).toBe(NOW.getTime() + siteConfig.leads.halfPriceAfterDays * DAY);
       expect(lead!.expiresAt.getTime()).toBe(NOW.getTime() + siteConfig.leads.deleteAfterDays * DAY);
       expect(lead!.brief).not.toMatch(/Requester/);

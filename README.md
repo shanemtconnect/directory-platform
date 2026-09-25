@@ -777,6 +777,73 @@ neither on another lead in the last 30 days. The board only ever shows
 postcodes and the surname stripped. Creating a lead emails nobody; selling it
 is `afterLeadCreated` in `lib/leads/hooks.ts` (Task 58).
 
+### Operating the site: leads (Task 58, flag `leadMarketplace`)
+
+**Who gets a lead.** The moment a lead is made (the requester's Confirm),
+`allocateLead` (`lib/leads/allocate.ts`) offers it to the **standing orders**
+that cover it: active orders whose places include the lead's town, that
+town's region, or everywhere, and whose categories are "all" or include the
+lead's, on a listing still live and owned by the order's account. The
+highest price wins; on a tie, the older order. The winner is debited its own
+price from credit, the lead is marked `sold`, and the buyer is emailed the
+full contact details (`notify.lead.won`). One buyer per lead. An order whose
+balance is below its price is **paused** (`no_credit`) and its owner emailed
+once (`notify.lead.topup`); they top up and press Resume on `/account/leads`.
+If nobody takes it the lead waits on the board. Allocation runs in a
+savepoint of the confirm request: if it fails the lead stays open, the error
+is logged and the requester still sees "confirmed".
+
+**The board** is `/leads` (header link "Leads"; signed-in only, never in the
+footer or sitemap). Each row shows first name, town, category, the brief, its
+age and today's price — `siteConfig.leads.floor`, halved after
+`halfPriceAfterDays`. "Buy" spends credit for one of the buyer's live
+listings; with too little credit the row offers a top-up instead and nothing
+is taken. Two people pressing at once: the lead row is locked, one wins, the
+other is told it has gone. The page prints the refund and no-refund policy
+(`lib/leads/market.ts`, one list for the board, the report form and the
+emails).
+
+**Contact details** of a sold lead appear in exactly two places: the buyer's
+`/leads/<id>` (a 404 for everybody else) and the won email, which is sent for
+a board purchase too. Every list — the board, `/account/leads`,
+`/admin/leads` — shows first name and brief only. `leads.sweep` purges a sold
+lead's name, email, phone, message and normalised keys
+`siteConfig.leads.retainSoldDays` (default 90, at least `refundWindowDays`)
+after the sale (`leads.sold_at`, so it happens even if the buyer deletes their
+account; a lead with a refund report still pending waits for the decision); the page then says the details have expired and the won
+email is the buyer's record. First name, brief, town, category, price, the
+purchase and any refund are kept.
+
+**Standing orders** live on `/account/leads`: towns, regions or everywhere,
+categories (none = all), a price of at least the floor, pause/resume, edit,
+delete; at most five per listing. Every change is audited.
+
+**Refunds (D10).** From `/leads/<id>`, within `refundWindowDays` of buying,
+the buyer reports a bad lead for one of: dead phone, wrong person, bounced
+email, spam, never asked, wrong area. `/admin/leads` lists the reports with
+each buyer's refund rate (reports ÷ leads bought; ⚠ above a third — a flag,
+never an automatic block). **Approve** credits the price back
+(`refundToCredit`), audits `lead.refund_approved` and emails the buyer; for
+dead phone, wrong person, spam and never asked — the requester's doing — it
+also blocklists the lead's phone and email for 12 months (the next request
+from either is refused). Wrong area (our data) and a bounced email (often a
+typo) are refunded without a blocklist; **Reject** needs a note, which the buyer is sent. A refund
+re-opens nothing: the lead stays `sold`, marked refunded in the admin list.
+`/admin/leads` can also delete an unsold lead (off the board; audited
+`lead.deleted`); a sold lead belongs to its buyer and is refused.
+Pending reports are counted on the dashboard and beside the nav link.
+
+**Housekeeping.** `leads.sweep` (hourly :13) marks open leads past
+`expires_at` expired and deletes unsold expired or deleted rows seven days
+after that; sold leads are kept, since their purchase and any refund point at
+them, but their contact details are purged `retainSoldDays` after the sale. `leads.retry_allocate` (hourly :43) offers open leads to orders created,
+edited or resumed in the last 70 minutes, each lead in its own committed
+transaction so a run cannot deadlock against a buyer on the board. `leads.board_digest` (Mondays 09:00,
+site time) queues one email per account with an active order or a purchase
+in 90 days and something open in its places — the count worked out once per
+run from one read of the open leads — with a one-click
+unsubscribe (`{ userId }` token) and a checkbox on `/account/leads`.
+
 ### Testing gotchas
 
 `corepack pnpm test:e2e -- e2e/admin.spec.ts` does **not** run one file — the
@@ -819,6 +886,9 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `neighbourhoods.assign-queue` | every minute | Runs the same assignment once for any queued "Assign listings now" presses. Shares the `neighbourhoods.assign` advisory lock with the nightly run, so the two never overlap | — |
 | `quotes.expire` | hourly :53 | Marks quote requests whose verification link lapsed (48 h, never clicked) `expired`. The click checks the window itself; this keeps the admin list honest | — |
 | `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
+| `leads.sweep` | hourly :13, only with `leadMarketplace` on | Open leads past `expires_at` become `expired` (off the board); unsold expired or admin-deleted leads are deleted 7 days after `expires_at`. Sold leads are kept, their contact details purged `leads.retainSoldDays` (90) after the sale | — |
+| `leads.retry_allocate` | hourly :43, only with `leadMarketplace` on | Offers open leads to standing orders created, edited or resumed in the last 70 minutes (`lib/leads/allocate.ts` `retryAllocation`) | — |
+| `leads.board_digest` | Mondays 09:00 site time, only with `leadMarketplace` on | Queues `notify.lead.board-digest` for each account with an active standing order or a purchase in 90 days that has not opted out; once per week (audit `leads.board_digest_sent`) | `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` |
 | `alerts.dispatch` | hourly :23, only with `savedSearches` on | Queues a `notify.saved_search` digest for each active saved search that is due (daily: last sent 24 h ago or more; weekly: 7 d; never sent: now) **and** has listings/jobs that went live (`coalesce(published_at, created_at)`) since its watermark; owner's email must be verified; half an hour's tolerance keeps the cadence from drifting. The notify drain re-reads, sends (with a one-click unsubscribe for that search), then stamps `last_sent_at` with the dispatch tick and moves `last_seen_published_at` | the email vars for delivery; `EMAIL_UNSUBSCRIBE_SECRET` or `BETTER_AUTH_SECRET` (no digest goes without its unsubscribe link) |
 
 Every job is a no-op on a site without the feature it serves; none of them

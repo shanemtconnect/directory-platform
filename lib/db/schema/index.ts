@@ -12,3 +12,4 @@ export * from "./spots";
 export * from "./alerts";
 export * from "./credits";
 export * from "./leads";
+export * from "./lead-market";

@@ -13,6 +13,7 @@ import { AWARDS_CRON, awardsCronOptions } from "./jobs/awards";
 import { SPOTS_DIGEST_CRON, spotsDigestCronOptions } from "./jobs/spots-digest";
 import { NEIGHBOURHOODS_CRON, NEIGHBOURHOODS_LOCK } from "./jobs/neighbourhoods";
 import { ALERTS_DISPATCH_CRON } from "./jobs/alerts";
+import { LEADS_DIGEST_CRON, LEADS_RETRY_CRON, LEADS_SWEEP_CRON, leadsDigestCronOptions } from "./jobs/leads";
 
 // The worker has no health check and no requests to fail loudly, so a missing
 // key would otherwise show up as jobs that quietly never run. (DATABASE_URL is
@@ -306,4 +307,26 @@ if (features.savedSearches) {
     const { checked, queued } = await dispatchAlerts(tx);
     console.log(`[worker] alerts.dispatch checked ${checked}, queued ${queued}`);
   });
+}
+
+// Lead market (Task 58). Hourly, off the hour: `leads.sweep` takes expired
+// leads off the board and deletes unsold ones a week after; and
+// `leads.retry_allocate` offers open leads to standing orders saved since
+// the last run. Mondays at 09:00 in the site's zone, one board digest job
+// per buyer (marked per week, so a restart cannot send it twice). Only with
+// the module on. See worker/jobs/leads.ts.
+if (features.leadMarketplace) {
+  schedule("leads.sweep", LEADS_SWEEP_CRON, async (tx) => {
+    const { runLeadsSweep } = await import("./jobs/leads");
+    await runLeadsSweep(tx);
+  });
+  schedule("leads.retry_allocate", LEADS_RETRY_CRON, async (tx) => {
+    const { runLeadsRetryAllocate } = await import("./jobs/leads");
+    await runLeadsRetryAllocate(tx);
+  });
+  schedule("leads.board_digest", LEADS_DIGEST_CRON, async (tx) => {
+    const { dispatchBoardDigest } = await import("./jobs/leads");
+    const { queued } = await dispatchBoardDigest(tx);
+    console.log(`[worker] leads.board_digest queued ${queued}`);
+  }, leadsDigestCronOptions());
 }

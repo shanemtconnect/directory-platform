@@ -17,6 +17,8 @@ export const profiles = pgTable("profiles", {
   phone: text("phone"),
   billingCustomerId: text("billing_customer_id"),
   marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
+  /** The weekly lead-board digest (Task 58): off by its unsubscribe link or the account page. */
+  leadDigestOptOut: boolean("lead_digest_opt_out").notNull().default(false),
 }, (t) => [uniqueIndex("profiles_user_key").on(t.userId)]);
 
 export const claims = pgTable("claims", {
