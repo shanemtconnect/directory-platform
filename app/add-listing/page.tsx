@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { submissionOptions } from "@/lib/db/queries/submissions";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { SubmitListingForm } from "@/components/submit/SubmitListingForm";
+import { ImportFromUrl } from "@/components/submit/ImportFromUrl";
 
 export const metadata: Metadata = {
   title: `Add your ${siteConfig.entity.singular}`,
@@ -51,11 +52,24 @@ export default async function AddListingPage() {
         <li>We never set a rating or a verified badge from a form. Both have to be earned.</li>
       </ul>
 
-      <SubmitListingForm
-        categories={options.categories}
-        regions={options.regions}
-        turnstileSiteKey={turnstileSiteKey}
-      />
+      {/*
+        With the URL import on, ImportFromUrl renders the paste-an-address box
+        and the form beneath it, prefilled from whatever the import found. It
+        only ever fills fields in: the person still checks and submits.
+      */}
+      {siteConfig.listing.importFromUrl ? (
+        <ImportFromUrl
+          categories={options.categories}
+          regions={options.regions}
+          turnstileSiteKey={turnstileSiteKey}
+        />
+      ) : (
+        <SubmitListingForm
+          categories={options.categories}
+          regions={options.regions}
+          turnstileSiteKey={turnstileSiteKey}
+        />
+      )}
     </main>
   );
 }

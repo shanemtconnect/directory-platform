@@ -142,6 +142,24 @@ function normaliseWebsite(raw: string): string | null {
   }
 }
 
+/**
+ * The public submission form's fields by `name`, as the strings the form
+ * posts. What `SubmitListingForm` can be prefilled with (`initialValues`).
+ */
+export interface SubmissionFormValues {
+  name: string;
+  categoryId: string;
+  description: string;
+  addressLine1: string;
+  region: string;
+  city: string;
+  postcode: string;
+  phone: string;
+  website: string;
+  submitterName: string;
+  submitterEmail: string;
+}
+
 export function validateSubmission(form: FormData): Result<Omit<SubmissionInput, "ip">> {
   const errors: Record<string, string> = {};
 

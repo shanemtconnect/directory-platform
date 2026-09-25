@@ -43,6 +43,13 @@ one-listing city pages are how directories sink their own domain.
 (unclaimed → claimed → verified) and `tier` (free/essential/premium) are
 different columns, so a cancellation can drop a badge without touching a tier.
 
+**Import from a URL on `/add-listing`** (`siteConfig.listing.importFromUrl`,
+on by default). A "Paste the address" box above the form fetches the business's
+own page through the SSRF-guarded fetcher in `lib/net/safe-fetch.ts` (the same
+one the badge backlink check uses), reads its OpenGraph and JSON-LD, and
+prefills the form. It never submits: the person checks every field and the
+submission still passes Turnstile. Ten look-ups an hour per connection.
+
 **The ISR cache is per build, and that is deliberate.** It is Redis-backed and
 keyed `nextjs:<buildId>:`, so it is shared across replicas and survives a
 container restart, but a deploy starts cold. Cached HTML belongs to the build
