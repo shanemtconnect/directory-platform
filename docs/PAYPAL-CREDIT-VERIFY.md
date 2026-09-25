@@ -61,11 +61,13 @@ simulator, or a real endpoint subscribed to the event) and check:
   (`credit.payment.mismatch`, reason `order-mismatch`);
 - `resource.amount` is `{value, currency_code}`.
 
-**The webhook subscription must include `PAYMENT.CAPTURE.COMPLETED`.** The
+**The webhook subscription should include `PAYMENT.CAPTURE.COMPLETED`.** The
 subscription events alone (`BILLING.SUBSCRIPTION.*`, `PAYMENT.SALE.COMPLETED`)
-never deliver it; a missing subscription means top-ups settle only on the
-return page, and a buyer who closes the tab after approving is credited by
-nobody until an admin adjusts by hand.
+never deliver it. It is a backstop, not the capture path: with
+`intent: CAPTURE` PayPal sends it only after *we* capture, which only the
+return page does. Without it, a return page whose transaction fails after
+PayPal took the money leaves the buyer charged and uncredited until an admin
+adjusts by hand.
 
 ## 4. End to end on a sandbox deploy
 
@@ -78,7 +80,15 @@ With `leadMarketplace` on and sandbox keys set on web and worker:
    `{"outcome":"duplicate"}` (or `ignored` with `capture:already-credited` for
    a fresh event id) and the balance is unchanged.
 4. Start another top-up, approve, and **close the tab** before the return page
-   loads: the webhook alone credits it within a few seconds.
-5. The receipt email arrives (worker running, Resend configured).
+   loads. Expected: nothing is charged and nothing is credited — the order
+   stays `APPROVED` at PayPal (`GET $BASE/v2/checkout/orders/<id>`) until it
+   expires, and the `credit_orders` row stays `created`. Record that no
+   capture and no `PAYMENT.CAPTURE.COMPLETED` delivery happened. If PayPal
+   ever captures an approved order on its own, the webhook path settles it
+   and this step must be rewritten.
+5. Sign out in another tab, start a top-up, approve at PayPal: the return
+   page credits the order first and then sends you to sign in; after signing
+   in the balance shows it.
+6. The receipt email arrives (worker running, Resend configured).
 
 Record the results here with the date, then flip `leadMarketplace` on for real.

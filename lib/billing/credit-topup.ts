@@ -25,9 +25,11 @@ import {
  *
  * The same one-off Orders pair the jobs board uses (lib/billing/orders.ts):
  * a `credit_orders` row, an order created for exactly one configured pack
- * with `custom_id = credit:<row id>`, and two roads to "paid" — the return
- * page captures while the buyer is standing there, and the
- * `PAYMENT.CAPTURE.COMPLETED` webhook settles the buyer who closed the tab.
+ * with `custom_id = credit:<row id>`. With `intent: CAPTURE` approval moves
+ * no money: the return page is the only capture, and a buyer who approves
+ * and closes the tab is neither charged nor credited. The
+ * `PAYMENT.CAPTURE.COMPLETED` webhook is the backstop for a capture that
+ * happened but was not recorded, and for redeliveries.
  *
  * Exactly once, whichever arrives first: both lock the `credit_orders` row
  * (`FOR UPDATE`), a row already `captured` is reported and left alone, and
