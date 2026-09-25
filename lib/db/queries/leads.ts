@@ -240,6 +240,45 @@ export async function createCaptureLead(
   });
 }
 
+/**
+ * The verify route's door for a capture box: the verified capture request,
+ * read back and handed to `createCaptureLead`. Anything other than a
+ * verified, unflagged capture request makes nothing.
+ */
+export async function createLeadFromCaptureRequest(
+  tx: TestDb,
+  viewer: Viewer,
+  quoteRequestId: string,
+): Promise<Lead | null> {
+  if (!UUID.test(quoteRequestId)) return null;
+  const [request] = await tx
+    .select({
+      name: quoteRequests.name,
+      email: quoteRequests.email,
+      phone: quoteRequests.phone,
+      message: quoteRequests.message,
+      cityId: quoteRequests.cityId,
+      categoryId: quoteRequests.categoryId,
+      status: quoteRequests.status,
+      source: quoteRequests.source,
+      isSpam: quoteRequests.isSpam,
+    })
+    .from(quoteRequests)
+    .where(eq(quoteRequests.id, quoteRequestId))
+    .limit(1);
+  if (!request || request.status !== "verified" || request.isSpam || request.source !== "capture") return null;
+  if (request.email === null || request.message === null || request.cityId === null) return null;
+  return createCaptureLead(tx, viewer, {
+    cityId: request.cityId,
+    categoryId: request.categoryId,
+    name: request.name ?? request.email,
+    email: request.email,
+    phone: request.phone,
+    message: request.message,
+    quoteRequestId,
+  });
+}
+
 export interface EnquiryLeadInput {
   name: string;
   email: string;

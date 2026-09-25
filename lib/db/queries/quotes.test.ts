@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { withTestDb, type TestDb } from "@/test/db";
 import {
@@ -7,8 +7,14 @@ import {
 } from "@/lib/db/schema";
 import { PUBLIC_VIEWER, type Viewer } from "@/lib/db/viewer";
 import { makeCategoryInCity, makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
+import { hashToken } from "@/lib/security/token-hash";
+import { resetClock, setClock } from "@/lib/clock";
 import {
+  QUOTE_VERIFY_TTL_HOURS,
   createQuoteRequest,
+  expireQuoteRequests,
+  quoteVerification,
+  verifyQuoteToken,
   flagQuoteRequestSpam,
   listQuoteRequests,
   markQuoteOutcome,
@@ -17,7 +23,10 @@ import {
   quoteNotification,
   selectQuoteRecipients,
   type QuoteRequestInput,
+  type QuoteRequestResult,
 } from "./quotes";
+
+afterEach(() => resetClock());
 
 /** A real account: the audit row an admin write leaves resolves its profile. */
 async function makeAdmin(tx: TestDb): Promise<Viewer> {
@@ -45,6 +54,23 @@ async function makeOwner(tx: TestDb, email = `${randomUUID()}@example.com`) {
   await tx.insert(user).values({ id: userId, name: "Owner", email });
   const [row] = await tx.insert(profiles).values({ userId }).returning({ id: profiles.id });
   return { userId, profileId: row!.id, email, viewer: { role: "owner", userId } as Viewer };
+}
+
+/**
+ * A request as the verify route leaves it: created, then its link clicked.
+ * Everything downstream of the click — the worker's delivery, the owner's
+ * leads page, won/lost — only ever sees verified requests.
+ */
+async function createVerified(
+  tx: TestDb,
+  ctx: ListingCtx,
+  patch: Partial<QuoteRequestInput> = {},
+): Promise<Extract<QuoteRequestResult, { outcome: "created" }>> {
+  const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, patch));
+  if (created.outcome !== "created") throw new Error(created.outcome);
+  const verified = await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
+  if (verified.outcome !== "verified") throw new Error(verified.outcome);
+  return created;
 }
 
 async function recipientsOf(tx: TestDb, quoteRequestId: string): Promise<string[]> {
@@ -154,6 +180,13 @@ describe("createQuoteRequest", () => {
         name: "Sam Requester", email: "sam@example.co.uk", ip: "198.51.100.4", isSpam: false,
       });
       expect(row!.consentAt).not.toBeNull();
+      // Held until the requester clicks: pending, with only the token's digest stored.
+      expect(row).toMatchObject({ status: "pending", verifiedAt: null, source: "quote" });
+      expect(result.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(row!.verifyTokenHash).toBe(hashToken(result.token));
+      expect(row!.verifyTokenHash).not.toContain(result.token);
+      expect(row!.verifyExpiresAt!.getTime() - row!.createdAt.getTime())
+        .toBeGreaterThanOrEqual(QUOTE_VERIFY_TTL_HOURS * 3_600_000 - 5_000);
       expect(await recipientsOf(tx, result.quoteRequestId)).toEqual([a, b].sort());
 
       const masks = await tx
@@ -191,6 +224,32 @@ describe("createQuoteRequest", () => {
     });
   });
 
+  it("stores a request nobody can receive when the lead marketplace asks it to", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: null });
+
+      const result = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx), { allowNoRecipients: true });
+      expect(result).toMatchObject({ outcome: "created", recipientCount: 0 });
+      if (result.outcome !== "created") return;
+      expect(await recipientsOf(tx, result.quoteRequestId)).toEqual([]);
+    });
+  });
+
+  it("stores a capture request with no recipients even where listings could receive it", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com", tier: "premium" });
+
+      const result = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx), { source: "capture" });
+      expect(result).toMatchObject({ outcome: "created", recipientCount: 0 });
+      if (result.outcome !== "created") return;
+      expect(await recipientsOf(tx, result.quoteRequestId)).toEqual([]);
+      const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, result.quoteRequestId));
+      expect(row).toMatchObject({ source: "capture", status: "pending" });
+    });
+  });
+
   it("refuses an unknown or unpublished town and an inactive category", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
@@ -221,8 +280,7 @@ describe("quoteNotification", () => {
       });
       const unclaimed = await makeListing(tx, ctx, { name: "Unclaimed Hall", email: "listing@example.com" });
 
-      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
-      if (created.outcome !== "created") throw new Error(created.outcome);
+      const created = await createVerified(tx, ctx);
       await tx.insert(unsubscribes).values({ addressNormalised: "listing@example.com" });
 
       const data = await quoteNotification(tx, await makeAdmin(tx), created.quoteRequestId);
@@ -240,12 +298,25 @@ describe("quoteNotification", () => {
     });
   });
 
-  it("is worker-only and returns null for a flagged request", async () => {
+  it("returns null until the requester has clicked the link", async () => {
     await withTestDb(async (tx) => {
       const ctx = await makeScaffold(tx);
       await makeListing(tx, ctx, { email: "a@example.com" });
       const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
       if (created.outcome !== "created") throw new Error(created.outcome);
+      const ADMIN = await makeAdmin(tx);
+
+      expect(await quoteNotification(tx, ADMIN, created.quoteRequestId)).toBeNull();
+      await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
+      expect(await quoteNotification(tx, ADMIN, created.quoteRequestId)).not.toBeNull();
+    });
+  });
+
+  it("is worker-only and returns null for a flagged request", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const created = await createVerified(tx, ctx);
 
       const ADMIN = await makeAdmin(tx);
       await expect(quoteNotification(tx, PUBLIC_VIEWER, created.quoteRequestId)).rejects.toThrow("FORBIDDEN");
@@ -267,6 +338,10 @@ describe("ownerQuoteLeads", () => {
       const freeListing = await makeListing(tx, ctx, { email: "f@example.com", ownerId: free.profileId, claimStatus: "claimed" });
       const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
       if (created.outcome !== "created") throw new Error(created.outcome);
+
+      // Nothing on anybody's leads page until the requester confirms.
+      expect(await ownerQuoteLeads(tx, paid.viewer, paidListing)).toEqual([]);
+      await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
 
       const [paidLead] = await ownerQuoteLeads(tx, paid.viewer, paidListing);
       expect(paidLead).toMatchObject({
@@ -292,8 +367,7 @@ describe("ownerQuoteLeads", () => {
       const ctx = await makeScaffold(tx);
       const owner = await makeOwner(tx);
       const listingId = await makeListing(tx, ctx, { email: "f@example.com", ownerId: owner.profileId, claimStatus: "claimed" });
-      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
-      if (created.outcome !== "created") throw new Error(created.outcome);
+      const created = await createVerified(tx, ctx);
 
       expect((await ownerQuoteLeads(tx, owner.viewer, listingId))[0]!.job).toBeNull();
 
@@ -312,8 +386,7 @@ describe("markQuoteOutcome", () => {
       const ctx = await makeScaffold(tx);
       const owner = await makeOwner(tx);
       const listingId = await makeListing(tx, ctx, { email: "p@example.com", tier: "premium", ownerId: owner.profileId, claimStatus: "claimed" });
-      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
-      if (created.outcome !== "created") throw new Error(created.outcome);
+      await createVerified(tx, ctx);
       const [lead] = await ownerQuoteLeads(tx, owner.viewer, listingId);
 
       expect(await markQuoteOutcome(tx, owner.viewer, lead!.id, "won", "203.0.113.9")).toBe(true);
@@ -337,8 +410,7 @@ describe("markQuoteOutcome", () => {
       const owner = await makeOwner(tx);
       const stranger = await makeOwner(tx);
       const listingId = await makeListing(tx, ctx, { email: "f@example.com", ownerId: owner.profileId, claimStatus: "claimed" });
-      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
-      if (created.outcome !== "created") throw new Error(created.outcome);
+      await createVerified(tx, ctx);
       const [row] = await tx.select({ id: quoteRecipients.id }).from(quoteRecipients);
 
       expect(await markQuoteOutcome(tx, owner.viewer, row!.id, "won", null)).toBe(false);
@@ -366,7 +438,7 @@ describe("listQuoteRequests / flagQuoteRequestSpam", () => {
       await expect(listQuoteRequests(tx, PUBLIC_VIEWER)).rejects.toThrow("FORBIDDEN");
       const rows = await listQuoteRequests(tx, ADMIN);
       expect(rows.map((r) => r.name)).toEqual(["Second", "First"]);
-      expect(rows[0]).toMatchObject({ recipientCount: 2, wonCount: 0, isSpam: false });
+      expect(rows[0]).toMatchObject({ recipientCount: 2, wonCount: 0, isSpam: false, status: "pending" });
 
       expect(await flagQuoteRequestSpam(tx, ADMIN, first.quoteRequestId, true, "203.0.113.9")).toBe(true);
       expect(await flagQuoteRequestSpam(tx, ADMIN, first.quoteRequestId, true, "203.0.113.9")).toBe(false);
@@ -375,6 +447,133 @@ describe("listQuoteRequests / flagQuoteRequestSpam", () => {
 
       const [audit] = await tx.select().from(auditLog).where(eq(auditLog.action, "quote.flagged_spam"));
       expect(audit).toMatchObject({ entityId: first.quoteRequestId, ip: "203.0.113.9" });
+    });
+  });
+});
+
+describe("verifyQuoteToken", () => {
+  it("verifies a live link once, counts it for each recipient, and audits it", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      await makeListing(tx, ctx, { email: "b@example.com" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      const result = await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
+
+      expect(result).toEqual({
+        outcome: "verified", quoteRequestId: created.quoteRequestId, source: "quote", recipientCount: 2,
+      });
+      const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));
+      expect(row!.status).toBe("verified");
+      expect(row!.verifiedAt).not.toBeNull();
+      const audits = await tx.select().from(auditLog).where(eq(auditLog.entityId, created.quoteRequestId));
+      expect(audits.map((a) => a.action).sort()).toEqual(["quote.requested", "quote.verified"]);
+    });
+  });
+
+  it("reports a reused link as already verified and changes nothing", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const created = await createVerified(tx, ctx);
+      const [before] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));
+
+      expect(await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token))
+        .toEqual({ outcome: "already-verified", quoteRequestId: created.quoteRequestId });
+      const [after] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));
+      expect(after!.verifiedAt).toEqual(before!.verifiedAt);
+      const audits = await tx.select().from(auditLog).where(eq(auditLog.action, "quote.verified"));
+      expect(audits.filter((a) => a.entityId === created.quoteRequestId)).toHaveLength(1);
+    });
+  });
+
+  it("refuses a link older than 48 hours and marks the request expired", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      setClock(new Date("2026-09-25T12:00:00Z"));
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+
+      setClock(new Date(Date.parse("2026-09-25T12:00:00Z") + QUOTE_VERIFY_TTL_HOURS * 3_600_000 + 1000));
+      expect(await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "expired" });
+      const [row] = await tx.select().from(quoteRequests).where(eq(quoteRequests.id, created.quoteRequestId));
+      expect(row).toMatchObject({ status: "expired", verifiedAt: null });
+      // And stays refused.
+      expect(await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "expired" });
+    });
+  });
+
+  it("does not recognise a made-up, empty or oversized token", async () => {
+    await withTestDb(async (tx) => {
+      for (const token of ["", "nope", "x".repeat(500)]) {
+        expect(await verifyQuoteToken(tx, PUBLIC_VIEWER, token)).toEqual({ outcome: "unknown" });
+      }
+    });
+  });
+
+  it("does not verify a request an admin flagged as spam before the click", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      await flagQuoteRequestSpam(tx, await makeAdmin(tx), created.quoteRequestId, true, null);
+
+      expect(await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token)).toEqual({ outcome: "unknown" });
+    });
+  });
+});
+
+describe("quoteVerification", () => {
+  it("gives the worker what the verification email needs, admin only", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const created = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx));
+      if (created.outcome !== "created") throw new Error(created.outcome);
+      const ADMIN = await makeAdmin(tx);
+
+      await expect(quoteVerification(tx, PUBLIC_VIEWER, created.quoteRequestId)).rejects.toThrow("FORBIDDEN");
+      const data = await quoteVerification(tx, ADMIN, created.quoteRequestId);
+      expect(data).toMatchObject({
+        name: "Sam Requester", email: "sam@example.co.uk", status: "pending", source: "quote",
+        tokenHash: hashToken(created.token),
+      });
+      expect(data!.cityName).toBeTruthy();
+      expect(data!.categoryName).toBeTruthy();
+      expect(data!.expiresAt).toBeInstanceOf(Date);
+      expect(await quoteVerification(tx, ADMIN, randomUUID())).toBeNull();
+    });
+  });
+});
+
+describe("expireQuoteRequests", () => {
+  it("expires pending requests past their link, and leaves live and verified ones", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const T0 = Date.parse("2026-09-25T12:00:00Z");
+      setClock(new Date(T0));
+      const stale = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { name: "Stale" }));
+      const confirmed = await createVerified(tx, ctx, { name: "Confirmed" });
+      setClock(new Date(T0 + 47 * 3_600_000));
+      const fresh = await createQuoteRequest(tx, PUBLIC_VIEWER, input(ctx, { name: "Fresh" }));
+      if (stale.outcome !== "created" || fresh.outcome !== "created") throw new Error("not created");
+      const ADMIN = await makeAdmin(tx);
+
+      setClock(new Date(T0 + QUOTE_VERIFY_TTL_HOURS * 3_600_000 + 1000));
+      await expect(expireQuoteRequests(tx, PUBLIC_VIEWER)).rejects.toThrow("FORBIDDEN");
+      expect(await expireQuoteRequests(tx, ADMIN)).toBe(1);
+
+      const statusOf = async (id: string) =>
+        (await tx.select({ s: quoteRequests.status }).from(quoteRequests).where(eq(quoteRequests.id, id)))[0]!.s;
+      expect(await statusOf(stale.quoteRequestId)).toBe("expired");
+      expect(await statusOf(confirmed.quoteRequestId)).toBe("verified");
+      expect(await statusOf(fresh.quoteRequestId)).toBe("pending");
+      expect(await expireQuoteRequests(tx, ADMIN)).toBe(0);
     });
   });
 });

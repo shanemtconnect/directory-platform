@@ -258,6 +258,22 @@ export const BADGE_BACKLINK_RATE_LIMIT = { limit: 10, windowSeconds: 3600 } as c
 export const QUOTE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
 
 /**
+ * Thirty a minute per address, on the get-quotes verification link (Task
+ * 56). Same shape and reasoning as the review and claim links: the token is
+ * 256 random bits, and the limit stops a guess loop being a free query per
+ * guess while costing a real requester nothing — they click once.
+ */
+export const QUOTE_VERIFY_RATE_LIMIT = { limit: 30, windowSeconds: 60 } as const;
+
+/**
+ * Three an hour, on the lead-capture boxes (home page, rails). The same
+ * budget as the get-quotes form, in its own bucket: a capture request sends
+ * one verification email and is then offered to paying buyers, so a script
+ * filling it in is both mail signed with our domain and leads nobody asked for.
+ */
+export const LEAD_CAPTURE_RATE_LIMIT = { limit: 3, windowSeconds: 3600 } as const;
+
+/**
  * Thirty a minute per address, on the unsubscribe link — the page and the
  * POST behind its button share the bucket. The token is an HMAC over the
  * address, so guessing it is not realistic; what the limit stops is a guess

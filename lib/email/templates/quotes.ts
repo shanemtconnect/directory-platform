@@ -103,3 +103,40 @@ export function quoteAcknowledgement(data: QuoteAcknowledgementData): EmailConte
   ];
   return { subject, ...layout({ subject, heading: `Sent to ${n} ${noun}`, blocks }) };
 }
+
+export interface QuoteVerifyEmailData {
+  requesterName: string;
+  cityName: string;
+  categoryName: string;
+  /** Absolute URL of /get-quotes/verify?token=… */
+  verifyUrl: string;
+  /** How long the link lives. `QUOTE_VERIFY_TTL_HOURS`, never retyped. */
+  expiresHours: number;
+  /** `capture` is a lead-capture box: nothing is broadcast, so the copy says less. */
+  source: "quote" | "capture";
+}
+
+/**
+ * The one email a requester gets before anybody else hears of the request.
+ * It says plainly that nothing has been sent yet, and that ignoring it is a
+ * complete answer: the request expires and nobody is contacted.
+ */
+export function quoteVerifyEmail(data: QuoteVerifyEmailData): EmailContent {
+  const e = siteConfig.entity;
+  const subject = `Confirm your request for ${data.categoryName} in ${data.cityName}`;
+  const blocks: Block[] = [
+    {
+      value:
+        `Hello ${data.requesterName}. Please confirm this is your email address and we will pass ` +
+        `your request for ${data.categoryName} in ${data.cityName} on to ${e.plural} that can help. ` +
+        `Nothing has been sent to anyone yet.`,
+    },
+    { label: "Confirm my request", value: data.verifyUrl, href: data.verifyUrl },
+    {
+      value:
+        `The link works for ${data.expiresHours} hours. If you did not ask for quotes, ignore this ` +
+        `email: the request expires and nobody is contacted.`,
+    },
+  ];
+  return { subject, ...layout({ subject, heading: "Confirm your request", blocks }) };
+}

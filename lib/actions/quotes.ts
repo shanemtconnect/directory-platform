@@ -11,7 +11,7 @@ import {
   markQuoteOutcome,
 } from "@/lib/db/queries/quotes";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
-import { notifyQuoteRequest } from "@/lib/email/notify";
+import { notifyQuoteVerify } from "@/lib/email/notify";
 import { isEnabled } from "@/lib/features/flags";
 import { clientIp } from "@/lib/spam/client-ip";
 import { isHoneypotTripped, verifyTurnstile } from "@/lib/spam/turnstile";
@@ -35,7 +35,10 @@ import { validateQuoteRequest } from "./quotes-validation";
 
 export interface QuoteFormState {
   status: "idle" | "sent" | "error";
-  /** On "sent": how many businesses the request went to. */
+  /**
+   * On "sent": how many businesses the request WILL go to once the
+   * requester clicks the verification link. Nobody has been written to yet.
+   */
   recipientCount?: number;
   message?: string;
   fieldErrors?: Record<string, string>;
@@ -83,13 +86,16 @@ export async function submitQuoteRequest(
     return { status: "error", message: "We couldn't verify that you're human. Please try again." };
   }
 
-  // Recipients, request, audit row and the queued job land together or not
-  // at all: a notification for a request that rolled back is a lie to five
-  // businesses.
+  // Recipients, request, audit row and the queued verification email land
+  // together or not at all. The recipients are NOT written to here: the
+  // requester's click (app/get-quotes/verify/route.ts) is what queues their
+  // copies. With the lead marketplace on, a request nobody local can take is
+  // kept rather than refused — the click turns it into a lead.
+  const allowNoRecipients = isEnabled("leadMarketplace");
   const result = await db.transaction(async (tx) => {
     const handle = tx as unknown as TestDb;
-    const created = await createQuoteRequest(handle, PUBLIC_VIEWER, { ...values, ip });
-    await notifyQuoteRequest(handle, PUBLIC_VIEWER, created);
+    const created = await createQuoteRequest(handle, PUBLIC_VIEWER, { ...values, ip }, { allowNoRecipients });
+    await notifyQuoteVerify(handle, PUBLIC_VIEWER, created);
     return created;
   });
 

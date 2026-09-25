@@ -255,6 +255,15 @@ schedule("spots-digest", SPOTS_DIGEST_CRON, async (tx) => {
   await runSpotsDigest(tx);
 }, spotsDigestCronOptions());
 
+// Quote verification (Task 56). Hourly, off the hour like the other sweeps:
+// a request nobody confirmed within 48 hours is marked expired. The click
+// checks the window itself, so this is housekeeping, not the gate. Runs on a
+// flag-off site too — it finds nothing there.
+schedule("quotes.expire", "53 * * * *", async (tx) => {
+  const { expirePendingQuotes } = await import("./jobs/quotes-expire");
+  await expirePendingQuotes(tx);
+});
+
 // Clicks on featured cards (Task 45) live in Redis between flushes like the
 // other counters; five minutes, beside flush-stats and flush-sponsor-stats.
 schedule("flush-featured-clicks", "*/5 * * * *", async (tx) => {

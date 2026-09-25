@@ -7,7 +7,9 @@ import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
 import { resetClock, setClock } from "@/lib/clock";
 import { siteConfig } from "@/config/site.config";
-import { briefFor, createCaptureLead, createEnquiryLead, createLeadFromQuote } from "./leads";
+import {
+  briefFor, createCaptureLead, createEnquiryLead, createLeadFromCaptureRequest, createLeadFromQuote,
+} from "./leads";
 
 const DAY = 86_400_000;
 const NOW = new Date("2026-09-25T12:00:00Z");
@@ -159,6 +161,23 @@ describe("createCaptureLead", () => {
 
       // The same address again inside thirty days is a duplicate.
       expect(await createCaptureLead(tx, PUBLIC_VIEWER, { ...input, phone: freshPhone() })).toBeNull();
+    });
+  });
+});
+
+describe("createLeadFromCaptureRequest", () => {
+  it("turns a verified capture request into one capture lead, and nothing else into any", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      const capture = await verifiedRequest(tx, ctx, [], { source: "capture", name: "Pat Capture" });
+      const pending = await verifiedRequest(tx, ctx, [], { source: "capture", status: "pending", verifiedAt: null });
+      const quote = await verifiedRequest(tx, ctx, []);
+
+      const lead = await createLeadFromCaptureRequest(tx, PUBLIC_VIEWER, capture);
+      expect(lead).toMatchObject({ source: "capture", quoteRequestId: capture, firstName: "Pat", status: "open" });
+      expect(await createLeadFromCaptureRequest(tx, PUBLIC_VIEWER, capture)).toBeNull();
+      expect(await createLeadFromCaptureRequest(tx, PUBLIC_VIEWER, pending)).toBeNull();
+      expect(await createLeadFromCaptureRequest(tx, PUBLIC_VIEWER, quote)).toBeNull();
     });
   });
 });

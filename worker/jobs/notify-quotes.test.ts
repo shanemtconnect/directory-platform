@@ -4,7 +4,7 @@ import { withTestDb, type TestDb } from "@/test/db";
 import { jobQueue, profiles, unsubscribes, user } from "@/lib/db/schema";
 import { PUBLIC_VIEWER } from "@/lib/db/viewer";
 import { makeListing, makeScaffold, type ListingCtx } from "@/test/factories";
-import { createQuoteRequest } from "@/lib/db/queries/quotes";
+import { createQuoteRequest, verifyQuoteToken } from "@/lib/db/queries/quotes";
 import type { SendResult } from "@/lib/email/sender";
 
 const sendEmail = vi.fn<(m: Record<string, unknown>) => Promise<SendResult>>();
@@ -13,7 +13,7 @@ vi.mock("@/lib/email/sender", () => ({
   sendEmail: (m: Record<string, unknown>) => sendEmail(m),
 }));
 
-const { notifyQuoteRequest } = await import("@/lib/email/notify");
+const { notifyQuoteRequest, notifyQuoteVerify } = await import("@/lib/email/notify");
 const { processNotifications } = await import("./notify");
 
 const ENV = { ...process.env };
@@ -44,6 +44,23 @@ async function makeOwner(tx: TestDb, email: string): Promise<string> {
   return row!.id;
 }
 
+/** Submitted, NOT yet clicked: only the verification job is queued. */
+async function submittedRequest(tx: TestDb, ctx: ListingCtx) {
+  const created = await createQuoteRequest(tx, PUBLIC_VIEWER, {
+    cityId: ctx.cityId,
+    categoryId: ctx.primaryCategoryId,
+    name: "Sam Requester",
+    email: "sam@example.co.uk",
+    phone: null,
+    message: "Eighty people in June, with parking.",
+    ip: null,
+  });
+  if (created.outcome !== "created") throw new Error(created.outcome);
+  await notifyQuoteVerify(tx, PUBLIC_VIEWER, created);
+  return created;
+}
+
+/** Submitted and clicked: the delivery job is queued, as the verify route leaves it. */
 async function queuedRequest(tx: TestDb, ctx: ListingCtx): Promise<string> {
   const created = await createQuoteRequest(tx, PUBLIC_VIEWER, {
     cityId: ctx.cityId,
@@ -55,7 +72,9 @@ async function queuedRequest(tx: TestDb, ctx: ListingCtx): Promise<string> {
     ip: null,
   });
   if (created.outcome !== "created") throw new Error(created.outcome);
-  await notifyQuoteRequest(tx, PUBLIC_VIEWER, created);
+  const verified = await verifyQuoteToken(tx, PUBLIC_VIEWER, created.token);
+  if (verified.outcome !== "verified") throw new Error(verified.outcome);
+  await notifyQuoteRequest(tx, PUBLIC_VIEWER, created.quoteRequestId);
   return created.quoteRequestId;
 }
 
@@ -190,6 +209,63 @@ describe("processNotifications — quotes", () => {
       const { quoteRequests } = await import("@/lib/db/schema");
       const { eq } = await import("drizzle-orm");
       await tx.update(quoteRequests).set({ isSpam: true }).where(eq(quoteRequests.id, id));
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sendEmail).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("processNotifications — quote verification", () => {
+  it("sends the requester the link, and only the requester, then scrubs the token", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com", tier: "premium" });
+      const created = await submittedRequest(tx, ctx);
+
+      expect(await processNotifications(tx)).toBe(1);
+
+      const mail = sent();
+      expect(mail.map((m) => m.to)).toEqual(["sam@example.co.uk"]);
+      expect(mail[0]!.subject).toMatch(/confirm/i);
+      expect(mail[0]!.text).toContain(
+        `https://example.co.uk/get-quotes/verify?token=${encodeURIComponent(created.token)}`,
+      );
+      expect(mail[0]!.text).toContain("48 hours");
+      const job = await jobRow(tx);
+      expect(job).toMatchObject({ kind: "notify.quote-verify", status: "done" });
+      expect(job.payload).toEqual({ quoteRequestId: created.quoteRequestId });
+    });
+  });
+
+  it("sends nothing once the link has been clicked, or for a token that is not the live one", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const clicked = await submittedRequest(tx, ctx);
+      await verifyQuoteToken(tx, PUBLIC_VIEWER, clicked.token);
+
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sendEmail).not.toHaveBeenCalled();
+
+      const { enqueueJob } = await import("@/lib/db/queries/jobs");
+      const other = await submittedRequest(tx, ctx);
+      await tx.delete(jobQueue);
+      await enqueueJob(tx, PUBLIC_VIEWER, {
+        kind: "notify.quote-verify", payload: { quoteRequestId: other.quoteRequestId, token: "forged" },
+      });
+      expect(await processNotifications(tx)).toBe(1);
+      expect(sendEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a delivery job for a request nobody confirmed sends nothing", async () => {
+    await withTestDb(async (tx) => {
+      const ctx = await makeScaffold(tx);
+      await makeListing(tx, ctx, { email: "a@example.com" });
+      const created = await submittedRequest(tx, ctx);
+      await tx.delete(jobQueue);
+      await notifyQuoteRequest(tx, PUBLIC_VIEWER, created.quoteRequestId);
 
       expect(await processNotifications(tx)).toBe(1);
       expect(sendEmail).not.toHaveBeenCalled();

@@ -1,4 +1,5 @@
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
+import { and, desc, eq, lte, sql, type SQL } from "drizzle-orm";
 import { siteConfig } from "@/config/site.config";
 import type { TierName } from "@/config/types";
 import {
@@ -10,6 +11,8 @@ import { now } from "@/lib/clock";
 import { isAdmin, type Viewer } from "@/lib/db/viewer";
 import type { TestDb } from "@/lib/db/types";
 import { recordStat } from "@/lib/stats/counters";
+import { hashToken } from "@/lib/security/token-hash";
+import { QUOTE_VERIFY_TTL_HOURS } from "@/lib/quotes/verify-ttl";
 import { writeAudit } from "./audit";
 import { ownedByViewer } from "./owner";
 
@@ -130,8 +133,16 @@ export interface QuoteRequestInput {
   ip: string | null;
 }
 
+/** Re-exported: the verify route, the worker and the tests read it from here. */
+export { QUOTE_VERIFY_TTL_HOURS };
+
 export type QuoteRequestResult =
-  | { outcome: "created"; quoteRequestId: string; recipientCount: number }
+  /**
+   * `token` is the raw verification token: 32 random bytes, base64url. It
+   * exists here and in the verification job's payload, and nowhere else —
+   * the row holds its SHA-256.
+   */
+  | { outcome: "created"; quoteRequestId: string; recipientCount: number; token: string }
   | { outcome: "unknown-city" }
   | { outcome: "unknown-category" }
   /** Nothing published in that town and category has an address. Nothing was written. */
@@ -139,18 +150,27 @@ export type QuoteRequestResult =
 
 /**
  * The write. Caller supplies the transaction so the request, its recipients,
- * the audit row and the queued notification land together.
+ * the audit row and the queued verification email land together.
+ *
+ * The request is written PENDING (Task 56): recipients are chosen now, so
+ * the businesses a requester is told about are the ones that get it, but
+ * nobody is emailed and nothing appears on a leads page until the
+ * requester clicks the link (`verifyQuoteToken`).
  *
  * A request nobody can receive is refused rather than stored: telling the
  * visitor it was "sent to 0 businesses" is a lie, and a row with no
- * recipients is a row no page would ever show.
+ * recipients is a row no page would ever show. The exception is the lead
+ * marketplace (`allowNoRecipients`), where such a request becomes a lead on
+ * the click — and a capture box (`source: "capture"`), which is never
+ * broadcast at all.
  */
 export async function createQuoteRequest(
   tx: TestDb,
   viewer: Viewer,
   input: QuoteRequestInput,
-  opts: { maxRecipients?: number } = {},
+  opts: { maxRecipients?: number; allowNoRecipients?: boolean; source?: "quote" | "capture" } = {},
 ): Promise<QuoteRequestResult> {
+  const source = opts.source ?? "quote";
   if (!UUID.test(input.cityId)) return { outcome: "unknown-city" };
   if (!UUID.test(input.categoryId)) return { outcome: "unknown-category" };
 
@@ -168,14 +188,19 @@ export async function createQuoteRequest(
     .limit(1);
   if (!category) return { outcome: "unknown-category" };
 
-  const recipients = await selectQuoteRecipients(tx, viewer, {
-    cityId: input.cityId,
-    categoryId: input.categoryId,
-    limit: opts.maxRecipients ?? siteConfig.quotes.maxRecipients,
-  });
-  if (recipients.length === 0) return { outcome: "no-recipients" };
+  const recipients = source === "capture"
+    ? []
+    : await selectQuoteRecipients(tx, viewer, {
+      cityId: input.cityId,
+      categoryId: input.categoryId,
+      limit: opts.maxRecipients ?? siteConfig.quotes.maxRecipients,
+    });
+  if (recipients.length === 0 && source === "quote" && opts.allowNoRecipients !== true) {
+    return { outcome: "no-recipients" };
+  }
 
   const at = now();
+  const token = randomBytes(32).toString("base64url");
   const [row] = await tx
     .insert(quoteRequests)
     .values({
@@ -187,22 +212,24 @@ export async function createQuoteRequest(
       categoryId: input.categoryId,
       ip: input.ip,
       consentAt: at,
+      status: "pending",
+      source,
+      verifyTokenHash: hashToken(token),
+      verifyExpiresAt: new Date(at.getTime() + QUOTE_VERIFY_TTL_HOURS * 3_600_000),
     })
     .returning({ id: quoteRequests.id });
   const quoteRequestId = row!.id;
 
-  await tx.insert(quoteRecipients).values(
-    recipients.map((r) => ({
-      quoteRequestId,
-      listingId: r.listingId,
-      // What the EMAIL carried. The leads page reads the current tier instead.
-      contactMasked: !quoteContactVisible(r.tier),
-    })),
-  );
-
-  // The owner ROI counter, one per listing chosen. Redis, never a row here;
-  // the worker folds it into listing_stats_daily. Never throws.
-  for (const r of recipients) await recordStat(r.listingId, "quote_request", at);
+  if (recipients.length > 0) {
+    await tx.insert(quoteRecipients).values(
+      recipients.map((r) => ({
+        quoteRequestId,
+        listingId: r.listingId,
+        // What the EMAIL carried. The leads page reads the current tier instead.
+        contactMasked: !quoteContactVisible(r.tier),
+      })),
+    );
+  }
 
   // A public write with a fan-out: the audit row is the record of where it
   // came from and how far it went. The actor is null — nobody is signed in.
@@ -213,12 +240,160 @@ export async function createQuoteRequest(
     meta: {
       cityId: input.cityId,
       categoryId: input.categoryId,
+      source,
       recipients: recipients.map((r) => r.listingId),
     },
     ip: input.ip,
   });
 
-  return { outcome: "created", quoteRequestId, recipientCount: recipients.length };
+  return { outcome: "created", quoteRequestId, recipientCount: recipients.length, token };
+}
+
+export type QuoteVerifyResult =
+  | {
+    outcome: "verified";
+    quoteRequestId: string;
+    source: "quote" | "capture";
+    /** How many listings the request is now delivered to. */
+    recipientCount: number;
+  }
+  /** The link was used before. Nothing changed. */
+  | { outcome: "already-verified"; quoteRequestId: string }
+  /** Older than `QUOTE_VERIFY_TTL_HOURS`, or swept by the worker. */
+  | { outcome: "expired" }
+  /** No such link, or a request an admin has flagged. */
+  | { outcome: "unknown" };
+
+/** A base64url token is 43 characters; anything far longer is not ours. */
+const MAX_TOKEN_CHARS = 128;
+
+/**
+ * The click. Single use: the pending → verified step is one conditional
+ * UPDATE, so two clicks racing each other verify once, and the loser is told
+ * "already verified". The digest is kept on the row so a later click is
+ * recognised rather than reported as a link we have never seen.
+ *
+ * Verification is where the request starts to count: the owner ROI counter
+ * is bumped here, one per recipient, not at submit — an unconfirmed request
+ * reached nobody. The caller enqueues the delivery (`notifyQuoteRequest`)
+ * and creates any lead, in the same transaction.
+ */
+export async function verifyQuoteToken(
+  tx: TestDb,
+  viewer: Viewer,
+  raw: string,
+): Promise<QuoteVerifyResult> {
+  if (raw === "" || raw.length > MAX_TOKEN_CHARS) return { outcome: "unknown" };
+
+  const [row] = await tx
+    .select({
+      id: quoteRequests.id,
+      status: quoteRequests.status,
+      source: quoteRequests.source,
+      isSpam: quoteRequests.isSpam,
+      expiresAt: quoteRequests.verifyExpiresAt,
+    })
+    .from(quoteRequests)
+    .where(eq(quoteRequests.verifyTokenHash, hashToken(raw)))
+    .limit(1);
+  if (!row || row.isSpam || row.status === "spam" || row.source === "enquiry") return { outcome: "unknown" };
+  if (row.status === "verified") return { outcome: "already-verified", quoteRequestId: row.id };
+  if (row.status === "expired") return { outcome: "expired" };
+
+  const at = now();
+  if (row.expiresAt === null || row.expiresAt.getTime() <= at.getTime()) {
+    await tx
+      .update(quoteRequests)
+      .set({ status: "expired", updatedAt: at })
+      .where(and(eq(quoteRequests.id, row.id), eq(quoteRequests.status, "pending")));
+    return { outcome: "expired" };
+  }
+
+  const updated = await tx
+    .update(quoteRequests)
+    .set({ status: "verified", verifiedAt: at, updatedAt: at })
+    .where(and(eq(quoteRequests.id, row.id), eq(quoteRequests.status, "pending")))
+    .returning({ id: quoteRequests.id });
+  if (updated.length === 0) return { outcome: "already-verified", quoteRequestId: row.id };
+
+  const recipients = await tx
+    .select({ listingId: quoteRecipients.listingId })
+    .from(quoteRecipients)
+    .where(eq(quoteRecipients.quoteRequestId, row.id));
+  // The owner ROI counter, one per listing chosen. Redis, never a row here;
+  // the worker folds it into listing_stats_daily. Never throws.
+  for (const r of recipients) await recordStat(r.listingId, "quote_request", at);
+
+  await writeAudit(tx, viewer, {
+    action: "quote.verified",
+    entityType: "quote_request",
+    entityId: row.id,
+    meta: { recipients: recipients.length },
+  });
+
+  return {
+    outcome: "verified",
+    quoteRequestId: row.id,
+    source: row.source === "capture" ? "capture" : "quote",
+    recipientCount: recipients.length,
+  };
+}
+
+export interface QuoteVerification {
+  name: string | null;
+  email: string;
+  cityName: string;
+  categoryName: string;
+  status: "pending" | "verified" | "expired" | "spam";
+  source: "quote" | "capture" | "enquiry";
+  /** The digest of the live link; the job's token must hash to it. */
+  tokenHash: string | null;
+  expiresAt: Date | null;
+}
+
+/** What the worker needs for the verification email. Worker-only. */
+export async function quoteVerification(
+  tx: TestDb,
+  viewer: Viewer,
+  quoteRequestId: string,
+): Promise<QuoteVerification | null> {
+  assertAdmin(viewer);
+  if (!UUID.test(quoteRequestId)) return null;
+
+  const [row] = await tx
+    .select({
+      name: quoteRequests.name,
+      email: quoteRequests.email,
+      cityName: cities.name,
+      categoryName: categories.name,
+      status: quoteRequests.status,
+      source: quoteRequests.source,
+      tokenHash: quoteRequests.verifyTokenHash,
+      expiresAt: quoteRequests.verifyExpiresAt,
+    })
+    .from(quoteRequests)
+    .innerJoin(cities, eq(cities.id, quoteRequests.cityId))
+    .innerJoin(categories, eq(categories.id, quoteRequests.categoryId))
+    .where(eq(quoteRequests.id, quoteRequestId))
+    .limit(1);
+  if (!row || row.email === null) return null;
+  return { ...row, email: row.email };
+}
+
+/**
+ * The worker's hourly sweep: every pending request whose link has lapsed is
+ * marked expired, so it drops out of the admin's "unconfirmed" count and a
+ * late click is told the link has expired. Returns how many it expired.
+ */
+export async function expireQuoteRequests(tx: TestDb, viewer: Viewer): Promise<number> {
+  assertAdmin(viewer);
+  const at = now();
+  const rows = await tx
+    .update(quoteRequests)
+    .set({ status: "expired", updatedAt: at })
+    .where(and(eq(quoteRequests.status, "pending"), lte(quoteRequests.verifyExpiresAt, at)))
+    .returning({ id: quoteRequests.id });
+  return rows.length;
 }
 
 export interface QuoteNotificationRecipient {
@@ -266,6 +441,7 @@ export async function quoteNotification(
       phone: quoteRequests.phone,
       message: quoteRequests.message,
       isSpam: quoteRequests.isSpam,
+      status: quoteRequests.status,
       cityName: cities.name,
       categoryName: categories.name,
     })
@@ -275,6 +451,10 @@ export async function quoteNotification(
     .where(eq(quoteRequests.id, quoteRequestId))
     .limit(1);
   if (!request) return null;
+  // Only a request its sender has confirmed is delivered (D6). The job is
+  // enqueued by the click, so this only bites on a hand-queued job — which
+  // is exactly when it must.
+  if (request.status !== "verified") return null;
   // A request an admin has flagged before the tick ran is not sent. Same
   // shape as an unnotifiable enquiry: null, and the job completes.
   if (request.isSpam || request.email === null || request.message === null) return null;
@@ -368,6 +548,8 @@ export async function ownerQuoteLeads(
     .where(and(
       eq(quoteRecipients.listingId, listingId),
       eq(quoteRequests.isSpam, false),
+      // Unconfirmed requests reached nobody, and are not on anybody's page.
+      eq(quoteRequests.status, "verified"),
       ownedByViewer(viewer),
     ))
     .orderBy(desc(quoteRecipients.createdAt));
@@ -451,6 +633,8 @@ export interface AdminQuoteRequest {
   recipientCount: number;
   wonCount: number;
   isSpam: boolean;
+  /** `pending` until the requester clicks; `expired` if they never did. */
+  status: "pending" | "verified" | "expired" | "spam";
 }
 
 /** The console's read-only list, newest first. The IP stays in the row. */
@@ -482,6 +666,7 @@ export async function listQuoteRequests(
           and ${quoteRecipients.outcome} = 'won'
       )`,
       isSpam: quoteRequests.isSpam,
+      status: quoteRequests.status,
     })
     .from(quoteRequests)
     .innerJoin(cities, eq(cities.id, quoteRequests.cityId))

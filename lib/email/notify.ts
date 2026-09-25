@@ -63,6 +63,13 @@ export const NOTIFY_AWARD_WON = "notify.award.won";
 export const NOTIFY_QUOTE = "notify.quote";
 
 /**
+ * The requester's verification link (Task 56). Queued on submit INSTEAD of
+ * NOTIFY_QUOTE: nobody else is written to until the link is clicked, and the
+ * click (app/get-quotes/verify/route.ts) is what queues NOTIFY_QUOTE.
+ */
+export const NOTIFY_QUOTE_VERIFY = "notify.quote-verify";
+
+/**
  * Every kind worker/jobs/notify.ts claims — the ONE answer to "what does the
  * notify worker drain". `BILLING_NOTIFY_KINDS` below is deliberately not in
  * it: renewal-reminders.ts drains those itself.
@@ -87,6 +94,7 @@ export const NOTIFY_KINDS: string[] = [
   NOTIFY_AUTH_RESET,
   NOTIFY_AUTH_VERIFY,
   NOTIFY_QUOTE,
+  NOTIFY_QUOTE_VERIFY,
   NOTIFY_AWARD_WON,
 ];
 
@@ -398,14 +406,37 @@ import type { QuoteRequestResult } from "@/lib/db/queries/quotes";
 /** An id alone: the worker re-reads the request and re-resolves every address. */
 export type QuoteJobPayload = { quoteRequestId: string };
 
+/**
+ * The delivery: every recipient's copy and the requester's acknowledgement.
+ * Queued by the verification click, in the transaction that verified the
+ * request — never on submit.
+ */
 export async function notifyQuoteRequest(
+  tx: TestDb,
+  viewer: Viewer,
+  quoteRequestId: string,
+): Promise<void> {
+  const payload: QuoteJobPayload = { quoteRequestId };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE, payload });
+}
+
+/**
+ * The verification job carries the raw token because it has to — the row
+ * holds only its digest — like the review and claim links. `completeJob`
+ * scrubs it once the email has gone, and the worker re-reads the request, so
+ * a request clicked (or expired) before the tick is never sent a link.
+ */
+export type QuoteVerifyJobPayload = { quoteRequestId: string; token: string };
+
+/** Queued on submit, inside the transaction that wrote the pending request. */
+export async function notifyQuoteVerify(
   tx: TestDb,
   viewer: Viewer,
   result: QuoteRequestResult,
 ): Promise<void> {
   if (result.outcome !== "created") return;
-  const payload: QuoteJobPayload = { quoteRequestId: result.quoteRequestId };
-  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE, payload });
+  const payload: QuoteVerifyJobPayload = { quoteRequestId: result.quoteRequestId, token: result.token };
+  await enqueueJob(tx, viewer, { kind: NOTIFY_QUOTE_VERIFY, payload });
 }
 
 /* ------------------------------------------------------- awards (Task 50) */
