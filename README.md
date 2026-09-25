@@ -171,6 +171,7 @@ config (`essential`, `premium`) that is the four below;
 | `STATIC_ASSETS_DIR` | boot | `docker-entrypoint.sh` — web role only | No asset retention across deploys. Set but not writable: **refuses to boot** |
 | `PORT` `HOSTNAME` | boot | the standalone server; Dockerfile sets `3000` / `0.0.0.0` | Those defaults |
 | `ADS_ENABLED` | boot (read per request) | `lib/ads/policy.ts` — the sponsor rails kill switch | Follows `siteConfig.ads.enabled` (off in the template). The literal `false` hides every rail whatever the config says; the literal `true` shows them over a config that has them off — for checking a staging build, and for the e2e suite. Rails never appear on the home page, and never with real cards unless `SITE_ENV=production` (staging shows a labelled placeholder) |
+| `NEIGHBOURHOODS_ENABLED` | boot (read per request), worker | `lib/geo/neighbourhoods.ts` — the neighbourhoods switch | Follows `siteConfig.geo.neighbourhoods.enabled` (off in the template). `true` turns the module on over a config that has it off (staging review, the e2e suite); `false` turns it off. Never on for `local-multi-vertical` |
 | `SITE_FLAGS_OVERRIDE` | **build** | `config/flag-variants.ts` | Features come from `site.config.ts`. `on`/`off` exist for the two CI builds (`build:flags-on`, `build:flags-off`) and for staging image builds (Coolify build arg, so every module renders for review). Ignored under `SITE_ENV=production` — enforced in `resolveFeatures()`, with a build-time warning — so it cannot flip flags on a real site |
 | `BETTER_AUTH_RATE_LIMIT` | boot | `lib/auth/server.ts` | Rate limiting on. Only the literal `off` disables it, and only `playwright.config.ts` sets that |
 | `STATS_SEEN_SALT` | boot | `lib/stats/counters.ts` — salts the `sha256(ip, day, salt)` digest that stands in for a visitor's address in the one-view-per-day mark (`stats:seen:<day>:<digest>:<listing>`) | `BETTER_AUTH_SECRET` is used instead. Redis never holds a raw address either way; set this only to rotate the two independently |
@@ -602,10 +603,49 @@ nav; everything on it is waiting on a person.
 | `/admin/reports` | Reports from `/report/[id]` | Dismiss, or mark actioned |
 | `/admin/removals` | Removal requests from `/remove/[id]` | Mark actioned, or reject |
 | `/admin/audit`, `/admin/audit/[entityType]` | The audit log | Read-only |
+| `/admin/neighbourhoods` | Neighbourhoods under each town — only with `geo.neighbourhoods` on | Import a CSV, publish or unpublish, "Assign listings now". See below |
 
 Owners have `/account`, `/account/listings/[id]`, `…/enquiries`,
 `/account/settings` and `/account/billing`. Checkout is
 `/checkout/[tier]/[interval]?listing=<id>`, returning via `/checkout/return`.
+
+### Neighbourhoods under towns
+
+niche-national only, off by default: `geo.neighbourhoods` in
+`config/site.config.ts` (`enabled`, `minListings` 5, `defaultRadiusKm` 2), with
+`NEIGHBOURHOODS_ENABLED` as the env override. Off means no admin page, no nav
+link, no `/<town>/<neighbourhood>` route (it 404s) and a worker job that does
+nothing.
+
+A neighbourhood is an `areas` row with `city_id` set (local-multi-vertical
+areas keep it null) and a `slugs` row of kind `area` in its town's scope, so
+its page is `/<town>/<slug>` and it shares the town's namespace with that
+town's categories and listings.
+
+1. **Import** on `/admin/neighbourhoods`: a CSV whose first line is exactly
+   `city_slug,name,slug,lat,lng,radius_km`. `lat`/`lng` are the centroid;
+   an empty `slug` is made from the name, an empty `radius_km` is
+   `defaultRadiusKm`. Rows are skipped and reported by line for an unknown
+   town, a bad coordinate or radius, a reserved word, a slug a category or
+   listing already holds in that town (or any category's national slug — the
+   category would route there later), or a slug another town's neighbourhood
+   uses (`areas.slug` is unique site-wide). A row for a neighbourhood the town
+   already has updates it. One audit row per upload.
+2. **Assign**: every listing in a town with neighbourhoods gets `area_id` =
+   the nearest centroid whose own radius reaches it (ties to the lower slug),
+   or null when none does or it has no coordinates. Nightly at 02:41
+   (`neighbourhoods.assign`), or within a minute of "Assign listings now",
+   which queues a `job_queue` row the worker drains.
+3. **Pages**: `/<town>/<neighbourhood>` renders the pillar with the
+   breadcrumb Home › Town › Neighbourhood and the town × category page's
+   `ItemList`, `about` the neighbourhood `containedInPlace` the town. It is
+   `noindex` and out of the sitemap below `minListings` published listings.
+   The town page gains a "Neighbourhoods in …" block linking every published
+   neighbourhood with at least one listing.
+
+Listings arrive with coordinates only where the import or the owner gave
+them; the seed has none, so a fresh site's neighbourhoods stay empty until
+listings are located.
 
 ### Making the first admin
 
@@ -697,6 +737,8 @@ report "healthy" — `HEALTHCHECK NONE` made every worker deploy fail.
 | `badge-counters` | every minute | Moves badge impressions and clicks from Redis into `badges` | — |
 | `renewal-reminders` | hourly :17 | Queues the 30-, 7- and 0-day renewal emails, once per subscription and period | `PAYPAL_*` (no-op otherwise), the email vars for delivery |
 | `subscription-sync` | hourly :37 | Reconciles subscriptions whose paid period ended over three days ago against PayPal; lapses or extends; returns the pages to revalidate | `PAYPAL_*` (logs "not configured" otherwise), `INTERNAL_REVALIDATE_SECRET` (optional) |
+| `neighbourhoods.assign` | daily 02:41 | Assigns each listing in a town with neighbourhoods to the nearest centroid within its radius and recounts each neighbourhood; returns the town and neighbourhood pages that moved. No-op with `geo.neighbourhoods` off | — |
+| `neighbourhoods.assign-queue` | every minute | Runs the same assignment once for any queued "Assign listings now" presses | — |
 | `purge-stats` | daily 04:00 | Deletes `listing_stats_daily` rows older than `siteConfig.stats.retentionDays` (400; the build refuses less than 30 or less than any tier's `statsWindowDays`). `listings.view_count`, the lifetime total the flush maintains, is untouched | — |
 
 Every job is a no-op on a site without the feature it serves; none of them

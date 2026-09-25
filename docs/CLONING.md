@@ -505,6 +505,13 @@ the ones that matter, and let the rest earn it.
 
 Every slug change writes a `redirects` row and serves a 301. Never break a URL.
 
+Neighbourhood pages (`geo.neighbourhoods`, niche-national only, off by
+default) have their own gate: `noindex` and out of the sitemap until they hold
+`geo.neighbourhoods.minListings` published listings. Turn the module on only
+once listings carry coordinates — assignment is by distance, and a listing
+without `lat`/`lng` joins no neighbourhood. See README "Neighbourhoods under
+towns".
+
 ---
 
 ## 7. Legal checklist
