@@ -236,11 +236,22 @@ that holds all of them.
 | `directory_e2e` | Playwright | `corepack pnpm test:e2e:db` |
 
 ```bash
-corepack pnpm test                     # units, TEST_DATABASE_URL
+corepack pnpm test                     # units, then the race suite, TEST_DATABASE_URL
+corepack pnpm test:race                # only the race suite (*.race.test.ts)
 corepack pnpm test:e2e:db              # create/migrate/seed directory_e2e
 corepack pnpm test:e2e                 # Playwright, against directory_e2e
 bash scripts/e2e-db.sh --reset          # start that database again from the seeds (pnpm 12 passes "--" through, so call the script)
 ```
+
+Race tests run alone. A handful of tests (`*.race.test.ts`) must put two
+transactions in flight at once against committed rows — a row lock or an
+advisory lock never contends with itself inside one rolled-back transaction —
+so they commit real rows to `directory_test`. Run in parallel with the
+rolled-back suite, those rows skewed other files' global counts and collided on
+slugs, failing a different handful of files each run. So `vitest.config.ts`
+excludes them and `vitest.race.config.ts` runs them afterwards, one file at a
+time. Everything they commit is marked (`test/race.ts`) and swept after each
+file and before either suite, so even a killed run leaves nothing behind.
 
 The e2e suite **writes**. `e2e/location.spec.ts` submits a listing through the
 real form, which creates a city, a slug and a pending listing — that is the
