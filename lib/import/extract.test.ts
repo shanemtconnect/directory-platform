@@ -126,3 +126,49 @@ describe("extractBusiness", () => {
     });
   });
 });
+
+/*
+ * The page is attacker-hosted and extraction runs synchronously in a server
+ * action, so a pathological 1 MB body (the fetch cap) must not stall the
+ * event loop. The regex scanner this replaced took ~23 s on 400 KB of
+ * `<meta '` — quadratic backtracking on an unterminated tag.
+ */
+describe("extractBusiness — hostile input stays linear", () => {
+  const MB = 1_000_000;
+  const repeat = (unit: string): string => unit.repeat(Math.ceil(MB / unit.length));
+
+  it.each([
+    ["<meta '", repeat("<meta '")],
+    ["<!--", repeat("<!--")],
+    ["<script>", repeat("<script>")],
+    ["<title>", repeat("<title>")],
+    ["<", repeat("<")],
+    ['<meta content="', repeat('<meta content="')],
+    ["ld+json with an unterminated tag inside", `<script type="application/ld+json">{"@type":"LocalBusiness","name":"${repeat("<a")}"}</script>`],
+    ["an entity-looking run", `<meta property="og:title" content="${repeat("&a")}">`],
+    // Well-formed but numerous, so the scan runs to its bound instead of
+    // stopping at the first unterminated construct.
+    ["complete <meta> tags", repeat('<meta property="og:x" content="y">')],
+    ["empty comments", repeat("<!---->")],
+    ["complete scripts", repeat('<script type="application/ld+json">{"@type":"Thing"}</script>')],
+    ["unclosed < inside a JSON-LD value", `<script type="application/ld+json">{"@type":"LocalBusiness","name":"${"<".repeat(200_000)}","description":"${"&amp".repeat(10_000)}"}</script>`],
+  ])("finishes 1 MB of %s in well under a second", (_label, html) => {
+    const started = performance.now();
+    extractBusiness(html, BASE);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("still finds metadata after a pathological run inside the scanned region", () => {
+    const html = `<meta property="og:site_name" content="Found"><!-- unterminated ${"x".repeat(1000)}`;
+    expect(extractBusiness(html, BASE).name).toBe("Found");
+  });
+});
+
+describe("extractBusiness — non-ASCII case folding", () => {
+  it("keeps tag positions right after a character whose lower case is longer", () => {
+    // "İ".toLowerCase() is two code units; a full-string lower-casing would
+    // shift every index after it.
+    const html = `<title>İİİİ</title><META PROPERTY="og:site_name" CONTENT="After İ">`;
+    expect(extractBusiness(html, BASE).name).toBe("After İ");
+  });
+});

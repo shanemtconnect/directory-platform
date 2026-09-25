@@ -37,23 +37,153 @@ export const IMPORT_DESCRIPTION_MAX = Math.min(
 );
 
 /*
- * No HTML parser. The page is a stranger's, so the scanner is built to be
- * tolerant rather than correct: it looks for three things — <meta>, <title>
- * and ld+json <script> — and never throws on markup it cannot make sense of.
- * Attribute values are matched quote-aware, so a `>` inside one does not end
- * the tag early.
+ * No HTML parser, and no regex over the markup either.
+ *
+ * The page is a stranger's and this runs synchronously inside a server action,
+ * so the scanner has two jobs: be tolerant (never throw on markup it cannot
+ * make sense of) and be LINEAR. Regexes such as `<meta\b(...)*>` or
+ * `<!--[\s\S]*?-->` retry from every candidate start and scan to the end of
+ * the input when the closing token never comes — quadratic, and on a 1 MB body
+ * of `<meta '` that was minutes of a blocked event loop per request. Here every
+ * search is an `indexOf` or a single forward walk that the outer loop then
+ * jumps past, and an unterminated construct ends the scan rather than being
+ * retried from the next character.
+ *
+ * Only the first `MAX_SCAN_CHARS` are read. Metadata lives at the top of a
+ * page; JSON-LD is sometimes in the body, which is why this is a size bound
+ * rather than a cut at `</head>`.
  */
-const ATTRS = `(?:[^>"']|"[^"]*"|'[^']*')*`;
-const META = new RegExp(`<meta\\b(${ATTRS})>`, "gi");
-const SCRIPT = new RegExp(`<script\\b(${ATTRS})>([\\s\\S]*?)</script\\s*>`, "gi");
-const TITLE = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i;
-const ATTR = /([^\s=/>]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+export const MAX_SCAN_CHARS = 256 * 1024;
 
+interface Scanned {
+  meta: Map<string, string>;
+  title: string | undefined;
+  jsonLd: string[];
+}
+
+const isSpace = (c: string | undefined): boolean =>
+  c === " " || c === "\n" || c === "\t" || c === "\r" || c === "\f";
+
+/**
+ * Index of the `>` that closes the tag opened at `from`, walking quote-aware
+ * so a `>` inside an attribute value does not end it. -1 if it never closes.
+ */
+function tagEnd(html: string, from: number): number {
+  let quote: string | null = null;
+  for (let i = from; i < html.length; i++) {
+    const c = html[i]!;
+    if (quote !== null) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === ">") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Name → value for the attributes in `raw` (the text between the tag name and `>`). */
 function attributes(raw: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const m of raw.matchAll(ATTR)) {
-    const name = m[1]!.toLowerCase();
-    if (!out.has(name)) out.set(name, m[2] ?? m[3] ?? m[4] ?? "");
+  let i = 0;
+  const n = raw.length;
+  while (i < n) {
+    while (i < n && (isSpace(raw[i]) || raw[i] === "/")) i++;
+    const nameStart = i;
+    while (i < n && !isSpace(raw[i]) && raw[i] !== "=" && raw[i] !== "/") i++;
+    const name = raw.slice(nameStart, i).toLowerCase();
+    if (name === "") {
+      i++;
+      continue;
+    }
+    while (i < n && isSpace(raw[i])) i++;
+    let value = "";
+    if (raw[i] === "=") {
+      i++;
+      while (i < n && isSpace(raw[i])) i++;
+      const q = raw[i];
+      if (q === '"' || q === "'") {
+        const close = raw.indexOf(q, i + 1);
+        const end = close === -1 ? n : close;
+        value = raw.slice(i + 1, end);
+        i = end + 1;
+      } else {
+        const start = i;
+        while (i < n && !isSpace(raw[i])) i++;
+        value = raw.slice(start, i);
+      }
+    }
+    if (!out.has(name)) out.set(name, value);
+  }
+  return out;
+}
+
+/** True if `lower` has tag `name` opening at `at` (followed by space, `/` or `>`). */
+function opens(lower: string, at: number, name: string): boolean {
+  if (!lower.startsWith(name, at + 1)) return false;
+  const next = lower[at + 1 + name.length];
+  return next === undefined || next === ">" || next === "/" || isSpace(next);
+}
+
+/** One forward pass over the page for <meta>, the first <title> and ld+json scripts. */
+function scan(input: string): Scanned {
+  const html = input.length > MAX_SCAN_CHARS ? input.slice(0, MAX_SCAN_CHARS) : input;
+  // Lower-cased once so every tag and closing-tag search is a plain indexOf.
+  // ASCII only: `toLowerCase` can change a string's LENGTH ("İ" becomes two
+  // code units), and every index here is shared between the two copies.
+  const lower = html.replace(/[A-Z]+/g, (run) => run.toLowerCase());
+  const out: Scanned = { meta: new Map(), title: undefined, jsonLd: [] };
+
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) break;
+
+    // Commented-out markup is not the page. Unterminated: the rest is comment.
+    if (html.startsWith("<!--", lt)) {
+      const close = html.indexOf("-->", lt + 4);
+      if (close === -1) break;
+      i = close + 3;
+      continue;
+    }
+
+    const isMeta = opens(lower, lt, "meta");
+    const isScript = !isMeta && opens(lower, lt, "script");
+    const isTitle = !isMeta && !isScript && opens(lower, lt, "title");
+    if (!isMeta && !isScript && !isTitle) {
+      i = lt + 1;
+      continue;
+    }
+
+    const nameEnd = lt + 1 + (isMeta ? 4 : isScript ? 6 : 5);
+    const end = tagEnd(html, nameEnd);
+    // An open tag that never closes runs to the end of the page: nothing
+    // after it can be a tag, so stop rather than retry from the next `<`.
+    if (end === -1) break;
+    const attrs = attributes(html.slice(nameEnd, end));
+
+    if (isMeta) {
+      const key = (attrs.get("property") ?? attrs.get("name"))?.toLowerCase();
+      const content = attrs.get("content");
+      if (key && content !== undefined && !out.meta.has(key)) out.meta.set(key, content);
+      i = end + 1;
+      continue;
+    }
+
+    // <script> and <title> are raw text up to their closing tag.
+    const closer = isScript ? "</script" : "</title";
+    const close = lower.indexOf(closer, end + 1);
+    if (close === -1) break;
+    const body = html.slice(end + 1, close);
+    if (isScript) {
+      if (attrs.get("type")?.trim().toLowerCase() === "application/ld+json") out.jsonLd.push(body);
+    } else if (out.title === undefined) {
+      out.title = body;
+    }
+    const closeEnd = html.indexOf(">", close);
+    if (closeEnd === -1) break;
+    i = closeEnd + 1;
   }
   return out;
 }
@@ -63,8 +193,11 @@ const NAMED: Record<string, string> = {
   rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…",
 };
 
+/** Bounded quantifiers: a reference is short, so no run is ever rescanned at length. */
+const ENTITY = /&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{1,8});/gi;
+
 function decodeEntities(text: string): string {
-  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, ref: string) => {
+  return text.replace(ENTITY, (whole, ref: string) => {
     if (ref[0] === "#") {
       const code = ref[1] === "x" || ref[1] === "X"
         ? Number.parseInt(ref.slice(2), 16)
@@ -75,10 +208,24 @@ function decodeEntities(text: string): string {
   });
 }
 
+/** Drops `<…>` runs with indexOf, so a string of unclosed `<` stays linear. */
+function stripTags(text: string): string {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const lt = text.indexOf("<", i);
+    if (lt === -1) return out + text.slice(i);
+    const gt = text.indexOf(">", lt + 1);
+    if (gt === -1) return out + text.slice(i);
+    out += `${text.slice(i, lt)} `;
+    i = gt + 1;
+  }
+}
+
 /** Entities decoded, tags dropped, whitespace collapsed. Empty becomes undefined. */
 function clean(value: unknown): string | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
-  const text = decodeEntities(String(value).replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  const text = decodeEntities(stripTags(String(value))).replace(/\s+/g, " ").trim();
   return text === "" ? undefined : text;
 }
 
@@ -156,7 +303,11 @@ function pickBusiness(nodes: Node[]): Node | undefined {
 }
 
 function parseJsonLd(text: string): unknown {
-  const attempts = [text, text.replace(/\/\*\s*<!\[CDATA\[\s*\*\/|\/\*\s*\]\]>\s*\*\//g, "")];
+  // Second try: from the first bracket to the last, which drops the
+  // `/* <![CDATA[ */ … /* ]]> */` wrappers old CMS templates still emit.
+  const open = text.search(/[{[]/);
+  const close = Math.max(text.lastIndexOf("}"), text.lastIndexOf("]"));
+  const attempts = open !== -1 && close > open ? [text, text.slice(open, close + 1)] : [text];
   for (const attempt of attempts) {
     try {
       return JSON.parse(attempt);
@@ -180,23 +331,10 @@ function first(value: unknown): unknown {
  * speak, because it is the more specific claim; OpenGraph fills the gaps.
  */
 export function extractBusiness(html: string, baseUrl: string): ImportedBusiness {
-  // Commented-out markup is not the page.
-  const page = html.replace(/<!--[\s\S]*?-->/g, "");
-
-  const meta = new Map<string, string>();
-  for (const m of page.matchAll(META)) {
-    const attrs = attributes(m[1]!);
-    const key = (attrs.get("property") ?? attrs.get("name"))?.toLowerCase();
-    const content = attrs.get("content");
-    if (key && content !== undefined && !meta.has(key)) meta.set(key, content);
-  }
+  const { meta, title, jsonLd } = scan(html);
 
   const nodes: Node[] = [];
-  for (const m of page.matchAll(SCRIPT)) {
-    const type = attributes(m[1]!).get("type")?.trim().toLowerCase();
-    if (type !== "application/ld+json") continue;
-    collect(parseJsonLd(m[2]!), nodes);
-  }
+  for (const block of jsonLd) collect(parseJsonLd(block), nodes);
   const business = pickBusiness(nodes) ?? {};
 
   const rawAddress = first(business["address"]);
@@ -223,7 +361,7 @@ export function extractBusiness(html: string, baseUrl: string): ImportedBusiness
 
   const result: ImportedBusiness = {
     name: clean(business["name"]) ?? clean(meta.get("og:site_name")) ?? clean(meta.get("og:title"))
-      ?? clean(TITLE.exec(page)?.[1]),
+      ?? clean(title),
     description: trimDescription(
       clean(business["description"]) ?? clean(meta.get("og:description")) ?? clean(meta.get("description")),
     ),
