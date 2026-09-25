@@ -128,6 +128,20 @@ export async function renderCatchAll(
 
   const result = await resolveRoute(db as never, segments, siteConfig.siteMode);
 
+  // Task 53 review fix: `?verified=1` only means something on a pillar grid.
+  // The rewrite that reaches this function with `verified: true` matches
+  // every catch-all kind (any first segment not in RESERVED_SLUGS), so a
+  // listing or reviews page reached this way would otherwise render — byte
+  // for byte identical to its normal self — through the uncached route,
+  // letting anyone bypass ISR on any of the site's listing/review URLs just
+  // by appending the param. Redirecting to the clean URL sends the browser
+  // straight back through the ISR-cached route instead. "not-found" and
+  // "redirect" already resolve to a target that never carries the param
+  // (see below), so only these two actually need it.
+  if (verified && (result.kind === "listing" || result.kind === "listing-reviews")) {
+    redirect(`/${segments.join("/")}`);
+  }
+
   switch (result.kind) {
     case "not-found":
       notFound();
@@ -277,18 +291,29 @@ export async function renderCatchAll(
 
       const cityId = "cityId" in result.scope ? result.scope.cityId : null;
 
-      const [rows, total, categories, nearby, featuredBids, verifiedCount] = await Promise.all([
-        listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page, verified }),
-        countListings(db as never, PUBLIC_VIEWER, result.scope, { verified }),
-        cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
-        cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
-        // Page 1 only: the paid row sits above the grid and nowhere else.
-        result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
-        // Task 53: gates the toggle. Run alongside the grid rather than only
-        // when unfiltered, so the filtered view can still offer a way back
-        // even if a race emptied it since the toggle was rendered.
-        countListings(db as never, PUBLIC_VIEWER, result.scope, { verified: true }),
-      ]);
+      const [rows, total, categories, nearby, featuredBids, verifiedCount, premiumSourceRows] =
+        await Promise.all([
+          listListings(db as never, PUBLIC_VIEWER, result.scope, { page: result.page, verified }),
+          countListings(db as never, PUBLIC_VIEWER, result.scope, { verified }),
+          cityId ? categoriesInCity(db as never, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+          cityId ? nearbyCities(db, PUBLIC_VIEWER, cityId) : Promise.resolve([]),
+          // Page 1 only: the paid row sits above the grid and nowhere else.
+          result.page === 1 ? featuredForScope(db as never, PUBLIC_VIEWER, result.scope) : Promise.resolve([]),
+          // Task 53: gates the toggle. Run alongside the grid rather than only
+          // when unfiltered, so the filtered view can still offer a way back
+          // even if a race emptied it since the toggle was rendered.
+          countListings(db as never, PUBLIC_VIEWER, result.scope, { verified: true }),
+          // Task 53 review fix: the premium-tier fallback row must be exactly
+          // what the UNFILTERED page would show, never the filtered grid — a
+          // paying premium listing that is not (yet) verified must not vanish
+          // from Featured just because a visitor ticked the toggle. `rows`
+          // already IS the unfiltered set when the filter is off, or when this
+          // isn't page 1 (no premium row there regardless), so the extra query
+          // only runs for the one case that needs it.
+          verified && result.page === 1
+            ? listListings(db as never, PUBLIC_VIEWER, result.scope, { page: 1, verified: false })
+            : Promise.resolve(null),
+        ]);
       const hasVerified = verifiedCount > 0;
 
       // A featured listing is not listed twice, and the page has ONE
@@ -296,11 +321,9 @@ export async function renderCatchAll(
       // premium-tier row otherwise (from the grid, never from `rows`). The
       // ItemList below keeps every row it is handed — the featured cards are
       // on the page too.
-      const { grid, premium } = pageRows(
-        rows,
-        featuredBids,
-        result.page === 1 && siteConfig.tiers.premium.homepageSlot,
-      );
+      const premiumRowEnabled = result.page === 1 && siteConfig.tiers.premium.homepageSlot;
+      const { grid } = pageRows(rows, featuredBids, premiumRowEnabled);
+      const { premium } = pageRows(premiumSourceRows ?? rows, featuredBids, premiumRowEnabled);
 
       const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
       // A page number past the end has nothing on it and must not be a soft 404
